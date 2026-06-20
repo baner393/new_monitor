@@ -44,9 +44,10 @@ function createWindow() {
     );
   }
 
-  // Listen for console messages from renderer
-  mainWindow.webContents.on('console-message', (event, level, message) => {
-    if (message.includes('[BOUNCE]') || message.includes('[Input]')) {
+  // Listen for console messages from renderer (new API)
+  mainWindow.webContents.on('console-message', (event) => {
+    const message = event.message;
+    if (message.includes('[BOUNCE]') || message.includes('[Input]') || message.includes('[GameLoop]')) {
       console.log(`[RENDERER] ${message}`);
     }
   });
