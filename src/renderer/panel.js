@@ -310,14 +310,14 @@ function drawMCBorder(g, w, h) {
 
 // ── Helper: create a bitmap text (falls back to PIXI.Text) ────────────
 
-function makeText(str, size, color, bold = false) {
+function makeText(str, size, color, bold = false, isLabel = false) {
   const style = new PIXI.TextStyle({
     fontFamily: 'Mojang, "Courier New", monospace',
     fontSize: size,
     fill: color,
     fontWeight: bold ? 'bold' : 'normal',
     stroke: 0x000000,
-    strokeThickness: bold ? 3 : 2,
+    strokeThickness: isLabel ? 1 : (bold ? 3 : 2),  // thinner stroke for labels
     dropShadow: false,
   });
   const txt = new PIXI.Text(str, style);
@@ -416,7 +416,7 @@ export class Panel {
     this._content.addChild(this._title);
 
     // GPU Name
-    this._gpuName = makeText('N/A', 14, TEXT_COLOR);
+    this._gpuName = makeText('N/A', 14, TEXT_COLOR, false, true);
     this._gpuName.x = 0;
     this._gpuName.y = 26;
     this._content.addChild(this._gpuName);
@@ -430,25 +430,25 @@ export class Panel {
     const barStartY = 10;
 
     // ── Temperature row ────────────────────────────────────────────
-    this._tempLabel = makeText('温度', 14, LABEL_COLOR);
+    this._tempLabel = makeText('温度', 14, LABEL_COLOR, false, true);
     this._tempValue = makeText('-- C', 14, TEXT_COLOR);
     this._barsGraphics.addChild(this._tempLabel);
     this._barsGraphics.addChild(this._tempValue);
 
     // ── GPU Utilization row ────────────────────────────────────────
-    this._gpuUtilLabel = makeText('负载', 14, LABEL_COLOR);
+    this._gpuUtilLabel = makeText('负载', 14, LABEL_COLOR, false, true);
     this._gpuUtilValue = makeText('-- %', 14, TEXT_COLOR);
     this._barsGraphics.addChild(this._gpuUtilLabel);
     this._barsGraphics.addChild(this._gpuUtilValue);
 
     // ── Memory row ─────────────────────────────────────────────────
-    this._memLabel = makeText('显存', 14, LABEL_COLOR);
+    this._memLabel = makeText('显存', 14, LABEL_COLOR, false, true);
     this._memValue = makeText('-- / -- MB', 14, TEXT_COLOR);
     this._barsGraphics.addChild(this._memLabel);
     this._barsGraphics.addChild(this._memValue);
 
     // ── Power row ──────────────────────────────────────────────────
-    this._powerLabel = makeText('功耗', 14, LABEL_COLOR);
+    this._powerLabel = makeText('功耗', 14, LABEL_COLOR, false, true);
     this._powerValue = makeText('-- W', 14, TEXT_COLOR);
     this._barsGraphics.addChild(this._powerLabel);
     this._barsGraphics.addChild(this._powerValue);
