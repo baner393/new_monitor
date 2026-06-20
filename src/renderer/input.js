@@ -32,6 +32,7 @@ export class InputManager {
     this._lastDragPos = { x: 0, y: 0 };
     this._lastDragTime = 0;
     this._pullExceeded = false;
+    this._lastPullExceeded = false;  // Saved value for BOUNCE_COMPLETE
     this._windowExpanded = false;
 
     // ── Right-click (pulley / throw) drag state ──
@@ -258,6 +259,8 @@ export class InputManager {
 
     if (this.stateMachine.getState() === 'PULLING') {
       console.log('[Input] PULLING released, pullExceeded:', this._pullExceeded);
+      // Save pullExceeded before reset for BOUNCE_COMPLETE transition
+      this._lastPullExceeded = this._pullExceeded;
       this.stateMachine.transition('LEFT_RELEASE', { 
         pullExceeded: this._pullExceeded,
         velocity: { ...this._dragVelocity }

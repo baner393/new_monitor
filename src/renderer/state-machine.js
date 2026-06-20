@@ -87,8 +87,11 @@ const TRANSITIONS = {
     PANEL_FULLY_OPEN:  PANEL_OPEN,
   },
 
-  // HAPPY is reserved – no automatic transitions defined yet.
-  [HAPPY]: {},
+  // HAPPY state – shown when panel is expanding (sprite shows happy texture)
+  [HAPPY]: {
+    PANEL_FULLY_OPEN:  PANEL_OPEN,
+    CLICK_OUTSIDE:     COLLAPSING,
+  },
 
   [PANEL_OPEN]: {
     CLICK_OUTSIDE:     COLLAPSING,

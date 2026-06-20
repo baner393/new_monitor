@@ -72,6 +72,13 @@ ipcMain.on('set-ignore-mouse', (event, ignore) => {
   }
 });
 
+// IPC: renderer can manually request GPU data
+ipcMain.on('request-gpu-data', () => {
+  if (gpuMonitor) {
+    gpuMonitor._poll();
+  }
+});
+
 // IPC: renderer can resize the window
 ipcMain.on('set-bounds', (event, bounds) => {
   if (mainWindow && !mainWindow.isDestroyed()) {

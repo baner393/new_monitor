@@ -1,10 +1,12 @@
 import * as PIXI from 'pixi.js';
 import { BaseTexture, SCALE_MODES } from 'pixi.js';
 import idleSpriteUrl from '../../assets/sprites/idle.png';
+import happySpriteUrl from '../../assets/sprites/happy.png';
 import { PhysicsEngine, DEFAULT_ROPE_LENGTH } from './physics.js';
 import { RopeRenderer } from './rope.js';
 import { StateMachine } from './state-machine.js';
 import { InputManager } from './input.js';
+import { Panel } from './panel.js';
 
 // ── Pixel-art rendering settings ───────────────────────────────────────
 BaseTexture.defaultOptions.scaleMode = SCALE_MODES.NEAREST;
@@ -41,9 +43,11 @@ const ropeContainer = new PIXI.Container();
 pixiApp.stage.addChild(ropeContainer);
 ropeContainer.addChild(ropeGraphics);
 
-// ── Load sprite ────────────────────────────────────────────────────────
-const texture = PIXI.Texture.from(idleSpriteUrl);
-const sprite = new PIXI.Sprite(texture);
+// ── Load sprites ───────────────────────────────────────────────────────
+const idleTexture  = PIXI.Texture.from(idleSpriteUrl);
+const happyTexture = PIXI.Texture.from(happySpriteUrl);
+
+const sprite = new PIXI.Sprite(idleTexture);
 sprite.anchor.set(0.5, 0.5);
 sprite.scale.set(2.5);  // Scale up 24x24 sprite to ~60x60 pixels
 // Position at top-center of screen
@@ -52,6 +56,10 @@ sprite.y = 150;  // Near top of screen
 sprite.eventMode = 'static';
 sprite.cursor = 'pointer';
 pixiApp.stage.addChild(sprite);
+
+// ── GPU Panel ──────────────────────────────────────────────────────────
+const panel = new Panel();
+pixiApp.stage.addChild(panel.container);
 
 // ── Input Manager ──────────────────────────────────────────────────────
 const inputManager = new InputManager({
@@ -68,6 +76,9 @@ let isOverSprite = false;
 document.addEventListener('mousemove', (e) => {
   const state = stateMachine.getState();
   if (state === 'PULLING' || state === 'PULLEY_DRAG') return;
+
+  // Also keep mouse events when panel is open
+  if (state === 'PANEL_OPEN' || state === 'EXPANDING' || state === 'COLLAPSING' || state === 'HAPPY') return;
   
   const bounds = sprite.getBounds();
   const over =
@@ -92,7 +103,32 @@ window.electronAPI.setIgnoreMouseEvents(true);
 // ── GPU data receiver ──────────────────────────────────────────────────
 window.electronAPI.onGPUData((data) => {
   console.log('[GPU Data]', data);
+  panel.update(data);
 });
+
+// ── Click-outside detection for closing the panel ──────────────────────
+document.addEventListener('mousedown', (e) => {
+  const state = stateMachine.getState();
+  if (state !== 'PANEL_OPEN') return;
+
+  // Check if click is inside the panel bounds
+  const c = panel.container;
+  const px = c.x;
+  const py = c.y;
+  const pw = panel.width;
+  const ph = panel.height;
+
+  const insidePanel =
+    e.clientX >= px &&
+    e.clientX <= px + pw &&
+    e.clientY >= py &&
+    e.clientY <= py + ph;
+
+  if (!insidePanel) {
+    console.log('[Panel] Click outside → COLLAPSING');
+    stateMachine.transition('CLICK_OUTSIDE');
+  }
+}, true); // useCapture so it fires before InputManager
 
 // ── Bounce animation state ─────────────────────────────────────────────
 let bounceStartPos = null;
@@ -155,6 +191,34 @@ function onStateChange() {
     physics.pendulumOmega = 0;
     console.log(`[BOUNCE] Start: sprite(${sprite.x.toFixed(0)}, ${sprite.y.toFixed(0)}), anchor(${anchorX.toFixed(0)}, ${anchorY}), angle=${physics.pendulumAngle.toFixed(3)}, dist=${physics.ropeLength.toFixed(0)}`);
   }
+
+  // ── Panel transitions ────────────────────────────────────────────
+  // BOUNCING → EXPANDING: pull exceeded threshold, open panel
+  if (prevState === 'BOUNCING' && newState === 'EXPANDING') {
+    console.log('[Panel] EXPANDING — showing panel + HAPPY sprite');
+    sprite.texture = happyTexture;
+    // Disable click-through while panel is open
+    window.electronAPI.setIgnoreMouseEvents(false);
+    // Position panel below the sprite
+    const anchorX = physics.screenAnchorX * window.innerWidth;
+    panel.setPosition(anchorX, sprite.y + 80);
+    panel.expand(() => {
+      console.log('[Panel] Fully open → PANEL_OPEN');
+      stateMachine.transition('PANEL_FULLY_OPEN');
+    });
+  }
+
+  // PANEL_OPEN → COLLAPSING: close panel
+  if (prevState === 'PANEL_OPEN' && newState === 'COLLAPSING') {
+    console.log('[Panel] COLLAPSING');
+    panel.collapse(() => {
+      console.log('[Panel] Fully closed → IDLE');
+      sprite.texture = idleTexture;
+      window.electronAPI.setIgnoreMouseEvents(true);
+      isOverSprite = false;
+      stateMachine.transition('PANEL_FULLY_CLOSED');
+    });
+  }
   
   // PULLEY_DRAG → PULLEY_PHYSICS transition: initialize throw physics
   if (prevState === 'PULLEY_DRAG' && newState === 'PULLEY_PHYSICS') {
@@ -197,6 +261,9 @@ pixiApp.ticker.add((delta) => {
   // Update physics (skipped during PULLING and BOUNCING)
   physics.updatePendulum(dt);
   physics.updatePulleyMomentum(dt);
+
+  // Update panel animation
+  panel.updateAnimation(dt);
 
   // Compute rope anchor (top of window)
   const anchorX = physics.screenAnchorX * window.innerWidth;
@@ -258,10 +325,20 @@ pixiApp.ticker.add((delta) => {
       if (result.done) {
         // Bounce complete - transition to IDLE or EXPANDING
         stateMachine.transition('BOUNCE_COMPLETE', { 
-          pullExceeded: inputManager.pullExceeded 
+          pullExceeded: inputManager._lastPullExceeded 
         });
       }
     }
+
+  } else if (state === 'EXPANDING' || state === 'PANEL_OPEN' || state === 'COLLAPSING' || state === 'HAPPY') {
+    // Keep sprite at rest position while panel is active
+    const pendulumX = anchorX + Math.sin(physics.pendulumAngle) * physics.ropeLength;
+    const pendulumY = anchorY + Math.cos(physics.pendulumAngle) * physics.ropeLength;
+    sprite.x = pendulumX;
+    sprite.y = pendulumY;
+
+    // Update panel position to follow sprite
+    panel.setPosition(anchorX, sprite.y + 80);
     
   } else {
     // IDLE/HOVER - pendulum drives position

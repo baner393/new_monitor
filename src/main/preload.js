@@ -21,6 +21,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 
   /**
+   * Manually request a fresh GPU data poll.
+   */
+  requestGPUData: () => {
+    ipcRenderer.send('request-gpu-data');
+  },
+
+  /**
    * Resize the BrowserWindow.
    * @param {{ width: number, height: number }} bounds
    */
