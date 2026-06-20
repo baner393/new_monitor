@@ -61,7 +61,7 @@ const STREAK_ALPHA_2  = 0.06;
 
 // Text
 const TEXT_COLOR   = 0xeeeeee;
-const LABEL_COLOR  = 0x9999aa;
+const LABEL_COLOR  = 0xffffff;    // pure white for clarity
 const TITLE_COLOR  = 0x55ff55;
 
 // Temperature colour thresholds
