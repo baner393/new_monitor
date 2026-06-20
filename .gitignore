@@ -1,0 +1,13 @@
+node_modules/
+.vite/
+*.log
+test_*.png
+screenshot*.png
+debug_*.png
+frames/
+test_crops/
+forge_output*.log
+crop*.py
+capture*.py
+test_drag.py
+screenshot.ps1
