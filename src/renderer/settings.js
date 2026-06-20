@@ -371,7 +371,7 @@ function makeText(str, size, color, bold = false, isLabel = false) {
     fontSize: size,
     fill: color,
     fontWeight: bold ? 'bold' : 'normal',
-    stroke: 0x000000,
+    stroke: 0x2a2a3a,  // dark blue-gray stroke (lighter than black)
     strokeThickness: isLabel ? 1 : (bold ? 3 : 2),
     dropShadow: false,
   });
