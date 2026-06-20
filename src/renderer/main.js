@@ -7,6 +7,7 @@ import { RopeRenderer } from './rope.js';
 import { StateMachine } from './state-machine.js';
 import { InputManager } from './input.js';
 import { Panel } from './panel.js';
+import { SettingsPanel } from './settings.js';
 
 // ── Pixel-art rendering settings ───────────────────────────────────────
 BaseTexture.defaultOptions.scaleMode = SCALE_MODES.NEAREST;
@@ -61,6 +62,76 @@ pixiApp.stage.addChild(sprite);
 const panel = new Panel();
 pixiApp.stage.addChild(panel.container);
 
+// ── Settings Panel ─────────────────────────────────────────────────────
+const settingsPanel = new SettingsPanel();
+pixiApp.stage.addChild(settingsPanel.container);
+
+// Listen for open-settings from context menu
+window.electronAPI.onOpenSettings(() => {
+  console.log('[Settings] Opening settings panel from context menu');
+  if (!settingsPanel.isOpen && !settingsPanel.isAnimating) {
+    // Position at center of screen
+    settingsPanel.setPosition(window.innerWidth / 2, window.innerHeight / 2);
+    settingsPanel.open();
+  }
+});
+
+// Listen for settings-changed (applied from main process)
+window.electronAPI.onSettingsChanged((settings) => {
+  console.log('[Settings] Settings changed:', settings);
+  applySettings(settings);
+});
+
+// Load saved settings on startup
+(async () => {
+  try {
+    const saved = await window.electronAPI.settings.get();
+    if (saved) {
+      console.log('[Settings] Loaded saved settings:', saved);
+      applySettings(saved);
+    }
+  } catch (err) {
+    console.warn('[Settings] Failed to load settings on startup:', err);
+  }
+})();
+
+/**
+ * Apply settings to the physics engine and renderer.
+ */
+function applySettings(settings) {
+  if (settings.gravity !== undefined) physics.gravity = settings.gravity;
+  if (settings.damping !== undefined) physics.damping = settings.damping;
+  if (settings.pulleyFriction !== undefined) physics.pulleyFriction = settings.pulleyFriction;
+  if (settings.ropeStiffness !== undefined) physics.ropeStiffness = settings.ropeStiffness;
+  if (settings.ropeDamping !== undefined) physics.ropeDamping = settings.ropeDamping;
+  if (settings.bounceRestitution !== undefined) physics.ropeBounceRest = settings.bounceRestitution;
+  if (settings.airDamping !== undefined) physics.airDamping = settings.airDamping;
+  // Note: turtleSize and ropeLength affect sprite scale and default rope length
+  // These require special handling (not just physics property assignment)
+}
+
+// Click-outside detection for settings panel
+document.addEventListener('mousedown', (e) => {
+  if (!settingsPanel.isOpen) return;
+
+  const c = settingsPanel.container;
+  const px = c.x;
+  const py = c.y;
+  const pw = settingsPanel.width;
+  const ph = settingsPanel.height;
+
+  const insidePanel =
+    e.clientX >= px &&
+    e.clientX <= px + pw &&
+    e.clientY >= py &&
+    e.clientY <= py + ph;
+
+  if (!insidePanel) {
+    console.log('[Settings] Click outside → closing');
+    settingsPanel._cancel(); // Cancel with restore
+  }
+}, true);
+
 // ── Input Manager ──────────────────────────────────────────────────────
 const inputManager = new InputManager({
   pixiApp,
@@ -79,6 +150,9 @@ document.addEventListener('mousemove', (e) => {
 
   // Also keep mouse events when panel is open
   if (state === 'PANEL_OPEN' || state === 'EXPANDING' || state === 'COLLAPSING' || state === 'HAPPY') return;
+
+  // Keep mouse events when settings panel is open
+  if (settingsPanel.isOpen || settingsPanel.isAnimating) return;
   
   const bounds = sprite.getBounds();
   const over =
@@ -110,6 +184,9 @@ window.electronAPI.onGPUData((data) => {
 document.addEventListener('mousedown', (e) => {
   const state = stateMachine.getState();
   if (state !== 'PANEL_OPEN') return;
+
+  // Don't close GPU panel if settings panel is open
+  if (settingsPanel.isOpen || settingsPanel.isAnimating) return;
 
   // Check if click is inside the panel bounds
   const c = panel.container;
@@ -264,6 +341,9 @@ pixiApp.ticker.add((delta) => {
 
   // Update panel animation
   panel.updateAnimation(dt);
+
+  // Update settings panel animation
+  settingsPanel.updateAnimation(dt);
 
   // Compute rope anchor (top of window)
   const anchorX = physics.screenAnchorX * window.innerWidth;

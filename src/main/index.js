@@ -1,9 +1,84 @@
 import { app, BrowserWindow, ipcMain, Menu } from 'electron';
 import path from 'path';
+import fs from 'fs';
+import os from 'os';
 import { GPUMonitor } from './gpu-monitor.js';
 
 let mainWindow;
 let gpuMonitor;
+
+// ── Settings persistence ────────────────────────────────────────────
+const SETTINGS_PATH = path.join(os.homedir(), '.hermes', 'profiles', 'coordinator', 'turtle-settings.json');
+
+const DEFAULT_SETTINGS = {
+  turtleSize:       64,
+  ropeLength:       150,
+  gravity:          800,
+  damping:          0.995,
+  pulleyFriction:   0.92,
+  ropeStiffness:    500,
+  ropeDamping:      15,
+  bounceRestitution: 0.6,
+  airDamping:       0.98,
+};
+
+let currentSettings = { ...DEFAULT_SETTINGS };
+
+function loadSettings() {
+  try {
+    if (fs.existsSync(SETTINGS_PATH)) {
+      const data = JSON.parse(fs.readFileSync(SETTINGS_PATH, 'utf-8'));
+      currentSettings = { ...DEFAULT_SETTINGS, ...data };
+      console.log('[Settings] Loaded from', SETTINGS_PATH);
+    }
+  } catch (err) {
+    console.warn('[Settings] Failed to load:', err.message);
+  }
+}
+
+function saveSettings() {
+  try {
+    const dir = path.dirname(SETTINGS_PATH);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    fs.writeFileSync(SETTINGS_PATH, JSON.stringify(currentSettings, null, 2), 'utf-8');
+    console.log('[Settings] Saved to', SETTINGS_PATH);
+    // Notify renderer of new settings
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('settings-changed', currentSettings);
+    }
+  } catch (err) {
+    console.error('[Settings] Failed to save:', err.message);
+  }
+}
+
+// Load settings on startup
+loadSettings();
+
+// IPC: settings.get — return current settings
+ipcMain.handle('settings-get', () => {
+  return { ...currentSettings };
+});
+
+// IPC: settings.set — set a single value
+ipcMain.on('settings-set', (event, key, value) => {
+  if (key in DEFAULT_SETTINGS) {
+    currentSettings[key] = value;
+  }
+});
+
+// IPC: settings.save — persist to file
+ipcMain.on('settings-save', () => {
+  saveSettings();
+});
+
+// IPC: settings.reset — reset to defaults
+ipcMain.handle('settings-reset', () => {
+  currentSettings = { ...DEFAULT_SETTINGS };
+  saveSettings();
+  return { ...currentSettings };
+});
 
 function createWindow() {
   // Get screen dimensions for full-screen transparent window
@@ -106,8 +181,9 @@ ipcMain.on('show-context-menu', (event) => {
     {
       label: '设置',
       click: () => {
-        // TODO: implement settings window
-        console.log('[Menu] Settings clicked');
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('open-settings');
+        }
       },
     },
     { type: 'separator' },
