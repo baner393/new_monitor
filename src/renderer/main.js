@@ -106,8 +106,19 @@ function applySettings(settings) {
   if (settings.ropeDamping !== undefined) physics.ropeDamping = settings.ropeDamping;
   if (settings.bounceRestitution !== undefined) physics.ropeBounceRest = settings.bounceRestitution;
   if (settings.airDamping !== undefined) physics.airDamping = settings.airDamping;
-  // Note: turtleSize and ropeLength affect sprite scale and default rope length
-  // These require special handling (not just physics property assignment)
+  
+  // Handle turtleSize - update sprite scale
+  if (settings.turtleSize !== undefined) {
+    const scale = settings.turtleSize / 24; // 24px is base sprite size
+    sprite.scale.set(scale);
+    console.log(`[Settings] Turtle size: ${settings.turtleSize}, scale: ${scale}`);
+  }
+  
+  // Handle ropeLength - update default rope length in physics
+  if (settings.ropeLength !== undefined) {
+    physics.ropeLength = settings.ropeLength;
+    console.log(`[Settings] Rope length: ${settings.ropeLength}`);
+  }
 }
 
 // Click-outside detection for settings panel
