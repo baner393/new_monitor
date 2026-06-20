@@ -12,6 +12,7 @@ BaseTexture.defaultOptions.scaleMode = SCALE_MODES.NEAREST;
 // ── Constants ──────────────────────────────────────────────────────────
 const ROPE_WIDTH = 4;
 const TURTLE_SIZE = 64;
+const THROW_SETTLE_THRESHOLD = 5; // px/s total speed to settle physics
 
 // ── Init PixiJS Application ───────────────────────────────────────────
 const pixiApp = new PIXI.Application({
@@ -65,7 +66,8 @@ inputManager.enable();
 let isOverSprite = false;
 
 document.addEventListener('mousemove', (e) => {
-  if (stateMachine.getState() === 'PULLING') return;
+  const state = stateMachine.getState();
+  if (state === 'PULLING' || state === 'PULLEY_DRAG') return;
   
   const bounds = sprite.getBounds();
   const over =
@@ -154,6 +156,11 @@ function onStateChange() {
     console.log(`[BOUNCE] Start: sprite(${sprite.x.toFixed(0)}, ${sprite.y.toFixed(0)}), anchor(${anchorX.toFixed(0)}, ${anchorY}), angle=${physics.pendulumAngle.toFixed(3)}, dist=${physics.ropeLength.toFixed(0)}`);
   }
   
+  // PULLEY_DRAG → PULLEY_PHYSICS transition: initialize throw physics
+  if (prevState === 'PULLEY_DRAG' && newState === 'PULLEY_PHYSICS') {
+    console.log(`[THROW] Physics started: turtle(${physics.turtle.x.toFixed(0)}, ${physics.turtle.y.toFixed(0)}), vel(${physics.turtle.vx.toFixed(0)}, ${physics.turtle.vy.toFixed(0)})`);
+  }
+
   // Log pulley state transitions
   if (newState === 'PULLEY_DRAG' && prevState !== 'PULLEY_DRAG') {
     console.log(`[PULLEY] DRAG started, anchorX=${physics.screenAnchorX.toFixed(3)}`);
@@ -183,6 +190,7 @@ pixiApp.ticker.add((delta) => {
   physics.setContext({
     state,
     windowWidth: window.innerWidth,
+    windowHeight: window.innerHeight,
     turtleSize: TURTLE_SIZE,
   });
 
@@ -207,12 +215,24 @@ pixiApp.ticker.add((delta) => {
     physics.pendulumAngle = Math.atan2(dx, dy);
     
   } else if (state === 'PULLEY_DRAG') {
-    // During PULLEY_DRAG, anchor is being moved by right-drag (InputManager updates physics.screenAnchorX)
-    // Sprite follows pendulum at current anchor
-    const pendulumX = anchorX + Math.sin(physics.pendulumAngle) * physics.ropeLength;
-    const pendulumY = anchorY + Math.cos(physics.pendulumAngle) * physics.ropeLength;
-    sprite.x = pendulumX;
-    sprite.y = pendulumY;
+    // During PULLEY_DRAG, turtle follows mouse via physics.updateDrag()
+    // Sprite position comes from physics turtle
+    sprite.x = physics.turtle.x;
+    sprite.y = physics.turtle.y;
+
+  } else if (state === 'PULLEY_PHYSICS') {
+    // ── New throw physics simulation ──
+    const totalEnergy = physics.updatePulleyPhysics(dt);
+
+    // Update sprite from physics turtle
+    sprite.x = physics.turtle.x;
+    sprite.y = physics.turtle.y;
+
+    // Check if physics has settled
+    if (totalEnergy !== undefined && totalEnergy < THROW_SETTLE_THRESHOLD) {
+      console.log('[THROW] Settled, transitioning to IDLE');
+      stateMachine.transition('PHYSICS_SETTLED');
+    }
 
   } else if (state === 'PULLEY_MOMENTUM') {
     // Pendulum drives position; anchor is sliding via physics.updatePulleyMomentum
@@ -251,9 +271,36 @@ pixiApp.ticker.add((delta) => {
     sprite.y = pendulumY;
   }
 
-  // Draw rope with natural sag
-  const sag = RopeRenderer.calcSagAmount(physics.ropeLength, physics.pendulumOmega, pullDist, state);
-  ropeRenderer.draw(anchorX, anchorY, sprite.x, sprite.y, sag, ROPE_WIDTH);
+  // Draw rope with natural sag (or tension-based for throw physics)
+  let ropeAnchorX = anchorX;
+  let ropeAnchorY = anchorY;
+
+  if (state === 'PULLEY_PHYSICS' || state === 'PULLEY_DRAG') {
+    // Use pulley position as anchor during throw physics
+    ropeAnchorX = physics.pulley.x;
+    ropeAnchorY = physics.pulley.y;
+  }
+
+  const sag = RopeRenderer.calcSagAmount(
+    physics.ropeLength,
+    physics.pendulumOmega,
+    pullDist,
+    state
+  );
+
+  // For throw physics, adjust sag based on rope tension
+  let adjustedSag = sag;
+  if (state === 'PULLEY_PHYSICS') {
+    const dx = sprite.x - ropeAnchorX;
+    const dy = sprite.y - ropeAnchorY;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    const stretch = Math.max(0, dist - DEFAULT_ROPE_LENGTH);
+    const tension = stretch / DEFAULT_ROPE_LENGTH; // 0 ~ 1+
+    // Higher tension → less sag (rope becomes taut)
+    adjustedSag = sag * Math.max(0.1, 1 - tension * 0.8);
+  }
+
+  ropeRenderer.draw(ropeAnchorX, ropeAnchorY, sprite.x, sprite.y, adjustedSag, ROPE_WIDTH);
 
   // Debug: Draw window boundary during PULLING
   debugGraphics.clear();
@@ -269,6 +316,26 @@ pixiApp.ticker.add((delta) => {
     debugGraphics.beginFill(0x0088ff, 0.9);
     debugGraphics.drawCircle(sprite.x, sprite.y, 6);
     debugGraphics.endFill();
+  }
+
+  // Debug: Draw pulley and turtle positions during throw physics
+  if (state === 'PULLEY_PHYSICS' || state === 'PULLEY_DRAG') {
+    // Pulley marker (red)
+    debugGraphics.lineStyle(0);
+    debugGraphics.beginFill(0xff0000, 0.8);
+    debugGraphics.drawCircle(physics.pulley.x, physics.pulley.y, 5);
+    debugGraphics.endFill();
+
+    // Velocity vector (green line from turtle)
+    if (state === 'PULLEY_PHYSICS') {
+      const vScale = 0.05;
+      debugGraphics.lineStyle(2, 0x00ff00, 0.6);
+      debugGraphics.moveTo(sprite.x, sprite.y);
+      debugGraphics.lineTo(
+        sprite.x + physics.turtle.vx * vScale,
+        sprite.y + physics.turtle.vy * vScale
+      );
+    }
   }
 
   // Log every 60 frames

@@ -6,9 +6,11 @@
  *
  * Supports:
  *   - Left-click drag → PULLING → BOUNCING
- *   - Right-click drag on turtle → PULLEY_DRAG → PULLEY_MOMENTUM
+ *   - Right-click drag on turtle → PULLEY_DRAG → PULLEY_PHYSICS (new throw model)
  *   - Right-click on empty space → Electron context menu
  */
+
+import { VelocityTracker } from './velocity-tracker.js';
 
 const PULL_THRESHOLD = 80;
 const WINDOW_WIDTH = 200;
@@ -32,10 +34,15 @@ export class InputManager {
     this._pullExceeded = false;
     this._windowExpanded = false;
 
-    // ── Right-click (pulley) drag state ──
+    // ── Right-click (pulley / throw) drag state ──
     this._isRightDragging = false;
     this._rightDragStartX = 0;           // screen X where right-drag began
+    this._rightDragStartY = 0;           // screen Y where right-drag began
     this._rightDragAnchorStart = 0;      // physics.screenAnchorX at drag start
+    this._rightDragMoved = false;
+
+    // ── VelocityTracker for right-click throw ──
+    this._rightVelocityTracker = new VelocityTracker(3000);
 
     // Bind handlers
     this._onMouseDown = this._onMouseDown.bind(this);
@@ -101,24 +108,27 @@ export class InputManager {
       e.preventDefault();
 
       if (this._isOverSprite(e.clientX, e.clientY)) {
-        // Right-click on turtle → start pulley drag (menu will show on release if no movement)
+        // Right-click on turtle → start throw drag
         const state = this.stateMachine.getState();
-        if (state !== 'IDLE' && state !== 'HOVER' && state !== 'PULLEY_MOMENTUM') return;
+        if (state !== 'IDLE' && state !== 'HOVER' && state !== 'PULLEY_MOMENTUM' && state !== 'PULLEY_PHYSICS') return;
 
         this._isRightDragging = true;
         this._rightDragStartX = e.clientX;
         this._rightDragStartY = e.clientY;
         this._rightDragAnchorStart = this.physics.screenAnchorX;
-        // Initialize velocity tracking
-        this._rightDragLastX = e.clientX;
-        this._rightDragLastTime = performance.now();
-        this._rightDragVelocity = 0;
-        this._rightDragMoved = false;  // Track if mouse moved during drag
+        this._rightDragMoved = false;
+
+        // Initialize VelocityTracker for throw
+        this._rightVelocityTracker.clear();
+        this._rightVelocityTracker.addSample(e.clientX, e.clientY);
+
+        // Start physics drag — turtle follows mouse
+        this.physics.startDrag(e.clientX, e.clientY);
 
         window.electronAPI.setIgnoreMouseEvents(false);
         this.stateMachine.transition('RIGHT_CLICK_TURTLE');
 
-        console.log('[Input] PULLEY_DRAG started at', e.clientX, e.clientY,
+        console.log('[Input] THROW_DRAG started at', e.clientX, e.clientY,
           'anchorX=', this.physics.screenAnchorX.toFixed(3));
       }
       return;
@@ -153,7 +163,7 @@ export class InputManager {
   _onMouseMove(e) {
     if (this._destroyed) return;
 
-    // ── Right-button pulley drag ──
+    // ── Right-button throw drag ──
     if (this._isRightDragging) {
       const state = this.stateMachine.getState();
       if (state !== 'PULLEY_DRAG') return;
@@ -165,20 +175,11 @@ export class InputManager {
         this._rightDragMoved = true;
       }
 
-      // Track velocity for release physics
-      const now = performance.now();
-      const dt = (now - this._rightDragLastTime) / 1000;
-      if (dt > 0) {
-        this._rightDragVelocity = (e.clientX - this._rightDragLastX) / dt / window.innerWidth;
-      }
-      this._rightDragLastX = e.clientX;
-      this._rightDragLastTime = now;
+      // Record velocity sample
+      this._rightVelocityTracker.addSample(e.clientX, e.clientY);
 
-      // Calculate horizontal delta → normalized anchor offset
-      const normalizedDelta = dx / window.innerWidth;
-
-      this.physics.screenAnchorX = Math.max(0.05, Math.min(0.95,
-        this._rightDragAnchorStart + normalizedDelta));
+      // Update physics drag — turtle follows mouse, rope constraint propagates
+      this.physics.updateDrag(e.clientX, e.clientY);
 
       return;
     }
@@ -231,13 +232,18 @@ export class InputManager {
           window.electronAPI.showContextMenu();
           this.stateMachine.transition('RIGHT_RELEASE');
         } else {
-          // Mouse moved → this was a drag, start pulley momentum
+          // Mouse moved → this was a throw drag
           const state = this.stateMachine.getState();
           if (state === 'PULLEY_DRAG') {
-            // Use tracked velocity from mouse movement
-            this.physics.pulleyMomentumVelocity = this._rightDragVelocity;
+            // Transfer mouse velocity to turtle via physics.release()
+            this.physics.release();
 
-            console.log('[Input] PULLEY_DRAG released, velocity=', this._rightDragVelocity.toFixed(3));
+            // Log the velocity
+            const { vx, vy } = this._rightVelocityTracker.getVelocity();
+            console.log('[Input] THROW_RELEASED, velocity=',
+              `vx=${vx.toFixed(0)}, vy=${vy.toFixed(0)}`);
+
+            // Transition to PULLEY_PHYSICS (physics simulation state)
             this.stateMachine.transition('RIGHT_RELEASE');
           }
         }
@@ -275,7 +281,10 @@ export class InputManager {
   _resetRightDrag() {
     this._isRightDragging = false;
     this._rightDragStartX = 0;
+    this._rightDragStartY = 0;
     this._rightDragAnchorStart = 0;
+    this._rightDragMoved = false;
+    this._rightVelocityTracker.clear();
   }
 
   _expandWindow() {

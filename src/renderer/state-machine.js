@@ -15,6 +15,8 @@
  *   PANEL_OPEN       – info panel fully visible
  *   COLLAPSING       – panel closing animation
  *   PULLEY_MOMENTUM  – physics-based momentum after release
+ *   PULLEY_DRAG      – right-button held, dragging pulley
+ *   PULLEY_PHYSICS   – right-click throw: turtle physics simulation
  *
  * Usage:
  *   import { StateMachine } from './state-machine.js';
@@ -36,6 +38,7 @@ export const PANEL_OPEN      = 'PANEL_OPEN';
 export const COLLAPSING      = 'COLLAPSING';
 export const PULLEY_MOMENTUM = 'PULLEY_MOMENTUM';
 export const PULLEY_DRAG     = 'PULLEY_DRAG';
+export const PULLEY_PHYSICS  = 'PULLEY_PHYSICS';
 
 /** All valid states as an array (handy for iteration / validation). */
 export const ALL_STATES = [
@@ -49,6 +52,7 @@ export const ALL_STATES = [
   COLLAPSING,
   PULLEY_MOMENTUM,
   PULLEY_DRAG,
+  PULLEY_PHYSICS,
 ];
 
 // ─── Transition Table ───────────────────────────────────────────────
@@ -99,9 +103,16 @@ const TRANSITIONS = {
     LEFT_CLICK_TURTLE:  PULLING,
     RIGHT_CLICK_TURTLE: PULLEY_DRAG,
   },
+
   [PULLEY_DRAG]: {
-    RIGHT_RELEASE:       PULLEY_MOMENTUM,
+    RIGHT_RELEASE:       PULLEY_PHYSICS,
     LEFT_CLICK_TURTLE:   PULLING,
+  },
+
+  [PULLEY_PHYSICS]: {
+    PHYSICS_SETTLED:     IDLE,
+    LEFT_CLICK_TURTLE:   PULLING,
+    RIGHT_CLICK_TURTLE:  PULLEY_DRAG,
   },
 };
 
