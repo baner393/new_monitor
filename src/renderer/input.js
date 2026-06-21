@@ -205,15 +205,21 @@ export class InputManager {
     this.sprite.x = e.clientX + this._dragOffset.x;
     this.sprite.y = e.clientY + this._dragOffset.y;
 
-    // Rope constraint: clamp sprite to rope length from anchor
+    // Rope constraint: soft spring beyond rope length
     const anchorX = this.physics.screenAnchorX * window.innerWidth;
     const anchorY = 0;
     const ropeLen = this.physics.restRopeLength;
     const sdx = this.sprite.x - anchorX;
     const sdy = this.sprite.y - anchorY;
     const sdist = Math.sqrt(sdx * sdx + sdy * sdy);
-    if (sdist > ropeLen && ropeLen > 0) {
-      const scale = ropeLen / sdist;
+    if (sdist > ropeLen && ropeLen > 0 && sdist > 0) {
+      // Soft spring: resistance increases with stretch
+      // stretch = how far beyond rest length
+      // effective = ropeLen + stretch / (1 + k * stretch)  — asymptotic curve
+      const stretch = sdist - ropeLen;
+      const k = 0.02;  // spring stiffness (lower = stretchier, higher = stiffer)
+      const effective = ropeLen + stretch / (1 + k * stretch);
+      const scale = effective / sdist;
       this.sprite.x = anchorX + sdx * scale;
       this.sprite.y = anchorY + sdy * scale;
     }
