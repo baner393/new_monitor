@@ -108,6 +108,16 @@ function createWindow() {
     },
   });
 
+  // Fix DPI scaling - prevent Windows from auto-scaling
+  mainWindow.webContents.setZoomFactor(1);
+
+  // Handle DPI changes when window moves between monitors
+  mainWindow.on('moved', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('dpi-changed');
+    }
+  });
+
   // Enable click-through with forward
   mainWindow.setIgnoreMouseEvents(true, { forward: true });
 

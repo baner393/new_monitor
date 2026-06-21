@@ -9,6 +9,22 @@ import { InputManager } from './input.js';
 import { Panel } from './panel.js';
 import { SettingsPanel } from './settings.js';
 
+// ── Font loading gate ─────────────────────────────────────────────────
+async function waitForFonts() {
+  try {
+    await document.fonts.load('16px "Mojang"');
+    await document.fonts.load('16px "Unifont"');
+    await document.fonts.ready;
+    console.log('[Fonts] Loaded: Mojang + Unifont');
+  } catch (e) {
+    console.warn('[Fonts] Loading failed, using fallbacks:', e);
+  }
+}
+
+// ── Init ──────────────────────────────────────────────────────────────
+async function init() {
+  await waitForFonts();
+
 // ── Pixel-art rendering settings ───────────────────────────────────────
 BaseTexture.defaultOptions.scaleMode = SCALE_MODES.NEAREST;
 
@@ -18,10 +34,13 @@ const TURTLE_SIZE = 64;
 const THROW_SETTLE_THRESHOLD = 5; // px/s total speed to settle physics
 
 // ── Init PixiJS Application ───────────────────────────────────────────
+const DPR = window.devicePixelRatio || 1;
+
 const pixiApp = new PIXI.Application({
   backgroundAlpha: 0,
   antialias: false,
-  resolution: 1,
+  resolution: DPR,
+  autoDensity: true,
   roundPixels: true,
   width: window.innerWidth,
   height: window.innerHeight,
@@ -518,3 +537,7 @@ window.addEventListener('resize', () => {
 });
 
 console.log('🐢 Turtle Monitor renderer ready');
+
+} // end init
+
+init();

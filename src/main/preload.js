@@ -54,6 +54,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 
   /**
+   * Subscribe to DPI change events (window moved between monitors).
+   * @param {() => void} callback
+   * @returns {() => void} unsubscribe function
+   */
+  onDpiChanged: (callback) => {
+    const listener = () => callback();
+    ipcRenderer.on('dpi-changed', listener);
+    return () => ipcRenderer.removeListener('dpi-changed', listener);
+  },
+
+  /**
    * Subscribe to settings-changed event from main process.
    * @param {(settings: object) => void} callback
    * @returns {() => void} unsubscribe function

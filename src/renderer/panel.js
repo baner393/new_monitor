@@ -311,24 +311,25 @@ function drawMCBorder(g, w, h) {
 // ── Helper: create a bitmap text (falls back to PIXI.Text) ────────────
 
 function makeText(str, size, color, bold = false, isLabel = false) {
-  // Detect if string is numeric (numbers, spaces, dots, %, /, etc.)
   const isNumeric = /^[\d\s.%/°CW\-+]+$/.test(str);
   const fontFamily = isNumeric 
-    ? 'Mojang, "Courier New", monospace'  // Keep Mojang for numbers
-    : 'Unifont, "Microsoft YaHei", "PingFang SC", sans-serif';  // Unifont for text
+    ? '"Mojang", "Courier New", monospace'
+    : '"Unifont", "Microsoft YaHei", "PingFang SC", sans-serif';
   
   const style = new PIXI.TextStyle({
     fontFamily: fontFamily,
     fontSize: size,
     fill: color,
     fontWeight: bold ? 'bold' : 'normal',
-    stroke: 0x2a2a3a,  // dark blue-gray stroke (lighter than black)
-    strokeThickness: isLabel ? 1 : (bold ? 3 : 2),  // thinner stroke for labels
+    stroke: 0x1a1a2e,
+    strokeThickness: isLabel ? 0.5 : (bold ? 1.5 : 1),
+    lineJoin: 'round',
+    miterLimit: 0,
+    padding: 4,
     dropShadow: false,
   });
   const txt = new PIXI.Text(str, style);
-  txt.resolution = window.devicePixelRatio || 2;
-  txt.autoResolution = true;
+  txt.roundPixels = true;
   return txt;
 }
 
