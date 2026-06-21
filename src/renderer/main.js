@@ -276,6 +276,14 @@ let bounceTime = 0;
 const BOUNCE_DURATION = 0.8;
 const MOMENTUM_STOP_THRESHOLD = 0.0005; // velocity below this → stop
 
+// ── Idle animation state (breathing + blinking) ─────────────────────
+let breathTime = 0;
+let blinkTimer = 0;
+let nextBlinkAt = 3 + Math.random() * 2; // 3-5 seconds
+let isBlinking = false;
+let blinkProgress = 0;
+const BLINK_DURATION = 0.15; // 150ms
+
 function startBounce(fromX, fromY) {
   bounceStartPos = { x: fromX, y: fromY };
   bounceTime = 0;
@@ -415,6 +423,48 @@ pixiApp.ticker.add((delta) => {
   // Calculate pull distance BEFORE updating physics
   const pullDist = (state === 'PULLING') ? 
     Math.sqrt((sprite.x - anchorX)**2 + (sprite.y - anchorY)**2) - physics.restRopeLength : 0;
+
+  // ── Idle animations (breathing + blinking) ───────────────────────
+  if (state === 'IDLE' || state === 'HOVER') {
+    breathTime += dt;
+
+    // Breathing: gentle vertical scale oscillation
+    const baseScale = sprite.scale.x; // use X scale as base (preserves user-set size)
+    const breathScale = baseScale * (1 + Math.sin(breathTime * 2) * 0.02);
+
+    // Blinking
+    blinkTimer += dt;
+    if (!isBlinking && blinkTimer >= nextBlinkAt) {
+      isBlinking = true;
+      blinkProgress = 0;
+    }
+    if (isBlinking) {
+      blinkProgress += dt;
+      const t = blinkProgress / BLINK_DURATION;
+      if (t >= 1) {
+        isBlinking = false;
+        blinkTimer = 0;
+        nextBlinkAt = 3 + Math.random() * 2;
+        sprite.scale.y = breathScale;
+      } else {
+        // Quick squish: 0→1→0 over duration
+        const squish = Math.sin(t * Math.PI); // 0→1→0
+        sprite.scale.y = breathScale * (1 - squish * 0.85); // squish to 15% height
+      }
+    } else {
+      sprite.scale.y = breathScale;
+    }
+  } else {
+    // Non-idle: reset animation state
+    breathTime = 0;
+    blinkTimer = 0;
+    isBlinking = false;
+    // Restore normal scale (preserve the base scale from settings)
+    const currentBaseScale = sprite.scale.x;
+    if (Math.abs(sprite.scale.y - currentBaseScale) > 0.01) {
+      sprite.scale.y = currentBaseScale;
+    }
+  }
 
   // State-specific behavior
   if (state === 'PULLING') {
