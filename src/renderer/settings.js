@@ -85,6 +85,7 @@ const DEFAULTS = {
   ropeDamping:      15,
   bounceRestitution: 0.6,
   airDamping:       0.98,
+  ropeElasticity:   0.02,
 };
 
 // Setting definitions with labels, ranges, and hints
@@ -109,12 +110,12 @@ const SETTINGS_DEFS = [
     ],
   },
   {
-    section: '物理设置',
+    section: '左键属性',
     items: [
       {
         key: 'gravity',
         label: '重力',
-        hint: '重力加速度，影响下落和摆动速度',
+        hint: '重力加速度，影响摆动和下落速度',
         min: 200, max: 2000, step: 50,
         unit: 'px/s²',
       },
@@ -126,17 +127,24 @@ const SETTINGS_DEFS = [
         unit: '',
       },
       {
+        key: 'ropeElasticity',
+        label: '绳子弹性',
+        hint: '左键拖拽时绳子的弹性，越小越松/越大越紧',
+        min: 0.005, max: 0.1, step: 0.005,
+        unit: '',
+      },
+    ],
+  },
+  {
+    section: '右键属性',
+    items: [
+      {
         key: 'pulleyFriction',
         label: '滑轮摩擦',
         hint: '滑轮水平移动的摩擦力',
         min: 0.8, max: 1.0, step: 0.01,
         unit: '',
       },
-    ],
-  },
-  {
-    section: '甩动物理设置',
-    items: [
       {
         key: 'ropeStiffness',
         label: '绳子弹簧刚度',

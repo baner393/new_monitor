@@ -74,6 +74,7 @@ class PhysicsEngine {
     this.ropeDamping       = ROPE_DAMPING
     this.ropeBounceRest    = BOUNCE_RESTITUTION
     this.airDamping        = AIR_DAMPING
+    this.ropeElasticity    = 0.02   // 左键拖拽绳子弹性（越小越松/越大越紧）
 
     // ── VelocityTracker 实例 ──
     this.velocityTracker = new VelocityTracker()

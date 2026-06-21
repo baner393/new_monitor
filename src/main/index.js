@@ -20,6 +20,7 @@ const DEFAULT_SETTINGS = {
   ropeDamping:      15,
   bounceRestitution: 0.6,
   airDamping:       0.98,
+  ropeElasticity:   0.02,
 };
 
 let currentSettings = { ...DEFAULT_SETTINGS };

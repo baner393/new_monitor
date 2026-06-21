@@ -217,7 +217,7 @@ export class InputManager {
       // stretch = how far beyond rest length
       // effective = ropeLen + stretch / (1 + k * stretch)  — asymptotic curve
       const stretch = sdist - ropeLen;
-      const k = 0.02;  // spring stiffness (lower = stretchier, higher = stiffer)
+      const k = this.physics.ropeElasticity;  // configurable from settings
       const effective = ropeLen + stretch / (1 + k * stretch);
       const scale = effective / sdist;
       this.sprite.x = anchorX + sdx * scale;

@@ -316,13 +316,16 @@ function makeText(str, size, color, bold = false, isLabel = false) {
     ? '"Mojang", "Courier New", monospace'
     : '"Unifont", "Microsoft YaHei", "PingFang SC", sans-serif';
   
+  // Unifont only renders cleanly at 16px — force labels to at least 16
+  const actualSize = isLabel ? Math.max(size, 16) : size;
+
   const style = new PIXI.TextStyle({
     fontFamily: fontFamily,
-    fontSize: size,
+    fontSize: actualSize,
     fill: color,
     fontWeight: bold ? 'bold' : 'normal',
     stroke: 0x1a1a2e,
-    strokeThickness: isLabel ? 0.5 : (bold ? 1.5 : 1),
+    strokeThickness: isLabel ? 1 : (bold ? 1.5 : 1),
     lineJoin: 'round',
     miterLimit: 0,
     padding: 4,

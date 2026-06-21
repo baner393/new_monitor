@@ -125,6 +125,7 @@ function applySettings(settings) {
   if (settings.ropeDamping !== undefined) physics.ropeDamping = settings.ropeDamping;
   if (settings.bounceRestitution !== undefined) physics.ropeBounceRest = settings.bounceRestitution;
   if (settings.airDamping !== undefined) physics.airDamping = settings.airDamping;
+  if (settings.ropeElasticity !== undefined) physics.ropeElasticity = settings.ropeElasticity;
   
   // Handle turtleSize - update sprite scale
   if (settings.turtleSize !== undefined) {
