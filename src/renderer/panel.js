@@ -315,7 +315,7 @@ function makeText(str, size, color, bold = false, isLabel = false) {
   const isNumeric = /^[\d\s.%/°CW\-+]+$/.test(str);
   const fontFamily = isNumeric 
     ? 'Mojang, "Courier New", monospace'  // Keep Mojang for numbers
-    : '"Noto Sans CJK SC", "Microsoft YaHei", "PingFang SC", sans-serif';  // Noto Sans for text
+    : 'Unifont, "Microsoft YaHei", "PingFang SC", sans-serif';  // Unifont for text
   
   const style = new PIXI.TextStyle({
     fontFamily: fontFamily,
