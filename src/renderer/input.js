@@ -13,8 +13,6 @@
 import { VelocityTracker } from './velocity-tracker.js';
 
 const PULL_THRESHOLD = 80;
-const WINDOW_WIDTH = 200;
-const WINDOW_HEIGHT = 400;
 
 export class InputManager {
   constructor({ pixiApp, sprite, stateMachine, physics }) {
@@ -33,7 +31,6 @@ export class InputManager {
     this._lastDragTime = 0;
     this._pullExceeded = false;
     this._lastPullExceeded = false;  // Saved value for BOUNCE_COMPLETE
-    this._windowExpanded = false;
 
     // ── Right-click (pulley / throw) drag state ──
     this._isRightDragging = false;
@@ -41,6 +38,7 @@ export class InputManager {
     this._rightDragStartY = 0;           // screen Y where right-drag began
     this._rightDragAnchorStart = 0;      // physics.screenAnchorX at drag start
     this._rightDragMoved = false;
+    this._rightDragTime = 0;
 
     // ── VelocityTracker for right-click throw ──
     this._rightVelocityTracker = new VelocityTracker(3000);
@@ -118,6 +116,7 @@ export class InputManager {
         this._rightDragStartY = e.clientY;
         this._rightDragAnchorStart = this.physics.screenAnchorX;
         this._rightDragMoved = false;
+        this._rightDragTime = performance.now();
 
         // Initialize VelocityTracker for throw
         this._rightVelocityTracker.clear();
@@ -180,7 +179,10 @@ export class InputManager {
       this._rightVelocityTracker.addSample(e.clientX, e.clientY);
 
       // Update physics drag — turtle follows mouse, rope constraint propagates
-      this.physics.updateDrag(e.clientX, e.clientY);
+      const dragNow = performance.now();
+      const dragDt = Math.min((dragNow - this._rightDragTime) / 1000, 0.033);
+      this._rightDragTime = dragNow;
+      this.physics.updateDrag(e.clientX, e.clientY, dragDt);
 
       return;
     }
@@ -290,31 +292,7 @@ export class InputManager {
     this._rightVelocityTracker.clear();
   }
 
-  _expandWindow() {
-    if (this._windowExpanded || this._destroyed) return;
-    this._windowExpanded = true;
-    try {
-      // Keep window position, expand downward
-      window.electronAPI.setBounds({ 
-        width: WINDOW_WIDTH, 
-        height: EXPANDED_HEIGHT
-      });
-    } catch (err) {
-      console.warn('[Input] setBounds expand failed:', err.message);
-    }
-  }
-
-  _restoreWindow() {
-    if (!this._windowExpanded || this._destroyed) return;
-    this._windowExpanded = false;
-    try {
-      window.electronAPI.setBounds({ 
-        width: WINDOW_WIDTH, 
-        height: DEFAULT_HEIGHT
-      });
-      // Don't reset sprite position here - let BOUNCE animation control it
-    } catch (err) {
-      console.warn('[Input] setBounds restore failed:', err.message);
-    }
-  }
+  // Note: _expandWindow() and _restoreWindow() were removed — they referenced
+  // undefined constants (EXPANDED_HEIGHT, DEFAULT_HEIGHT) and were never called.
+  // The window is already full-screen; no resizing is needed.
 }

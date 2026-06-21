@@ -123,7 +123,7 @@ class PhysicsEngine {
   // 右键甩动：拖拽更新
   // 绳子约束传播：乌龟移动 → 通过绳子张力拉动滑轮
   // ──────────────────────────────────────────
-  updateDrag(mouseX, mouseY) {
+  updateDrag(mouseX, mouseY, dt) {
     if (!this.turtle.dragging) return
 
     // 记录采样
@@ -138,9 +138,9 @@ class PhysicsEngine {
     const dy = this.turtle.y - this.pulley.y
     const dist = Math.sqrt(dx * dx + dy * dy)
 
-    if (dist > DEFAULT_ROPE_LENGTH) {
+    if (dist > this.restRopeLength) {
       // 绳子被拉伸，计算拉伸方向的分量
-      const stretch = dist - DEFAULT_ROPE_LENGTH
+      const stretch = dist - this.restRopeLength
       const nx = dx / dist
       const ny = dy / dist
 
@@ -149,11 +149,11 @@ class PhysicsEngine {
       const pullForceX = tensionForce * nx
 
       // 滑轮受力平衡（高阻尼，跟随式）
-      this.pulley.vx += pullForceX * 0.016 // 假设 ~60fps 的 dt
-      this.pulley.vx *= 0.85 // 高阻尼
+      this.pulley.vx += pullForceX * dt
+      this.pulley.vx *= Math.pow(0.85, dt * 60) // 高阻尼 (frame-rate independent)
 
       // 更新滑轮位置
-      this.pulley.x += this.pulley.vx * 0.016
+      this.pulley.x += this.pulley.vx * dt
 
       // 滑轮边界约束
       const margin = 50
@@ -201,7 +201,7 @@ class PhysicsEngine {
     const dist = Math.sqrt(dx * dx + dy * dy)
 
     if (dist > 0.01) {
-      const stretch = dist - DEFAULT_ROPE_LENGTH
+      const stretch = dist - this.restRopeLength
 
       if (stretch > 0) {
         // 绳子被拉伸 → 弹簧力
@@ -237,8 +237,8 @@ class PhysicsEngine {
     }
 
     // 空气阻尼
-    this.turtle.vx *= this.airDamping
-    this.turtle.vy *= this.airDamping
+    this.turtle.vx *= Math.pow(this.airDamping, dt * 60)
+    this.turtle.vy *= Math.pow(this.airDamping, dt * 60)
 
     // 积分乌龟位置
     this.turtle.x += this.turtle.vx * dt
@@ -262,7 +262,7 @@ class PhysicsEngine {
       this.turtle.y = this.windowHeight - margin
       this.turtle.vy = -Math.abs(this.turtle.vy) * this.ropeBounceRest
       // 地面摩擦
-      this.turtle.vx *= 0.95
+      this.turtle.vx *= Math.pow(0.95, dt * 60)
     }
 
     // 顶部边界（不应低于绳子锚点）
@@ -274,7 +274,7 @@ class PhysicsEngine {
     // ── 滑轮物理 ──
 
     // 摩擦
-    this.pulley.vx *= this.pulleyFriction
+    this.pulley.vx *= Math.pow(this.pulleyFriction, dt * 60)
 
     // 积分滑轮位置
     this.pulley.x += this.pulley.vx * dt
@@ -325,7 +325,7 @@ class PhysicsEngine {
 
     // 欧拉积分
     this.pendulumOmega += alpha * dt
-    this.pendulumOmega *= this.damping
+    this.pendulumOmega *= Math.pow(this.damping, dt * 60)
     this.pendulumAngle += this.pendulumOmega * dt
 
     // 限制摆角
@@ -345,7 +345,7 @@ class PhysicsEngine {
     this.screenAnchorX += this.pulleyMomentumVelocity * dt
 
     // 摩擦
-    this.pulleyMomentumVelocity *= this.pulleyFriction
+    this.pulleyMomentumVelocity *= Math.pow(this.pulleyFriction, dt * 60)
 
     // 边界反弹 — 像素 margin=50 转归一化
     const w = Math.max(this.windowWidth, 1)
