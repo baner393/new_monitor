@@ -311,7 +311,7 @@ function drawMCBorder(g, w, h) {
 // ── Helper: create a bitmap text (falls back to PIXI.Text) ────────────
 
 function makeText(str, size, color, bold = false, isLabel = false) {
-  const isNumeric = /^[\d\s.%/°CW\-+]+$/.test(str);
+  const isNumeric = /^\d/.test(str);  // starts with digit → treat as numeric (Mojang font)
   const fontFamily = isNumeric 
     ? '"Mojang", "Courier New", monospace'
     : '"Unifont", "Microsoft YaHei", "PingFang SC", sans-serif';

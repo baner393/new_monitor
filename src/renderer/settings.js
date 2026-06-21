@@ -130,7 +130,7 @@ const SETTINGS_DEFS = [
         key: 'ropeElasticity',
         label: '绳子弹性',
         hint: '左键拖拽时绳子的弹性，越小越松/越大越紧',
-        min: 0.005, max: 0.1, step: 0.005,
+        min: 0.001, max: 2.0, step: 0.001,
         unit: '',
       },
     ],
@@ -374,7 +374,7 @@ function drawMCBorder(g, w, h) {
 // ── Helper: create text ────────────────────────────────────────────
 
 function makeText(str, size, color, bold = false, isLabel = false) {
-  const isNumeric = /^[\d\s.%/°CW\-+]+$/.test(str);
+  const isNumeric = /^\d/.test(str);  // starts with digit → treat as numeric (Mojang font)
   const fontFamily = isNumeric 
     ? '"Mojang", "Courier New", monospace'
     : '"Unifont", "Microsoft YaHei", "PingFang SC", sans-serif';
