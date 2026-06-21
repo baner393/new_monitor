@@ -2,7 +2,7 @@ import * as PIXI from 'pixi.js';
 import { BaseTexture, SCALE_MODES } from 'pixi.js';
 import idleSpriteUrl from '../../assets/sprites/idle.png';
 import happySpriteUrl from '../../assets/sprites/happy.png';
-import { PhysicsEngine, DEFAULT_ROPE_LENGTH } from './physics.js';
+import { PhysicsEngine } from './physics.js';
 import { RopeRenderer } from './rope.js';
 import { StateMachine } from './state-machine.js';
 import { InputManager } from './input.js';
@@ -136,6 +136,7 @@ function applySettings(settings) {
   // Handle ropeLength - update default rope length in physics
   if (settings.ropeLength !== undefined) {
     physics.ropeLength = settings.ropeLength;
+    physics.restRopeLength = settings.ropeLength;
     console.log(`[Settings] Rope length: ${settings.ropeLength}`);
   }
 }
@@ -258,22 +259,23 @@ function updateBounce(dt) {
   const decay = Math.exp(-t * 5);
   const oscillation = Math.cos(t * 12) * decay;
   
-  // Target position (pendulum at default rope length)
+  // Target position (pendulum at user-configured rest rope length)
   const anchorX = physics.screenAnchorX * window.innerWidth;
   const anchorY = 0;
-  const targetX = anchorX + Math.sin(physics.pendulumAngle) * DEFAULT_ROPE_LENGTH;
-  const targetY = anchorY + Math.cos(physics.pendulumAngle) * DEFAULT_ROPE_LENGTH;
+  const restLen = physics.restRopeLength;
+  const targetX = anchorX + Math.sin(physics.pendulumAngle) * restLen;
+  const targetY = anchorY + Math.cos(physics.pendulumAngle) * restLen;
   
   // Interpolate with oscillation
   const currentX = targetX + (bounceStartPos.x - targetX) * oscillation * (1 - t);
   const currentY = targetY + (bounceStartPos.y - targetY) * oscillation * (1 - t);
   
-  // Gradually return rope length to default
-  physics.ropeLength = DEFAULT_ROPE_LENGTH + (physics.ropeLength - DEFAULT_ROPE_LENGTH) * (1 - t);
+  // Gradually return rope length to user-configured rest length
+  physics.ropeLength = restLen + (physics.ropeLength - restLen) * (1 - t);
   
   if (t >= 1) {
     bounceStartPos = null;
-    physics.ropeLength = DEFAULT_ROPE_LENGTH;
+    physics.ropeLength = restLen;
     return { x: targetX, y: targetY, done: true };
   }
   return { x: currentX, y: currentY, done: false };
@@ -381,7 +383,7 @@ pixiApp.ticker.add((delta) => {
 
   // Calculate pull distance BEFORE updating physics
   const pullDist = (state === 'PULLING') ? 
-    Math.sqrt((sprite.x - anchorX)**2 + (sprite.y - anchorY)**2) - DEFAULT_ROPE_LENGTH : 0;
+    Math.sqrt((sprite.x - anchorX)**2 + (sprite.y - anchorY)**2) - physics.restRopeLength : 0;
 
   // State-specific behavior
   if (state === 'PULLING') {
@@ -481,8 +483,8 @@ pixiApp.ticker.add((delta) => {
     const dx = sprite.x - ropeAnchorX;
     const dy = sprite.y - ropeAnchorY;
     const dist = Math.sqrt(dx * dx + dy * dy);
-    const stretch = Math.max(0, dist - DEFAULT_ROPE_LENGTH);
-    const tension = stretch / DEFAULT_ROPE_LENGTH; // 0 ~ 1+
+    const stretch = Math.max(0, dist - physics.restRopeLength);
+    const tension = stretch / physics.restRopeLength; // 0 ~ 1+
     // Higher tension → less sag (rope becomes taut)
     adjustedSag = sag * Math.max(0.1, 1 - tension * 0.8);
   }

@@ -50,6 +50,7 @@ class PhysicsEngine {
     this.pendulumAngle = 0          // θ (弧度)
     this.pendulumOmega = 0          // θ' (角速度)
     this.ropeLength    = DEFAULT_ROPE_LENGTH
+    this.restRopeLength = DEFAULT_ROPE_LENGTH  // 用户设置的静止绳长（不被动画修改）
 
     // ── 滑轮状态 ──
     this.screenAnchorX           = 0.5   // 归一化 X 锚点 (0.0 ~ 1.0)
@@ -366,6 +367,7 @@ class PhysicsEngine {
     this.pendulumAngle = 0
     this.pendulumOmega = 0
     this.ropeLength    = DEFAULT_ROPE_LENGTH
+    this.restRopeLength = DEFAULT_ROPE_LENGTH
     this.screenAnchorX = 0.5
     this.pulleyMomentumVelocity = 0
     this._time = 0
