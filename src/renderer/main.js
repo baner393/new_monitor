@@ -140,14 +140,14 @@ function drawEyeHighlights() {
   eyeGraphics.clear();
   
   // Draw eyelid covers (green pixels over the eyes)
+  // 使用 2x2 像素块，使眨眼效果更明显
+  const pixelSize = scale * 2; // 5x5 像素（原来是 2.5x2.5）
   eyeGraphics.beginFill(EYE_LID_COLOR, 1.0);
   for (const px of EYE_POSITIONS) {
-    eyeGraphics.drawRect(
-      (px.x - 12) * scale,  // offset from center (12 = half of 24)
-      (px.y - 12) * scale,
-      scale,
-      scale
-    );
+    const drawX = (px.x - 12) * scale - scale / 2;  // 居中偏移
+    const drawY = (px.y - 12) * scale - scale / 2;
+    eyeGraphics.drawRect(drawX, drawY, pixelSize, pixelSize);
+    console.log('[Eye] 绘制眼睛覆盖: (' + px.x + ',' + px.y + ') → (' + drawX + ',' + drawY + '), 大小:', pixelSize + 'x' + pixelSize);
   }
   eyeGraphics.endFill();
 }
@@ -496,14 +496,15 @@ pixiApp.ticker.add((delta) => {
       isBlinking = true;
       blinkProgress = 0;
       eyeGraphics.visible = true; // show eyelids (eyes closed)
-    }
-    if (isBlinking) {
+      console.log('[Blink] 眨眼开始! eyeGraphics.visible =', eyeGraphics.visible);
+    } else if (isBlinking) {  // ✅ 改为 else if 避免同帧冲突
       blinkProgress += dt;
       if (blinkProgress >= BLINK_DURATION) {
         isBlinking = false;
         blinkTimer = 0;
         nextBlinkAt = 3 + Math.random() * 2;
         eyeGraphics.visible = false; // hide eyelids (eyes open)
+        console.log('[Blink] 眨眼结束! eyeGraphics.visible =', eyeGraphics.visible);
       }
     }
   } else {
