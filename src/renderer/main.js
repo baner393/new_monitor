@@ -1,7 +1,10 @@
 import * as PIXI from 'pixi.js';
 import { BaseTexture, SCALE_MODES } from 'pixi.js';
 import idleSpriteUrl from '../../assets/sprites/idle.png';
+import hoverSpriteUrl from '../../assets/sprites/hover.png';
+import pullSpriteUrl from '../../assets/sprites/pull.png';
 import happySpriteUrl from '../../assets/sprites/happy.png';
+import painSpriteUrl from '../../assets/sprites/pain.png';
 import { PhysicsEngine } from './physics.js';
 import { RopeRenderer } from './rope.js';
 import { StateMachine } from './state-machine.js';
@@ -65,7 +68,35 @@ ropeContainer.addChild(ropeGraphics);
 
 // ── Load sprites ───────────────────────────────────────────────────────
 const idleTexture  = PIXI.Texture.from(idleSpriteUrl);
+const hoverTexture = PIXI.Texture.from(hoverSpriteUrl);
+const pullTexture  = PIXI.Texture.from(pullSpriteUrl);
 const happyTexture = PIXI.Texture.from(happySpriteUrl);
+const painTexture  = PIXI.Texture.from(painSpriteUrl);
+
+function setSpriteTextureForState(state) {
+  switch (state) {
+    case 'IDLE':
+      sprite.texture = idleTexture;
+      break;
+    case 'HOVER':
+      sprite.texture = hoverTexture;
+      break;
+    case 'PULLING':
+    case 'BOUNCING':
+    case 'PULLEY_DRAG':
+    case 'PULLEY_PHYSICS':
+      sprite.texture = pullTexture;
+      break;
+    case 'HAPPY':
+    case 'EXPANDING':
+    case 'PANEL_OPEN':
+    case 'COLLAPSING':
+      sprite.texture = happyTexture;
+      break;
+    default:
+      sprite.texture = idleTexture;
+  }
+}
 
 const sprite = new PIXI.Sprite(idleTexture);
 sprite.anchor.set(0.5, 0.5);
@@ -287,7 +318,8 @@ let prevState = 'IDLE';
 
 function onStateChange() {
   const newState = stateMachine.getState();
-  
+  setSpriteTextureForState(newState);
+
   // Capture bounce start position on PULLING → BOUNCING transition
   if (prevState === 'PULLING' && newState === 'BOUNCING') {
     startBounce(sprite.x, sprite.y);
@@ -306,7 +338,6 @@ function onStateChange() {
   // BOUNCING → EXPANDING: pull exceeded threshold, open panel
   if (prevState === 'BOUNCING' && newState === 'EXPANDING') {
     console.log('[Panel] EXPANDING — showing panel + HAPPY sprite');
-    sprite.texture = happyTexture;
     // Disable click-through while panel is open
     window.electronAPI.setIgnoreMouseEvents(false);
     // Position panel below the sprite
@@ -323,7 +354,6 @@ function onStateChange() {
     console.log('[Panel] COLLAPSING');
     panel.collapse(() => {
       console.log('[Panel] Fully closed → IDLE');
-      sprite.texture = idleTexture;
       window.electronAPI.setIgnoreMouseEvents(true);
       isOverSprite = false;
       stateMachine.transition('PANEL_FULLY_CLOSED');
