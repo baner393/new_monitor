@@ -5,6 +5,7 @@ import hoverSpriteUrl from '../../assets/sprites/hover.png';
 import pullSpriteUrl from '../../assets/sprites/pull.png';
 import happySpriteUrl from '../../assets/sprites/happy.png';
 import painSpriteUrl from '../../assets/sprites/pain.png';
+import blinkSpriteUrl from '../../assets/sprites/blink.png';
 import { PhysicsEngine } from './physics.js';
 import { RopeRenderer } from './rope.js';
 import { StateMachine } from './state-machine.js';
@@ -72,6 +73,7 @@ const hoverTexture = PIXI.Texture.from(hoverSpriteUrl);
 const pullTexture  = PIXI.Texture.from(pullSpriteUrl);
 const happyTexture = PIXI.Texture.from(happySpriteUrl);
 const painTexture  = PIXI.Texture.from(painSpriteUrl);
+const blinkTexture = PIXI.Texture.from(blinkSpriteUrl);
 
 // ── State Machine Presets ──────────────────────────────────────────────
 //
@@ -125,35 +127,8 @@ bodySprite.anchor.set(0.5, 0.5);
 bodySprite.scale.set(2.5);
 turtleContainer.addChild(bodySprite);
 
-// Eye overlay (covers eye pixels during blink to simulate eyelids)
-const eyeGraphics = new PIXI.Graphics();
-// Eye positions in 24x24 sprite: (8,7) and (15,7) are black outline pixels
-// During blink, we cover them with green to simulate closing eyes
-const EYE_POSITIONS = [
-  {x: 8, y: 7},  // left eye
-  {x: 15, y: 7}, // right eye
-];
-const EYE_LID_COLOR = 0xC3E46C; // light green (same as surrounding body)
-
-function drawEyeHighlights() {
-  const scale = bodySprite.scale.x; // use current body scale
-  eyeGraphics.clear();
-  
-  // Draw eyelid covers (green pixels over the eyes)
-  // 使用 2x2 像素块，使眨眼效果更明显
-  const pixelSize = scale * 2; // 5x5 像素（原来是 2.5x2.5）
-  eyeGraphics.beginFill(EYE_LID_COLOR, 1.0);
-  for (const px of EYE_POSITIONS) {
-    const drawX = (px.x - 12) * scale - scale / 2;  // 居中偏移
-    const drawY = (px.y - 12) * scale - scale / 2;
-    eyeGraphics.drawRect(drawX, drawY, pixelSize, pixelSize);
-    console.log('[Eye] 绘制眼睛覆盖: (' + px.x + ',' + px.y + ') → (' + drawX + ',' + drawY + '), 大小:', pixelSize + 'x' + pixelSize);
-  }
-  eyeGraphics.endFill();
-}
-drawEyeHighlights();
-eyeGraphics.visible = false; // hidden by default (eyes open)
-turtleContainer.addChild(eyeGraphics);
+// Blink uses texture swap (blinkTexture has squinting eyes built in)
+// No overlay needed
 
 // ── Aliases for backward compatibility ─────────────────────────────
 const sprite = turtleContainer; // InputManager uses sprite.x/y
@@ -216,8 +191,6 @@ function applySettings(settings) {
   if (settings.turtleSize !== undefined) {
     const scale = settings.turtleSize / 24; // 24px is base sprite size
     bodySprite.scale.set(scale);
-    // Update eye pixel scale to match
-    drawEyeHighlights(); // redraw at new scale
     console.log(`[Settings] Turtle size: ${settings.turtleSize}, scale: ${scale}`);
   }
   
@@ -490,21 +463,19 @@ pixiApp.ticker.add((delta) => {
     const breathScale = baseScale * (1 + breathAmount);
     turtleContainer.scale.y = breathScale / baseScale; // normalize to 1.0±5%
 
-    // Blinking: show/hide eye overlay to simulate eyelids
+    // Blinking: swap to blinkTexture (squinting eyes) for 150ms
     blinkTimer += dt;
     if (!isBlinking && blinkTimer >= nextBlinkAt) {
       isBlinking = true;
       blinkProgress = 0;
-      eyeGraphics.visible = true; // show eyelids (eyes closed)
-      console.log('[Blink] 眨眼开始! eyeGraphics.visible =', eyeGraphics.visible);
-    } else if (isBlinking) {  // ✅ 改为 else if 避免同帧冲突
+      bodySprite.texture = blinkTexture; // squinting eyes
+    } else if (isBlinking) {
       blinkProgress += dt;
       if (blinkProgress >= BLINK_DURATION) {
         isBlinking = false;
         blinkTimer = 0;
         nextBlinkAt = 3 + Math.random() * 2;
-        eyeGraphics.visible = false; // hide eyelids (eyes open)
-        console.log('[Blink] 眨眼结束! eyeGraphics.visible =', eyeGraphics.visible);
+        bodySprite.texture = idleTexture; // eyes open
       }
     }
   } else {
@@ -514,7 +485,6 @@ pixiApp.ticker.add((delta) => {
     isBlinking = false;
     // Restore normal scale
     turtleContainer.scale.y = 1;
-    eyeGraphics.visible = false; // ensure eyes are open
   }
 
   // State-specific behavior
