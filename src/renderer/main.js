@@ -125,29 +125,34 @@ bodySprite.anchor.set(0.5, 0.5);
 bodySprite.scale.set(2.5);
 turtleContainer.addChild(bodySprite);
 
-// Eye overlay (just the highlight pixels for blinking)
+// Eye overlay (covers eye pixels during blink to simulate eyelids)
 const eyeGraphics = new PIXI.Graphics();
-const EYE_PIXELS = [
-  {x: 17, y: 1, color: 0xE6E6E6, alpha: 0.4},  // highlight
-  {x: 18, y: 2, color: 0xE6E6E6, alpha: 0.4},  // highlight
-  {x: 19, y: 3, color: 0xE6E6E6, alpha: 0.4},  // highlight
+// Eye positions in 24x24 sprite: (8,7) and (15,7) are black outline pixels
+// During blink, we cover them with green to simulate closing eyes
+const EYE_POSITIONS = [
+  {x: 8, y: 7},  // left eye
+  {x: 15, y: 7}, // right eye
 ];
+const EYE_LID_COLOR = 0xC3E46C; // light green (same as surrounding body)
 
 function drawEyeHighlights() {
   const scale = bodySprite.scale.x; // use current body scale
   eyeGraphics.clear();
-  for (const px of EYE_PIXELS) {
-    eyeGraphics.beginFill(px.color, px.alpha);
+  
+  // Draw eyelid covers (green pixels over the eyes)
+  eyeGraphics.beginFill(EYE_LID_COLOR, 1.0);
+  for (const px of EYE_POSITIONS) {
     eyeGraphics.drawRect(
       (px.x - 12) * scale,  // offset from center (12 = half of 24)
       (px.y - 12) * scale,
       scale,
       scale
     );
-    eyeGraphics.endFill();
   }
+  eyeGraphics.endFill();
 }
 drawEyeHighlights();
+eyeGraphics.visible = false; // hidden by default (eyes open)
 turtleContainer.addChild(eyeGraphics);
 
 // ── Aliases for backward compatibility ─────────────────────────────
@@ -485,27 +490,21 @@ pixiApp.ticker.add((delta) => {
     const breathScale = baseScale * (1 + breathAmount);
     turtleContainer.scale.y = breathScale / baseScale; // normalize to 1.0±5%
 
-    // Blinking: only affect eye overlay, not body
+    // Blinking: show/hide eye overlay to simulate eyelids
     blinkTimer += dt;
     if (!isBlinking && blinkTimer >= nextBlinkAt) {
       isBlinking = true;
       blinkProgress = 0;
+      eyeGraphics.visible = true; // show eyelids (eyes closed)
     }
     if (isBlinking) {
       blinkProgress += dt;
-      const t = blinkProgress / BLINK_DURATION;
-      if (t >= 1) {
+      if (blinkProgress >= BLINK_DURATION) {
         isBlinking = false;
         blinkTimer = 0;
         nextBlinkAt = 3 + Math.random() * 2;
-        eyeGraphics.scale.y = 1; // eyes fully open
-      } else {
-        // Quick squish: 0→1→0 over duration
-        const squish = Math.sin(t * Math.PI); // 0→1→0
-        eyeGraphics.scale.y = 1 - squish * 0.9; // squish to 10% height
+        eyeGraphics.visible = false; // hide eyelids (eyes open)
       }
-    } else {
-      eyeGraphics.scale.y = 1; // eyes open
     }
   } else {
     // Non-idle: reset animation state
@@ -514,7 +513,7 @@ pixiApp.ticker.add((delta) => {
     isBlinking = false;
     // Restore normal scale
     turtleContainer.scale.y = 1;
-    eyeGraphics.scale.y = 1;
+    eyeGraphics.visible = false; // ensure eyes are open
   }
 
   // State-specific behavior
