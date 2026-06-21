@@ -366,8 +366,14 @@ function drawMCBorder(g, w, h) {
 // ── Helper: create text ────────────────────────────────────────────
 
 function makeText(str, size, color, bold = false, isLabel = false) {
+  // Detect if string is numeric (numbers, spaces, dots, %, /, etc.)
+  const isNumeric = /^[\d\s.%/°CW\-+]+$/.test(str);
+  const fontFamily = isNumeric 
+    ? 'Mojang, "Courier New", monospace'  // Keep Mojang for numbers
+    : '"Noto Sans CJK SC", "Microsoft YaHei", "PingFang SC", sans-serif';  // Noto Sans for text
+  
   const style = new PIXI.TextStyle({
-    fontFamily: 'Mojang, "Courier New", monospace',
+    fontFamily: fontFamily,
     fontSize: size,
     fill: color,
     fontWeight: bold ? 'bold' : 'normal',
