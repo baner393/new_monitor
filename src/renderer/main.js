@@ -391,7 +391,23 @@ pixiApp.ticker.add((delta) => {
     // During PULLING, sprite is controlled by InputManager
     const dx = sprite.x - anchorX;
     const dy = sprite.y - anchorY;
-    physics.ropeLength = Math.sqrt(dx * dx + dy * dy);
+    const rawDist = Math.sqrt(dx * dx + dy * dy);
+
+    // Rope soft spring constraint: resist beyond restRopeLength
+    if (rawDist > physics.restRopeLength && physics.restRopeLength > 0) {
+      const stretch = rawDist - physics.restRopeLength;
+      const k = physics.ropeElasticity;
+      physics.ropeLength = physics.restRopeLength + stretch / (1 + k * stretch);
+
+      // Constrain sprite position to the effective rope length
+      if (rawDist > 0) {
+        const scale = physics.ropeLength / rawDist;
+        sprite.x = anchorX + dx * scale;
+        sprite.y = anchorY + dy * scale;
+      }
+    } else {
+      physics.ropeLength = rawDist;
+    }
     physics.pendulumAngle = Math.atan2(dx, dy);
     
   } else if (state === 'PULLEY_DRAG') {
