@@ -73,40 +73,89 @@ const pullTexture  = PIXI.Texture.from(pullSpriteUrl);
 const happyTexture = PIXI.Texture.from(happySpriteUrl);
 const painTexture  = PIXI.Texture.from(painSpriteUrl);
 
+// ── State Machine Presets ──────────────────────────────────────────────
+//
+// 位置: src/renderer/main.js → setSpriteTextureForState()
+// 作用: 根据状态机当前状态，自动切换精灵纹理
+//
+// 状态映射表:
+//   IDLE, HOVER           → idle.png   (正常站立)
+//   PULLING, BOUNCING     → pull.png   (被拉拽/回弹)
+//   PULLEY_DRAG/PHYSICS   → pull.png   (右键拖拽/物理模拟)
+//   HAPPY, EXPANDING      → happy.png  (开心/展开面板)
+//   PANEL_OPEN, COLLAPSING→ happy.png  (面板打开/收起)
+//
+// 添加/修改: 在 switch 语句中添加新的 case，或修改现有 case 的纹理
+// 可用纹理: idleTexture, hoverTexture, pullTexture, happyTexture, painTexture
+
 function setSpriteTextureForState(state) {
   switch (state) {
     case 'IDLE':
-      sprite.texture = idleTexture;
-      break;
     case 'HOVER':
-      sprite.texture = hoverTexture;
+      bodySprite.texture = idleTexture;
       break;
     case 'PULLING':
     case 'BOUNCING':
     case 'PULLEY_DRAG':
     case 'PULLEY_PHYSICS':
-      sprite.texture = pullTexture;
+      bodySprite.texture = pullTexture;
       break;
     case 'HAPPY':
     case 'EXPANDING':
     case 'PANEL_OPEN':
     case 'COLLAPSING':
-      sprite.texture = happyTexture;
+      bodySprite.texture = happyTexture;
       break;
     default:
-      sprite.texture = idleTexture;
+      bodySprite.texture = idleTexture;
   }
 }
 
-const sprite = new PIXI.Sprite(idleTexture);
-sprite.anchor.set(0.5, 0.5);
-sprite.scale.set(2.5);  // Scale up 24x24 sprite to ~60x60 pixels
-// Position at top-center of screen
-sprite.x = window.innerWidth / 2;
-sprite.y = 150;  // Near top of screen
-sprite.eventMode = 'static';
-sprite.cursor = 'pointer';
-pixiApp.stage.addChild(sprite);
+// ── Turtle Container (body + eye layer) ─────────────────────────────
+const turtleContainer = new PIXI.Container();
+turtleContainer.x = window.innerWidth / 2;
+turtleContainer.y = 150;
+turtleContainer.eventMode = 'static';
+turtleContainer.cursor = 'pointer';
+pixiApp.stage.addChild(turtleContainer);
+
+// Body sprite (main texture)
+const bodySprite = new PIXI.Sprite(idleTexture);
+bodySprite.anchor.set(0.5, 0.5);
+bodySprite.scale.set(2.5);
+turtleContainer.addChild(bodySprite);
+
+// Eye overlay (just the highlight pixels for blinking)
+const eyeGraphics = new PIXI.Graphics();
+const EYE_PIXELS = [
+  {x: 17, y: 1, color: 0xE6E6E6, alpha: 0.4},  // highlight
+  {x: 18, y: 2, color: 0xE6E6E6, alpha: 0.4},  // highlight
+  {x: 19, y: 3, color: 0xE6E6E6, alpha: 0.4},  // highlight
+];
+
+function drawEyeHighlights() {
+  const scale = bodySprite.scale.x; // use current body scale
+  eyeGraphics.clear();
+  for (const px of EYE_PIXELS) {
+    eyeGraphics.beginFill(px.color, px.alpha);
+    eyeGraphics.drawRect(
+      (px.x - 12) * scale,  // offset from center (12 = half of 24)
+      (px.y - 12) * scale,
+      scale,
+      scale
+    );
+    eyeGraphics.endFill();
+  }
+}
+drawEyeHighlights();
+turtleContainer.addChild(eyeGraphics);
+
+// ── Aliases for backward compatibility ─────────────────────────────
+const sprite = turtleContainer; // InputManager uses sprite.x/y
+Object.defineProperty(sprite, 'texture', {
+  set(tex) { bodySprite.texture = tex; },
+  get() { return bodySprite.texture; }
+});
 
 // ── GPU Panel ──────────────────────────────────────────────────────────
 const panel = new Panel();
@@ -161,7 +210,9 @@ function applySettings(settings) {
   // Handle turtleSize - update sprite scale
   if (settings.turtleSize !== undefined) {
     const scale = settings.turtleSize / 24; // 24px is base sprite size
-    sprite.scale.set(scale);
+    bodySprite.scale.set(scale);
+    // Update eye pixel scale to match
+    drawEyeHighlights(); // redraw at new scale
     console.log(`[Settings] Turtle size: ${settings.turtleSize}, scale: ${scale}`);
   }
   
@@ -428,11 +479,13 @@ pixiApp.ticker.add((delta) => {
   if (state === 'IDLE' || state === 'HOVER') {
     breathTime += dt;
 
-    // Breathing: gentle vertical scale oscillation
-    const baseScale = sprite.scale.x; // use X scale as base (preserves user-set size)
-    const breathScale = baseScale * (1 + Math.sin(breathTime * 2) * 0.02);
+    // Breathing: gentle vertical scale oscillation on container (body + eyes)
+    const baseScale = bodySprite.scale.x; // base scale from settings
+    const breathAmount = Math.sin(breathTime * 2) * 0.05; // ±5% (visible)
+    const breathScale = baseScale * (1 + breathAmount);
+    turtleContainer.scale.y = breathScale / baseScale; // normalize to 1.0±5%
 
-    // Blinking
+    // Blinking: only affect eye overlay, not body
     blinkTimer += dt;
     if (!isBlinking && blinkTimer >= nextBlinkAt) {
       isBlinking = true;
@@ -445,25 +498,23 @@ pixiApp.ticker.add((delta) => {
         isBlinking = false;
         blinkTimer = 0;
         nextBlinkAt = 3 + Math.random() * 2;
-        sprite.scale.y = breathScale;
+        eyeGraphics.scale.y = 1; // eyes fully open
       } else {
         // Quick squish: 0→1→0 over duration
         const squish = Math.sin(t * Math.PI); // 0→1→0
-        sprite.scale.y = breathScale * (1 - squish * 0.85); // squish to 15% height
+        eyeGraphics.scale.y = 1 - squish * 0.9; // squish to 10% height
       }
     } else {
-      sprite.scale.y = breathScale;
+      eyeGraphics.scale.y = 1; // eyes open
     }
   } else {
     // Non-idle: reset animation state
     breathTime = 0;
     blinkTimer = 0;
     isBlinking = false;
-    // Restore normal scale (preserve the base scale from settings)
-    const currentBaseScale = sprite.scale.x;
-    if (Math.abs(sprite.scale.y - currentBaseScale) > 0.01) {
-      sprite.scale.y = currentBaseScale;
-    }
+    // Restore normal scale
+    turtleContainer.scale.y = 1;
+    eyeGraphics.scale.y = 1;
   }
 
   // State-specific behavior
