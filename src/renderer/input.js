@@ -150,6 +150,7 @@ export class InputManager {
     this._lastDragPos = { x: e.clientX, y: e.clientY };
     this._lastDragTime = performance.now();
     this._pullExceeded = false;
+    this._pullTarget = { x: this.sprite.x, y: this.sprite.y };
 
     // Notify main process to disable mouse passthrough
     window.electronAPI.setIgnoreMouseEvents(false);
@@ -202,8 +203,11 @@ export class InputManager {
     this._lastDragTime = now;
 
     // Move sprite to follow cursor
-    this.sprite.x = e.clientX + this._dragOffset.x;
-    this.sprite.y = e.clientY + this._dragOffset.y;
+    // Store raw target; game loop applies rope constraint before positioning sprite
+    this._pullTarget = {
+      x: e.clientX + this._dragOffset.x,
+      y: e.clientY + this._dragOffset.y,
+    };
 
     // Log every 10 moves
     if (this._moveCount === undefined) this._moveCount = 0;
@@ -281,6 +285,7 @@ export class InputManager {
     this._dragOffset = { x: 0, y: 0 };
     this._dragVelocity = { x: 0, y: 0 };
     this._pullExceeded = false;
+    this._pullTarget = null;  // raw target during PULLING
   }
 
   _resetRightDrag() {

@@ -388,9 +388,12 @@ pixiApp.ticker.add((delta) => {
 
   // State-specific behavior
   if (state === 'PULLING') {
-    // During PULLING, sprite is controlled by InputManager
-    const dx = sprite.x - anchorX;
-    const dy = sprite.y - anchorY;
+    // During PULLING, use raw target from input, apply rope constraint
+    const target = inputManager._pullTarget;
+    const tx = target ? target.x : sprite.x;
+    const ty = target ? target.y : sprite.y;
+    const dx = tx - anchorX;
+    const dy = ty - anchorY;
     const rawDist = Math.sqrt(dx * dx + dy * dy);
 
     // Rope soft spring constraint: resist beyond restRopeLength
@@ -407,6 +410,9 @@ pixiApp.ticker.add((delta) => {
       }
     } else {
       physics.ropeLength = rawDist;
+      // No constraint — sprite follows target freely
+      sprite.x = tx;
+      sprite.y = ty;
     }
     physics.pendulumAngle = Math.atan2(dx, dy);
     
