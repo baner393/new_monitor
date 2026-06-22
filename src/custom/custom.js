@@ -915,6 +915,9 @@
     if (!files || files.length === 0) return;
 
     const applyAll = document.getElementById('applyAllCheckbox')?.checked || false;
+    // Capture resolution settings NOW (before async operations)
+    const resMode = loadResMode?.value || 'original';
+    const customResSize = parseInt(loadResCustom?.value || '64', 10);
 
     // Map: filename stem → expression id
     const nameToId = {};
@@ -928,13 +931,14 @@
 
     let loadedCount = 0;
     const total = files.length;
+    const batchResults = []; // collect results, apply all at once
 
     Array.from(files).forEach(file => {
       const stem = file.name.replace(/\.png$/i, '').toLowerCase();
       const matchId = nameMap[stem] || nameMap[stem + '.png'];
       if (!matchId) {
         loadedCount++;
-        if (loadedCount >= total) finishSkinLoad();
+        if (loadedCount >= total) applyBatchResults();
         return;
       }
 
@@ -942,14 +946,12 @@
       reader.onload = (ev) => {
         const img = new Image();
         img.onload = () => {
-          // Read resolution mode
-          const resMode = loadResMode?.value || 'original';
+          // Use captured resolution settings
           let targetW = img.width;
           let targetH = img.height;
           if (resMode === 'custom') {
-            const customSize = parseInt(loadResCustom?.value || '64', 10);
-            targetW = customSize;
-            targetH = customSize;
+            targetW = customResSize;
+            targetH = customResSize;
           }
           const size = Math.max(targetW, targetH);
           const grid = createEmptyGrid(size);
@@ -976,29 +978,38 @@
             }
           }
 
-          if (applyAll) {
-            EXPRESSIONS.forEach(exp => {
-              exprData[exp.id] = {
-                grid: cloneGrid(grid),
-                size: size,
-                loaded: true
-              };
-            });
-            const modeLabel = resMode === 'custom' ? ' → 缩放至 ' + targetW + '×' + targetH : '';
-            setStatus('已加载: ' + file.name + ' → 应用到所有状态 (' + img.width + '×' + img.height + modeLabel + ')');
-          } else {
-            exprData[matchId] = { grid, size, loaded: true };
-            const modeLabel = resMode === 'custom' ? ' → 缩放至 ' + targetW + '×' + targetH : '';
-            setStatus('已加载: ' + file.name + ' → ' + matchId + ' (' + img.width + '×' + img.height + modeLabel + ')');
-          }
-          refreshAllThumbnails();
+          batchResults.push({ matchId, grid, size, file, imgW: img.width, imgH: img.height, applyAll });
           loadedCount++;
-          if (loadedCount >= total) finishSkinLoad();
+          if (loadedCount >= total) applyBatchResults();
         };
         img.src = ev.target.result;
       };
       reader.readAsDataURL(file);
     });
+
+    function applyBatchResults() {
+      if (applyAll && batchResults.length > 0) {
+        // Use the first result's grid for all expressions
+        const first = batchResults[0];
+        EXPRESSIONS.forEach(exp => {
+          exprData[exp.id] = {
+            grid: cloneGrid(first.grid),
+            size: first.size,
+            loaded: true
+          };
+        });
+      } else {
+        // Apply each result to its matched expression
+        for (const r of batchResults) {
+          exprData[r.matchId] = { grid: r.grid, size: r.size, loaded: true };
+        }
+      }
+      // Single refresh after ALL files are processed
+      refreshAllThumbnails();
+      const modeLabel = resMode === 'custom' ? ' → 缩放至 ' + customResSize + '×' + customResSize : '';
+      setStatus('已加载 ' + batchResults.length + ' 个表情' + modeLabel);
+      finishSkinLoad();
+    }
   });
 
   function finishSkinLoad() {

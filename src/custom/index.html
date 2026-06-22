@@ -706,6 +706,26 @@
       border-bottom: 1px solid rgba(64,64,88,0.3);
       box-shadow: inset 0 0 6px rgba(0,0,0,0.2);
     }
+
+    /* ── Group Box — MC panel frame ─────────────────────────── */
+    .group-box {
+      padding: 12px;
+      margin-bottom: 12px;
+      background: rgba(10,12,18,0.5);
+      border-top: 1px solid var(--inner-shadow);
+      border-left: 1px solid var(--inner-shadow);
+      border-right: 1px solid rgba(64,64,88,0.3);
+      border-bottom: 1px solid rgba(64,64,88,0.3);
+      box-shadow: inset 0 0 8px rgba(0,0,0,0.15);
+    }
+    .group-box-label {
+      font-size: 11px;
+      color: var(--hint-color);
+      margin-bottom: 8px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      font-family: 'Mojang', 'Unifont', 'Microsoft YaHei', sans-serif;
+    }
   </style>
 </head>
 <body>
@@ -826,36 +846,40 @@
         💡 勾选「应用到所有状态帧」可将一张图片同时设为所有表情的基础帧。
       </p>
 
-      <div style="margin-bottom:12px; display:flex; align-items:center; gap:12px;">
-        <button class="btn primary" id="loadSkinsBtn">📁 加载现有皮肤</button>
-        <label style="font-size:12px; color:#aaa; display:flex; align-items:center; gap:4px; cursor:pointer;">
-          <input type="checkbox" id="applyAllCheckbox" style="cursor:pointer;" />
-          应用到所有状态帧
-        </label>
-        <div class="separator" style="height:18px;"></div>
-        <label style="font-size:12px; color:#888899;">分辨率:</label>
-        <select id="loadResMode" title="加载分辨率模式">
-          <option value="original" selected>保持原图大小</option>
-          <option value="custom">自选分辨率</option>
-        </select>
-        <select id="loadResCustom" title="自选分辨率" style="display:none;">
-          <option value="24">24×24</option>
-          <option value="32">32×32</option>
-          <option value="48">48×48</option>
-          <option value="64">64×64</option>
-          <option value="96">96×96</option>
-          <option value="128">128×128</option>
-          <option value="256">256×256</option>
-          <option value="512">512×512</option>
-        </select>
-        <button class="btn" id="exportAllBtn">📦 导出所有表情</button>
-        <input type="file" id="skinFilesInput" accept="image/png" multiple style="display:none" />
+      <!-- ══ 加载皮肤设置 ══ -->
+      <div class="group-box">
+        <div class="group-box-label">📂 加载皮肤</div>
+        <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+          <button class="btn primary" id="loadSkinsBtn">📁 加载现有皮肤</button>
+          <label style="font-size:12px; color:#aaa; display:flex; align-items:center; gap:4px; cursor:pointer;">
+            <input type="checkbox" id="applyAllCheckbox" style="cursor:pointer;" />
+            应用到所有状态帧
+          </label>
+          <div class="separator" style="height:18px;"></div>
+          <label style="font-size:12px; color:#888899;">分辨率:</label>
+          <select id="loadResMode" title="加载分辨率模式">
+            <option value="original" selected>保持原图大小</option>
+            <option value="custom">自选分辨率</option>
+          </select>
+          <select id="loadResCustom" title="自选分辨率" style="display:none;">
+            <option value="24">24×24</option>
+            <option value="32">32×32</option>
+            <option value="48">48×48</option>
+            <option value="64">64×64</option>
+            <option value="96">96×96</option>
+            <option value="128">128×128</option>
+            <option value="256">256×256</option>
+            <option value="512">512×512</option>
+          </select>
+          <input type="file" id="skinFilesInput" accept="image/png" multiple style="display:none" />
+        </div>
       </div>
 
       <div class="expression-grid" id="expressionGrid">
         <!-- Populated by JS -->
       </div>
 
+      <!-- ══ 表情画布编辑器 ══ -->
       <div id="expressionEditor" style="display:none;">
         <div style="display:flex; gap:16px; align-items:flex-start;">
           <div style="flex:1;">
@@ -884,11 +908,18 @@
               <button class="tool-btn" id="exprZoomOut" title="缩小 (-)">🔍−</button>
               <button class="tool-btn" id="exprZoomIn" title="放大 (+)">🔍+</button>
               <button class="btn primary" id="exprFullscreenBtn" style="padding:6px 14px; font-size:12px;">⛶ 全屏</button>
-              <div class="separator"></div>
-              <button class="btn" id="exprExportBtn">导出此表情</button>
             </div>
             <div id="exprCanvasContainer" class="preview-box" style="text-align:center; overflow:auto; position:relative;">
               <canvas id="exprCanvas" style="image-rendering:pixelated; cursor:crosshair; border:1px solid var(--border-mid);"></canvas>
+            </div>
+
+            <!-- ══ 导出设置 ══ -->
+            <div class="group-box" style="margin-top:12px;">
+              <div class="group-box-label">📦 导出表情</div>
+              <div style="display:flex; align-items:center; gap:12px;">
+                <button class="btn" id="exprExportBtn">导出此表情</button>
+                <button class="btn" id="exportAllBtn">📦 导出所有表情</button>
+              </div>
             </div>
           </div>
           <div style="width:200px;">
