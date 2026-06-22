@@ -34,7 +34,7 @@
       },
       "preview": "assets/skins/cat/idle.png",
       "scale": 1.0,
-      "baseSize": 96
+      "baseSize": 480
     }
   ],
   "defaultSkin": "turtle"

@@ -169,6 +169,9 @@ document.body.appendChild(skinSelector.container);
 // Load skins config
 skinSelector.loadSkins('./assets/skins/skins.json');
 
+// Track current skin's baseSize for settings panel scaling
+let currentSkinBaseSize = 24; // default turtle baseSize (matches PNG dimensions)
+
 // Handle skin change
 skinSelector.onSkinChange = (skinId, skinConfig) => {
   console.log(`[Skin] Switching to: ${skinId}`, skinConfig);
@@ -183,7 +186,14 @@ skinSelector.onSkinChange = (skinId, skinConfig) => {
     blinkTexture = PIXI.Texture.from(frames.blink_closed || frames.blink);
     // Apply idle texture immediately
     bodySprite.texture = idleTexture;
-    console.log(`[Skin] Textures reloaded for: ${skinId}`);
+
+    // Apply skin-specific scale (normalize to target display size)
+    const TARGET_SIZE = 60; // pixels
+    const baseSize = skinConfig.baseSize || 24;
+    currentSkinBaseSize = baseSize; // remember for settings
+    const skinScale = TARGET_SIZE / baseSize;
+    bodySprite.scale.set(skinScale);
+    console.log(`[Skin] Scale: ${skinScale.toFixed(2)} (baseSize: ${baseSize})`);
   }
 };
 
@@ -227,11 +237,11 @@ function applySettings(settings) {
   if (settings.airDamping !== undefined) physics.airDamping = settings.airDamping;
   if (settings.ropeElasticity !== undefined) physics.ropeElasticity = settings.ropeElasticity;
   
-  // Handle turtleSize - update sprite scale
+  // Handle turtleSize - update sprite scale (respect current skin's baseSize)
   if (settings.turtleSize !== undefined) {
-    const scale = settings.turtleSize / 24; // 24px is base sprite size
+    const scale = settings.turtleSize / currentSkinBaseSize;
     bodySprite.scale.set(scale);
-    console.log(`[Settings] Turtle size: ${settings.turtleSize}, scale: ${scale}`);
+    console.log(`[Settings] Turtle size: ${settings.turtleSize}, scale: ${scale.toFixed(2)} (baseSize: ${currentSkinBaseSize})`);
   }
   
   // Handle ropeLength - update default rope length in physics
@@ -285,6 +295,9 @@ document.addEventListener('mousemove', (e) => {
 
   // Keep mouse events when settings panel is open
   if (settingsPanel.isOpen || settingsPanel.isAnimating) return;
+
+  // Keep mouse events when skin selector is open
+  if (skinSelector.isOpen) return;
   
   const bounds = sprite.getBounds();
   const over =
