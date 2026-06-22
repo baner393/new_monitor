@@ -1213,9 +1213,13 @@
     const dst = document.createElement('canvas'); dst.width = nw; dst.height = nh;
     const dctx = dst.getContext('2d'); dctx.imageSmoothingEnabled = false;
     dctx.drawImage(src, 0, 0, nw, nh);
-    // Clear original
-    for (let sy = 0; sy < h; sy++) for (let sx = 0; sx < w; sx++) {
-      if (y+sy < size && x+sx < size) grid[y+sy][x+sx] = null;
+    // Clear expanded region (ox..ox+nw, oy..oy+nh) to remove residual pixels
+    const clearMinX = Math.max(0, ox), clearMinY = Math.max(0, oy);
+    const clearMaxX = Math.min(size, ox + nw), clearMaxY = Math.min(size, oy + nh);
+    for (let gy = clearMinY; gy < clearMaxY; gy++) {
+      for (let gx = clearMinX; gx < clearMaxX; gx++) {
+        grid[gy][gx] = null;
+      }
     }
     // Write scaled
     const img = dctx.getImageData(0, 0, nw, nh);
@@ -1258,7 +1262,8 @@
     // dir: 1 = down (frown top), -1 = up (smile)
     const { x, y, w, h } = region;
     for (let dx = 0; dx < w; dx++) {
-      const dist = Math.abs(dx - w / 2) / (w / 2);
+      const center = (w - 1) / 2;
+      const dist = center > 0 ? Math.abs(dx - center) / center : 0;
       const shift = Math.round(dist * dir);
       if (shift !== 0) shiftColumn(grid, size, x + dx, y, h, shift);
     }
@@ -1276,25 +1281,27 @@
   }
 
   function replaceWithPainEyes(grid, size, region) {
-    const { x, y, w, h } = region;
-    const half = Math.floor(w / 2);
-    // Save eye color BEFORE clearing (clearRegion would null it out)
-    const eyeColor = grid[y]?.[x] || 'rgb(0,0,0)';
-    clearRegion(grid, region);
-    // Left eye: > shape
-    for (let dy = 0; dy < h; dy++) {
-      const t = h > 1 ? dy / (h - 1) : 0.5;
-      const indent = Math.round(t * half * 0.6);
-      const gx1 = x + half - 1 - indent;
-      const gx2 = x + half - 1 - indent + 1;
-      if (gx1 >= x && gx1 < x + half && y + dy >= 0 && y + dy < size) grid[y + dy][gx1] = eyeColor;
-      if (gx2 >= x && gx2 < x + half && y + dy >= 0 && y + dy < size) grid[y + dy][gx2] = eyeColor;
-    }
-    // Right eye: < shape
-    for (let dy = 0; dy < h; dy++) {
-      const t = h > 1 ? dy / (h - 1) : 0.5;
-      const indent = Math.round(t * half * 0.6);
-      const gx1 = x + half + indent;
+    function replaceWithPainEyes(grid, size, region) {
+      const { x, y, w, h } = region;
+      const half = Math.floor(w / 2);
+      const eyeColor = grid[y]?.[x] || 'rgb(0,0,0)';
+      clearRegion(grid, region);
+      // >< shape: indent peaks at midpoint, zero at top/bottom
+      const mid = (h - 1) / 2;
+      for (let dy = 0; dy < h; dy++) {
+        const t = mid > 0 ? (mid - Math.abs(dy - mid)) / mid : 1;
+        const indent = Math.round(t * half * 0.8);
+        // Left eye: > shape (opens rightward)
+        const gx1 = x + half - 1 - indent;
+        const gx2 = x + half - 1 - indent + 1;
+        if (gx1 >= x && gx1 < x + half && y + dy >= 0 && y + dy < size) grid[y + dy][gx1] = eyeColor;
+        if (gx2 >= x && gx2 < x + half && y + dy >= 0 && y + dy < size) grid[y + dy][gx2] = eyeColor;
+        // Right eye: < shape (opens leftward)
+        const gx3 = x + half + indent;
+        const gx4 = x + half + indent - 1;
+        if (gx3 >= x + half && gx3 < x + w && y + dy >= 0 && y + dy < size) grid[y + dy][gx3] = eyeColor;
+        if (gx4 >= x + half && gx4 < x + w && y + dy >= 0 && y + dy < size) grid[y + dy][gx4] = eyeColor;
+      }
       const gx2 = x + half + indent - 1;
       if (gx1 >= x + half && gx1 < x + w && y + dy >= 0 && y + dy < size) grid[y + dy][gx1] = eyeColor;
       if (gx2 >= x + half && gx2 < x + w && y + dy >= 0 && y + dy < size) grid[y + dy][gx2] = eyeColor;
@@ -1316,13 +1323,11 @@
       const i = (py * img.width + px) * 4;
       if (id.data[i + 3] > 128) baseGrid[py][px] = 'rgb(' + id.data[i] + ',' + id.data[i+1] + ',' + id.data[i+2] + ')';
     }
-    // Scale regions to match grid coordinates
-    const scaleX = img.width / originalCanvas.clientWidth;
-    const scaleY = img.height / originalCanvas.clientHeight;
-    const eyes = { x: Math.round(autoExpr.eyes.x * scaleX), y: Math.round(autoExpr.eyes.y * scaleY),
-                   w: Math.round(autoExpr.eyes.w * scaleX), h: Math.round(autoExpr.eyes.h * scaleY) };
-    const mouth = { x: Math.round(autoExpr.mouth.x * scaleX), y: Math.round(autoExpr.mouth.y * scaleY),
-                    w: Math.round(autoExpr.mouth.w * scaleX), h: Math.round(autoExpr.mouth.h * scaleY) };
+    // autoExpr.eyes/mouth coordinates are already in image pixel space
+    // (selOverlay maps CSS pixels → canvas pixels via selOverlay.width/getBoundingClientRect)
+    // No additional scaling needed
+    const eyes = { x: autoExpr.eyes.x, y: autoExpr.eyes.y, w: autoExpr.eyes.w, h: autoExpr.eyes.h };
+    const mouth = { x: autoExpr.mouth.x, y: autoExpr.mouth.y, w: autoExpr.mouth.w, h: autoExpr.mouth.h };
 
     autoExpr.results = {};
     autoExpr.results.idle   = { grid: cloneGrid(baseGrid), size: sz };
