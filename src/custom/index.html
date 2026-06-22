@@ -772,7 +772,10 @@
 
       <div class="preview-box" id="converterPreview" style="display:none">
         <div style="font-size:12px; color:#888899; margin-bottom:8px;">原始图片</div>
-        <canvas id="originalCanvas"></canvas>
+        <div style="position:relative; display:inline-block;" id="originalCanvasWrap">
+          <canvas id="originalCanvas"></canvas>
+          <canvas id="selectionOverlay" style="position:absolute; top:0; left:0; pointer-events:none; image-rendering:pixelated;"></canvas>
+        </div>
         <div style="font-size:12px; color:#888899; margin-top:12px; margin-bottom:8px;">转换后（idle 帧）</div>
         <canvas id="convertedCanvas" style="image-rendering:pixelated;"></canvas>
         <div id="converterInfo" style="font-size:11px; color:#888899; margin-top:8px;"></div>
@@ -781,6 +784,39 @@
       <div style="display:flex; gap:8px;">
         <button class="btn primary" id="convertBtn" disabled>转换并导出</button>
         <button class="btn" id="convertPreviewBtn" disabled>预览</button>
+      </div>
+
+      <!-- ══ 区域选择 ══ -->
+      <div id="regionControls" style="display:none; margin-top:12px;">
+        <div class="group-box">
+          <div class="group-box-label">🎯 标记区域（在原图上拖拽选择）</div>
+          <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+            <button class="btn" id="selectEyesBtn" title="点击后在原图上拖拽选择眼睛区域">👁️ 标记眼睛</button>
+            <button class="btn" id="selectMouthBtn" title="点击后在原图上拖拽选择嘴巴区域">👄 标记嘴巴</button>
+            <button class="btn" id="clearRegionsBtn">🗑️ 清除</button>
+            <span id="regionStatus" style="font-size:12px; color:#888899;"></span>
+          </div>
+        </div>
+
+        <div class="group-box" style="margin-top:12px;">
+          <div class="group-box-label">✨ 自动生成表情</div>
+          <div style="display:flex; align-items:center; gap:12px;">
+            <button class="btn primary" id="generateExprBtn" disabled>生成所有表情</button>
+            <span style="font-size:11px; color:#888899;">需先标记眼睛和嘴巴区域</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- ══ 自动生成的表情预览 ══ -->
+      <div id="autoExprPreview" style="display:none; margin-top:12px;">
+        <div class="group-box">
+          <div class="group-box-label">📦 生成的表情</div>
+          <div id="autoExprGrid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(100px, 1fr)); gap:8px;"></div>
+          <div style="margin-top:12px; display:flex; gap:8px;">
+            <button class="btn primary" id="exportAutoExprBtn">📦 导出所有表情</button>
+            <button class="btn" id="applyToEditorBtn">✏️ 应用到表情编辑器</button>
+          </div>
+        </div>
       </div>
     </div>
 

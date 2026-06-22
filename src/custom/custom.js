@@ -134,6 +134,8 @@
         convertBtn.disabled = false;
         convertPreviewBtn.disabled = false;
         setStatus(`皮肤已加载: ${file.name} (${img.width}×${img.height})`);
+        // Show region controls for auto expression generator
+        if (typeof showRegionControlsAfterLoad === 'function') showRegionControlsAfterLoad();
       };
       img.src = ev.target.result;
     };
@@ -1026,6 +1028,341 @@
     setStatus('所有皮肤已加载完成');
     skinFilesInput.value = '';
   }
+
+  // ══════════════════════════════════════════════════════════════
+  // 5. Auto Expression Generator (皮肤转换器 → 自动生成表情)
+  // ══════════════════════════════════════════════════════════════
+
+  const selOverlay = document.getElementById('selectionOverlay');
+  const selCtx = selOverlay?.getContext('2d');
+  const regionControls = document.getElementById('regionControls');
+  const selectEyesBtn = document.getElementById('selectEyesBtn');
+  const selectMouthBtn = document.getElementById('selectMouthBtn');
+  const clearRegionsBtn = document.getElementById('clearRegionsBtn');
+  const regionStatus = document.getElementById('regionStatus');
+  const generateExprBtn = document.getElementById('generateExprBtn');
+  const autoExprPreview = document.getElementById('autoExprPreview');
+  const autoExprGrid = document.getElementById('autoExprGrid');
+  const exportAutoExprBtn = document.getElementById('exportAutoExprBtn');
+  const applyToEditorBtn = document.getElementById('applyToEditorBtn');
+
+  const autoExpr = {
+    eyes: null, mouth: null, mode: null,
+    baseGrid: null, baseSize: 0, results: {},
+  };
+  let selStart = null, selCur = null;
+
+  // Show region controls when converter image loads
+  const origLoadConverterFile = loadConverterFile;
+  // Patch: show region controls after image loads
+  function showRegionControlsAfterLoad() {
+    if (regionControls) regionControls.style.display = '';
+    syncOverlaySize();
+  }
+
+  function syncOverlaySize() {
+    if (!selOverlay || !originalCanvas) return;
+    selOverlay.width = originalCanvas.width;
+    selOverlay.height = originalCanvas.height;
+    selOverlay.style.width = originalCanvas.clientWidth + 'px';
+    selOverlay.style.height = originalCanvas.clientHeight + 'px';
+    selOverlay.style.pointerEvents = autoExpr.mode ? 'auto' : 'none';
+    drawSelOverlay();
+  }
+
+  function enterSelMode(mode) {
+    autoExpr.mode = (autoExpr.mode === mode) ? null : mode;
+    selectEyesBtn?.classList.toggle('active', autoExpr.mode === 'eyes');
+    selectMouthBtn?.classList.toggle('active', autoExpr.mode === 'mouth');
+    selOverlay.style.pointerEvents = autoExpr.mode ? 'auto' : 'none';
+    selOverlay.style.cursor = autoExpr.mode ? 'crosshair' : '';
+    regionStatus.textContent = autoExpr.mode === 'eyes' ? '在原图上拖拽选择眼睛区域...' :
+                               autoExpr.mode === 'mouth' ? '在原图上拖拽选择嘴巴区域...' : '';
+    selStart = selCur = null;
+    drawSelOverlay();
+  }
+
+  selectEyesBtn?.addEventListener('click', () => enterSelMode('eyes'));
+  selectMouthBtn?.addEventListener('click', () => enterSelMode('mouth'));
+
+  clearRegionsBtn?.addEventListener('click', () => {
+    autoExpr.eyes = autoExpr.mouth = null;
+    updateRegionStatus(); updateGenerateBtn();
+    drawSelOverlay();
+    if (autoExprPreview) autoExprPreview.style.display = 'none';
+  });
+
+  function updateRegionStatus() {
+    const p = [];
+    if (autoExpr.eyes) p.push('👁️ 眼睛已标记');
+    if (autoExpr.mouth) p.push('👄 嘴巴已标记');
+    regionStatus.textContent = p.join(' | ') || '未标记任何区域';
+  }
+  function updateGenerateBtn() {
+    if (generateExprBtn) generateExprBtn.disabled = !(autoExpr.eyes && autoExpr.mouth);
+  }
+
+  // Overlay mouse events
+  selOverlay?.addEventListener('mousedown', (e) => {
+    if (!autoExpr.mode) return;
+    const r = selOverlay.getBoundingClientRect();
+    const sx = selOverlay.width / r.width, sy = selOverlay.height / r.height;
+    selStart = { x: (e.clientX - r.left) * sx, y: (e.clientY - r.top) * sy };
+    selCur = { ...selStart };
+  });
+  selOverlay?.addEventListener('mousemove', (e) => {
+    if (!autoExpr.mode || !selStart) return;
+    const r = selOverlay.getBoundingClientRect();
+    const sx = selOverlay.width / r.width, sy = selOverlay.height / r.height;
+    selCur = { x: (e.clientX - r.left) * sx, y: (e.clientY - r.top) * sy };
+    drawSelOverlay();
+  });
+  selOverlay?.addEventListener('mouseup', () => {
+    if (!autoExpr.mode || !selStart || !selCur) return;
+    const x = Math.round(Math.min(selStart.x, selCur.x));
+    const y = Math.round(Math.min(selStart.y, selCur.y));
+    const w = Math.round(Math.abs(selCur.x - selStart.x));
+    const h = Math.round(Math.abs(selCur.y - selStart.y));
+    if (w > 2 && h > 2) {
+      autoExpr[autoExpr.mode] = { x, y, w, h };
+    }
+    enterSelMode(null);
+    updateRegionStatus(); updateGenerateBtn();
+  });
+
+  function drawSelOverlay() {
+    if (!selCtx || !selOverlay) return;
+    selCtx.clearRect(0, 0, selOverlay.width, selOverlay.height);
+    if (autoExpr.eyes) drawRegionRect(selCtx, autoExpr.eyes, 'rgba(100,200,255,0.35)', 'rgba(100,200,255,0.9)', '眼睛');
+    if (autoExpr.mouth) drawRegionRect(selCtx, autoExpr.mouth, 'rgba(255,150,100,0.35)', 'rgba(255,150,100,0.9)', '嘴巴');
+    if (selStart && selCur && autoExpr.mode) {
+      const x = Math.min(selStart.x, selCur.x), y = Math.min(selStart.y, selCur.y);
+      const w = Math.abs(selCur.x - selStart.x), h = Math.abs(selCur.y - selStart.y);
+      selCtx.fillStyle = autoExpr.mode === 'eyes' ? 'rgba(100,200,255,0.3)' : 'rgba(255,150,100,0.3)';
+      selCtx.fillRect(x, y, w, h);
+      selCtx.strokeStyle = autoExpr.mode === 'eyes' ? '#66ccff' : '#ff9966';
+      selCtx.lineWidth = 2;
+      selCtx.strokeRect(x, y, w, h);
+    }
+  }
+  function drawRegionRect(ctx, r, fill, stroke, label) {
+    ctx.fillStyle = fill; ctx.fillRect(r.x, r.y, r.w, r.h);
+    ctx.strokeStyle = stroke; ctx.lineWidth = 2; ctx.strokeRect(r.x, r.y, r.w, r.h);
+    ctx.fillStyle = stroke; ctx.font = 'bold 11px sans-serif';
+    ctx.fillText(label, r.x + 3, r.y + 13);
+  }
+
+  // ── Pixel transformation helpers ──
+  function scaleRegion(grid, size, region, factor) {
+    const { x, y, w, h } = region;
+    const nw = Math.max(1, Math.round(w * factor));
+    const nh = Math.max(1, Math.round(h * factor));
+    const ox = x + Math.floor((w - nw) / 2);
+    const oy = y + Math.floor((h - nh) / 2);
+    // Extract to canvas
+    const src = document.createElement('canvas'); src.width = w; src.height = h;
+    const sctx = src.getContext('2d');
+    for (let sy = 0; sy < h; sy++) for (let sx = 0; sx < w; sx++) {
+      const c = grid[y + sy]?.[x + sx];
+      if (c) { sctx.fillStyle = c; sctx.fillRect(sx, sy, 1, 1); }
+    }
+    // Scale
+    const dst = document.createElement('canvas'); dst.width = nw; dst.height = nh;
+    const dctx = dst.getContext('2d'); dctx.imageSmoothingEnabled = false;
+    dctx.drawImage(src, 0, 0, nw, nh);
+    // Clear original
+    for (let sy = 0; sy < h; sy++) for (let sx = 0; sx < w; sx++) {
+      if (y+sy < size && x+sx < size) grid[y+sy][x+sx] = null;
+    }
+    // Write scaled
+    const img = dctx.getImageData(0, 0, nw, nh);
+    for (let dy = 0; dy < nh; dy++) for (let dx = 0; dx < nw; dx++) {
+      const i = (dy * nw + dx) * 4;
+      if (img.data[i+3] > 128) {
+        const gx = ox + dx, gy = oy + dy;
+        if (gx >= 0 && gx < size && gy >= 0 && gy < size)
+          grid[gy][gx] = 'rgb(' + img.data[i] + ',' + img.data[i+1] + ',' + img.data[i+2] + ')';
+      }
+    }
+  }
+
+  function clearRegion(grid, region) {
+    const { x, y, w, h } = region;
+    for (let sy = 0; sy < h; sy++) for (let sx = 0; sx < w; sx++) {
+      if (y+sy < grid.length && x+sx < grid[0].length) grid[y+sy][x+sx] = null;
+    }
+  }
+
+  function shiftColumn(grid, size, x, yStart, h, shift) {
+    const col = [];
+    for (let dy = 0; dy < h; dy++) {
+      const gy = yStart + dy;
+      col.push((gy >= 0 && gy < size) ? grid[gy][x] : null);
+    }
+    for (let dy = 0; dy < h; dy++) {
+      const gy = yStart + dy;
+      if (gy >= 0 && gy < size) grid[gy][x] = null;
+    }
+    for (let dy = 0; dy < h; dy++) {
+      const srcIdx = dy + shift;
+      const gy = yStart + dy;
+      if (srcIdx >= 0 && srcIdx < h && gy >= 0 && gy < size) grid[gy][x] = col[srcIdx];
+    }
+  }
+
+  function curveRegion(grid, size, region, dir) {
+    // dir: 1 = down (frown top), -1 = up (smile)
+    const { x, y, w, h } = region;
+    for (let dx = 0; dx < w; dx++) {
+      const dist = Math.abs(dx - w / 2) / (w / 2);
+      const shift = Math.round(dist * dir);
+      if (shift !== 0) shiftColumn(grid, size, x + dx, y, h, shift);
+    }
+  }
+
+  function addTongue(grid, size, mouth) {
+    const { x, y, w, h } = mouth;
+    const ty = y + h;
+    const tc = 'rgb(255,140,170)';
+    for (let dx = Math.floor(w * 0.25); dx < Math.ceil(w * 0.75); dx++) {
+      const gx = x + dx;
+      if (ty < size && gx >= 0 && gx < size) grid[ty][gx] = tc;
+      if (ty + 1 < size && gx >= 0 && gx < size) grid[ty + 1][gx] = tc;
+    }
+  }
+
+  function replaceWithPainEyes(grid, size, region) {
+    const { x, y, w, h } = region;
+    clearRegion(grid, region);
+    const half = Math.floor(w / 2);
+    const eyeColor = grid[y]?.[x] || 'rgb(0,0,0)';
+    // Left eye: > shape
+    for (let dy = 0; dy < h; dy++) {
+      const t = h > 1 ? dy / (h - 1) : 0.5;
+      const indent = Math.round(t * half * 0.6);
+      const gx1 = x + half - 1 - indent;
+      const gx2 = x + half - 1 - indent + 1;
+      if (gx1 >= x && gx1 < x + half && y + dy >= 0 && y + dy < size) grid[y + dy][gx1] = eyeColor;
+      if (gx2 >= x && gx2 < x + half && y + dy >= 0 && y + dy < size) grid[y + dy][gx2] = eyeColor;
+    }
+    // Right eye: < shape
+    for (let dy = 0; dy < h; dy++) {
+      const t = h > 1 ? dy / (h - 1) : 0.5;
+      const indent = Math.round(t * half * 0.6);
+      const gx1 = x + half + indent;
+      const gx2 = x + half + indent - 1;
+      if (gx1 >= x + half && gx1 < x + w && y + dy >= 0 && y + dy < size) grid[y + dy][gx1] = eyeColor;
+      if (gx2 >= x + half && gx2 < x + w && y + dy >= 0 && y + dy < size) grid[y + dy][gx2] = eyeColor;
+    }
+  }
+
+  // ── Generate expressions ──
+  generateExprBtn?.addEventListener('click', () => {
+    if (!autoExpr.eyes || !autoExpr.mouth || !converterImage) return;
+    // Build base grid from converter image
+    const img = converterImage;
+    const sz = Math.max(img.width, img.height);
+    const baseGrid = createEmptyGrid(sz);
+    const tc = document.createElement('canvas'); tc.width = img.width; tc.height = img.height;
+    const tctx = tc.getContext('2d'); tctx.imageSmoothingEnabled = false;
+    tctx.drawImage(img, 0, 0);
+    const id = tctx.getImageData(0, 0, img.width, img.height);
+    for (let py = 0; py < img.height; py++) for (let px = 0; px < img.width; px++) {
+      const i = (py * img.width + px) * 4;
+      if (id.data[i + 3] > 128) baseGrid[py][px] = 'rgb(' + id.data[i] + ',' + id.data[i+1] + ',' + id.data[i+2] + ')';
+    }
+    // Scale regions to match grid coordinates
+    const scaleX = img.width / originalCanvas.clientWidth;
+    const scaleY = img.height / originalCanvas.clientHeight;
+    const eyes = { x: Math.round(autoExpr.eyes.x * scaleX), y: Math.round(autoExpr.eyes.y * scaleY),
+                   w: Math.round(autoExpr.eyes.w * scaleX), h: Math.round(autoExpr.eyes.h * scaleY) };
+    const mouth = { x: Math.round(autoExpr.mouth.x * scaleX), y: Math.round(autoExpr.mouth.y * scaleY),
+                    w: Math.round(autoExpr.mouth.w * scaleX), h: Math.round(autoExpr.mouth.h * scaleY) };
+
+    autoExpr.results = {};
+    autoExpr.results.idle   = { grid: cloneGrid(baseGrid), size: sz };
+    // Hover: 眼睛睁大，嘴巴缩小（卖萌）
+    let g = cloneGrid(baseGrid); scaleRegion(g, sz, eyes, 1.3); scaleRegion(g, sz, mouth, 0.7);
+    autoExpr.results.hover  = { grid: g, size: sz };
+    // Pull: 惊讶，眼睛嘴巴都睁大，粉色舌头
+    g = cloneGrid(baseGrid); scaleRegion(g, sz, eyes, 1.4); scaleRegion(g, sz, mouth, 1.35); addTongue(g, sz, mouth);
+    autoExpr.results.pull   = { grid: g, size: sz };
+    // Happy: 眼睛微缩下弯，嘴巴上扬
+    g = cloneGrid(baseGrid); scaleRegion(g, sz, eyes, 0.85); curveRegion(g, sz, eyes, 1); curveRegion(g, sz, mouth, -1);
+    autoExpr.results.happy  = { grid: g, size: sz };
+    // Pain: 眼睛变 ><，嘴巴不变
+    g = cloneGrid(baseGrid); replaceWithPainEyes(g, sz, eyes);
+    autoExpr.results.pain   = { grid: g, size: sz };
+    // Blink: 眼睛消失
+    g = cloneGrid(baseGrid); clearRegion(g, eyes);
+    autoExpr.results.blink  = { grid: g, size: sz };
+
+    renderAutoExprPreview();
+    setStatus('已生成 6 个表情');
+  });
+
+  function renderAutoExprPreview() {
+    if (!autoExprGrid) return;
+    autoExprGrid.innerHTML = '';
+    if (autoExprPreview) autoExprPreview.style.display = '';
+    const expDefs = [
+      { id: 'idle', name: 'Idle', trigger: '默认待机', color: '#66cc66' },
+      { id: 'hover', name: 'Hover', trigger: '鼠标悬停（卖萌）', color: '#cccc66' },
+      { id: 'pull', name: 'Pull', trigger: '拖拽（惊讶）', color: '#cc6666' },
+      { id: 'happy', name: 'Happy', trigger: '开心', color: '#66cccc' },
+      { id: 'pain', name: 'Pain', trigger: '受伤', color: '#cc66cc' },
+      { id: 'blink', name: 'Blink', trigger: '随机眨眼', color: '#999999' },
+    ];
+    expDefs.forEach(def => {
+      const data = autoExpr.results[def.id];
+      if (!data) return;
+      const card = document.createElement('div');
+      card.style.cssText = 'text-align:center; padding:8px; background:rgba(10,12,18,0.6); border:1px solid rgba(64,64,88,0.3);';
+      const cvs = document.createElement('canvas');
+      cvs.width = 64; cvs.height = 64;
+      cvs.style.cssText = 'image-rendering:pixelated; width:64px; height:64px;';
+      const ctx = cvs.getContext('2d');
+      // Checkerboard bg
+      for (let cy = 0; cy < 64; cy += 8) for (let cx = 0; cx < 64; cx += 8) {
+        ctx.fillStyle = ((cx/8 + cy/8) % 2 === 0) ? '#ccc' : '#999';
+        ctx.fillRect(cx, cy, 8, 8);
+      }
+      // Draw pixels
+      const scale = 64 / data.size;
+      for (let py = 0; py < data.size; py++) for (let px = 0; px < data.size; px++) {
+        const c = data.grid[py]?.[px];
+        if (c) { ctx.fillStyle = c; ctx.fillRect(Math.floor(px*scale), Math.floor(py*scale), Math.ceil(scale), Math.ceil(scale)); }
+      }
+      const nameDiv = document.createElement('div');
+      nameDiv.style.cssText = 'font-size:12px; margin-top:6px; color:' + def.color + ';';
+      nameDiv.textContent = def.name;
+      const trigDiv = document.createElement('div');
+      trigDiv.style.cssText = 'font-size:10px; color:#888; margin-top:2px;';
+      trigDiv.textContent = def.trigger;
+      card.appendChild(cvs); card.appendChild(nameDiv); card.appendChild(trigDiv);
+      autoExprGrid.appendChild(card);
+    });
+  }
+
+  // Export auto-generated expressions
+  exportAutoExprBtn?.addEventListener('click', () => {
+    let count = 0;
+    for (const [id, data] of Object.entries(autoExpr.results)) {
+      const out = gridToImageData(data.grid, data.size, data.size);
+      downloadCanvas(out, id + '.png');
+      count++;
+    }
+    setStatus('已导出 ' + count + ' 个表情');
+  });
+
+  // Apply to expression editor
+  applyToEditorBtn?.addEventListener('click', () => {
+    for (const [id, data] of Object.entries(autoExpr.results)) {
+      exprData[id] = { grid: cloneGrid(data.grid), size: data.size, loaded: true };
+    }
+    refreshAllThumbnails();
+    setStatus('已应用到表情编辑器');
+  });
 
   // ── Export all expressions ──
   exportAllBtn?.addEventListener('click', () => {
