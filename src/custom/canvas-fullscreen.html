@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>像素画布 — 全屏</title>
+  <style>
+    @font-face {
+      font-family: 'Mojang';
+      src: url('../../assets/fonts/Mojang-Regular.ttf') format('truetype');
+      font-weight: normal; font-style: normal; font-display: block;
+    }
+    @font-face {
+      font-family: 'Unifont';
+      src: url('../../assets/fonts/unifont-15.1.04.otf') format('opentype');
+      font-weight: normal; font-style: normal; font-display: block;
+    }
+    :root {
+      --bg: #0e1018;
+      --border-mid: #2a2a3a;
+      --border-light: #505068;
+      --text: #eeeeee;
+      --title: #55ff55;
+      --accent: #6699cc;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'Unifont', 'Microsoft YaHei', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      user-select: none;
+    }
+
+    /* ── Title Bar ─────────────────────────────────────── */
+    .titlebar {
+      height: 40px;
+      background: rgba(14,16,24,0.95);
+      display: flex; align-items: center;
+      padding: 0 16px;
+      -webkit-app-region: drag;
+      border-bottom: 1px solid var(--border-light);
+      flex-shrink: 0;
+    }
+    .titlebar .title { font-size: 14px; color: var(--title); flex: 1; }
+    .titlebar .info { font-size: 12px; color: var(--accent); margin-right: 16px; }
+    .titlebar .close-btn {
+      -webkit-app-region: no-drag;
+      width: 32px; height: 32px;
+      display: flex; align-items: center; justify-content: center;
+      cursor: pointer; color: #888; font-size: 20px; border-radius: 4px;
+    }
+    .titlebar .close-btn:hover { background: #e94560; color: #fff; }
+
+    /* ── Toolbar ───────────────────────────────────────── */
+    .toolbar {
+      height: 44px;
+      background: rgba(14,16,24,0.9);
+      display: flex; align-items: center;
+      padding: 0 16px; gap: 8px;
+      border-bottom: 1px solid var(--border-mid);
+      flex-shrink: 0;
+    }
+    .sep { width: 1px; height: 24px; background: var(--border-mid); }
+    .btn {
+      padding: 6px 14px;
+      border: 1px solid var(--border-mid);
+      background: rgba(14,16,24,0.8);
+      color: var(--text);
+      font-family: inherit; font-size: 12px;
+      cursor: pointer; border-radius: 3px;
+    }
+    .btn:hover { background: var(--border-mid); border-color: var(--accent); }
+    .btn.primary { background: #1e641e; border-color: #2a8e2a; color: #fff; }
+    .btn.primary:hover { background: #2a6e2a; }
+    .tool-btn {
+      width: 32px; height: 32px;
+      display: flex; align-items: center; justify-content: center;
+      border: 1px solid var(--border-mid);
+      background: rgba(14,16,24,0.8);
+      color: var(--text); cursor: pointer; border-radius: 3px; font-size: 16px;
+    }
+    .tool-btn:hover { background: var(--border-mid); }
+    .tool-btn.active { background: var(--title); border-color: var(--title); color: #000; }
+    .color-picker {
+      width: 32px; height: 32px;
+      border: 2px solid var(--border-mid); border-radius: 4px; cursor: pointer; padding: 0;
+    }
+    .zoom-label {
+      font-size: 13px; color: var(--title);
+      min-width: 50px; text-align: center;
+      font-family: 'Mojang', monospace;
+    }
+
+    /* ── Canvas Area ───────────────────────────────────── */
+    .canvas-area {
+      flex: 1;
+      overflow: auto;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background:
+        repeating-linear-gradient(0deg, rgba(255,255,255,0.01) 0px, rgba(255,255,255,0.01) 2px, transparent 2px, transparent 4px);
+    }
+    #drawCanvas {
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+      cursor: crosshair;
+      border: 1px solid var(--border-mid);
+    }
+
+    /* ── Status Bar ────────────────────────────────────── */
+    .statusbar {
+      height: 24px;
+      background: rgba(14,16,24,0.95);
+      border-top: 1px solid var(--border-mid);
+      display: flex; align-items: center;
+      padding: 0 16px;
+      font-size: 11px; color: #666688;
+      flex-shrink: 0;
+    }
+  </style>
+</head>
+<body>
+  <div class="titlebar">
+    <span class="title">🎨 像素画布 — 全屏模式</span>
+    <span class="info" id="sizeInfo">64×64</span>
+    <div class="close-btn" id="closeBtn">✕</div>
+  </div>
+
+  <div class="toolbar">
+    <input type="color" class="color-picker" id="penColor" value="#000000" />
+    <div class="sep"></div>
+    <button class="tool-btn active" id="toolPen" title="画笔 (B)">✏️</button>
+    <button class="tool-btn" id="toolEraser" title="橡皮擦 (E)">🧹</button>
+    <button class="tool-btn" id="toolFill" title="填充 (G)">🪣</button>
+    <div class="sep"></div>
+    <button class="tool-btn" id="toolUndo" title="撤销 (Ctrl+Z)">↩️</button>
+    <button class="tool-btn" id="toolClear" title="清空">🗑️</button>
+    <div class="sep"></div>
+    <span class="zoom-label" id="zoomLevel">100%</span>
+    <button class="tool-btn" id="toolZoomOut" title="缩小 (-)">🔍−</button>
+    <button class="tool-btn" id="toolZoomIn" title="放大 (+)">🔍+</button>
+    <button class="tool-btn" id="toolFit" title="适应窗口 (0)">⊞</button>
+    <div class="sep"></div>
+    <button class="btn primary" id="saveBtn">✓ 保存并关闭</button>
+  </div>
+
+  <div class="canvas-area" id="canvasArea">
+    <canvas id="drawCanvas"></canvas>
+  </div>
+
+  <div class="statusbar">
+    <span id="statusText">就绪</span>
+  </div>
+
+  <script src="canvas-fullscreen.js"></script>
+</body>
+</html>

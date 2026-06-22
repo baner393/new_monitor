@@ -5,7 +5,10 @@ import os from 'os';
 import { GPUMonitor } from './gpu-monitor.js';
 
 let mainWindow;
+let customWindow;
+let canvasWindow;
 let gpuMonitor;
+let pendingGridData = null; // temp storage for grid sync between windows
 
 // ── Settings persistence ────────────────────────────────────────────
 const SETTINGS_PATH = path.join(os.homedir(), '.hermes', 'profiles', 'coordinator', 'turtle-settings.json');
@@ -207,6 +210,13 @@ ipcMain.on('show-context-menu', (event) => {
     },
     { type: 'separator' },
     {
+      label: '自定义模式',
+      click: () => {
+        openCustomMode();
+      },
+    },
+    { type: 'separator' },
+    {
       label: '退出',
       click: () => {
         app.quit();
@@ -217,12 +227,115 @@ ipcMain.on('show-context-menu', (event) => {
   menu.popup({ window: mainWindow });
 });
 
+// ── Custom Mode Window ────────────────────────────────────────
+function openCustomMode() {
+  if (customWindow && !customWindow.isDestroyed()) {
+    customWindow.focus();
+    return;
+  }
+
+  customWindow = new BrowserWindow({
+    width: 900,
+    height: 700,
+    minWidth: 700,
+    minHeight: 500,
+    frame: false,
+    backgroundColor: '#1a1a2e',
+    title: 'Turtle Monitor — 自定义模式',
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      preload: path.join(app.getAppPath(), 'src', 'custom', 'preload.js'),
+    },
+  });
+
+  customWindow.webContents.setZoomFactor(1);
+
+  // Load the custom mode HTML directly via file://
+  // In dev: app.getAppPath() = project root; in prod: not available (excluded from build)
+  const appPath = app.getAppPath();
+  const customHtmlPath = path.join(appPath, 'src', 'custom', 'index.html');
+  customWindow.loadFile(customHtmlPath);
+
+  customWindow.on('closed', () => {
+    customWindow = null;
+  });
+}
+
+// ── Fullscreen Canvas Window ──────────────────────────────────
+function openCanvasWindow(gridData) {
+  if (canvasWindow && !canvasWindow.isDestroyed()) {
+    canvasWindow.focus();
+    return;
+  }
+
+  pendingGridData = gridData;
+
+  const { screen } = require('electron');
+  const primaryDisplay = screen.getPrimaryDisplay();
+  const { width, height } = primaryDisplay.workAreaSize;
+
+  canvasWindow = new BrowserWindow({
+    width: width,
+    height: height,
+    frame: false,
+    backgroundColor: '#0e1018',
+    title: '像素画布 — 全屏模式',
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      preload: path.join(app.getAppPath(), 'src', 'custom', 'preload.js'),
+    },
+  });
+
+  canvasWindow.webContents.setZoomFactor(1);
+
+  const canvasHtmlPath = path.join(app.getAppPath(), 'src', 'custom', 'canvas-fullscreen.html');
+  canvasWindow.loadFile(canvasHtmlPath);
+
+  canvasWindow.on('closed', () => {
+    canvasWindow = null;
+    pendingGridData = null;
+  });
+}
+
+// IPC: custom window requests to open fullscreen canvas
+ipcMain.on('open-canvas-window', (event, gridData) => {
+  openCanvasWindow(gridData);
+});
+
+// IPC: fullscreen canvas requests grid data
+ipcMain.handle('canvas-request-grid', () => {
+  return pendingGridData || { size: 64, grid: null };
+});
+
+// IPC: fullscreen canvas saves grid data back
+ipcMain.on('canvas-save-grid', (event, grid) => {
+  const payload = pendingGridData?.expressionId
+    ? { grid, expressionId: pendingGridData.expressionId }
+    : { grid };
+  if (customWindow && !customWindow.isDestroyed()) {
+    customWindow.webContents.send('canvas-grid-updated', payload);
+  }
+});
+
 app.whenReady().then(createWindow);
 
 app.on('window-all-closed', () => {
   if (gpuMonitor) gpuMonitor.stop();
   if (process.platform !== 'darwin') {
     app.quit();
+  }
+});
+
+app.on('before-quit', () => {
+  if (canvasWindow && !canvasWindow.isDestroyed()) {
+    canvasWindow.destroy();
+    canvasWindow = null;
+  }
+  if (customWindow && !customWindow.isDestroyed()) {
+    customWindow.destroy();
+    customWindow = null;
   }
 });
 
