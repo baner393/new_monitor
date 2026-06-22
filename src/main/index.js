@@ -7,8 +7,10 @@ import { GPUMonitor } from './gpu-monitor.js';
 let mainWindow;
 let customWindow;
 let canvasWindow;
+let regionWindow;
 let gpuMonitor;
-let pendingGridData = null; // temp storage for grid sync between windows
+let pendingGridData = null;
+let pendingRegionImage = null; // temp storage for region marker image data
 
 // ── Settings persistence ────────────────────────────────────────────
 const SETTINGS_PATH = path.join(os.homedir(), '.hermes', 'profiles', 'coordinator', 'turtle-settings.json');
@@ -318,6 +320,36 @@ ipcMain.on('canvas-save-grid', (event, grid) => {
     customWindow.webContents.send('canvas-grid-updated', payload);
   }
 });
+// ── Region Marker Window ──────────────────────────────────
+function openRegionMarker(imageData) {
+  if (regionWindow && !regionWindow.isDestroyed()) {
+    regionWindow.focus();
+    return;
+  }
+  pendingRegionImage = imageData;
+  const { screen } = require('electron');
+  const primaryDisplay = screen.getPrimaryDisplay();
+  const { width, height } = primaryDisplay.workAreaSize;
+  regionWindow = new BrowserWindow({
+    width, height, frame: false, backgroundColor: '#0e1018',
+    title: '标记区域 — 全屏模式',
+    webPreferences: {
+      nodeIntegration: false, contextIsolation: true,
+      preload: path.join(app.getAppPath(), 'src', 'custom', 'preload.js'),
+    },
+  });
+  regionWindow.webContents.setZoomFactor(1);
+  regionWindow.loadFile(path.join(app.getAppPath(), 'src', 'custom', 'canvas-region.html'));
+  regionWindow.on('closed', () => { regionWindow = null; pendingRegionImage = null; });
+}
+
+ipcMain.on('open-region-marker', (event, imageData) => openRegionMarker(imageData));
+ipcMain.handle('region-request-image', () => pendingRegionImage || { dataUrl: null });
+ipcMain.on('region-mark-done', (event, regions) => {
+  if (customWindow && !customWindow.isDestroyed()) {
+    customWindow.webContents.send('region-result', regions);
+  }
+});
 
 app.whenReady().then(createWindow);
 
@@ -336,6 +368,10 @@ app.on('before-quit', () => {
   if (customWindow && !customWindow.isDestroyed()) {
     customWindow.destroy();
     customWindow = null;
+  }
+  if (regionWindow && !regionWindow.isDestroyed()) {
+    regionWindow.destroy();
+    regionWindow = null;
   }
 });
 

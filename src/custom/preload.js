@@ -17,4 +17,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('canvas-init-grid', listener);
     return () => ipcRenderer.removeListener('canvas-init-grid', listener);
   },
+
+  // ── Region marker window APIs ──
+  openRegionMarker: (imageData) => ipcRenderer.send('open-region-marker', imageData),
+  requestRegionImage: () => ipcRenderer.invoke('region-request-image'),
+  regionMarkDone: (regions) => ipcRenderer.send('region-mark-done', regions),
+  onRegionResult: (callback) => {
+    const listener = (_event, regions) => callback(regions);
+    ipcRenderer.on('region-result', listener);
+    return () => ipcRenderer.removeListener('region-result', listener);
+  },
 });

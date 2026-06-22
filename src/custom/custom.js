@@ -1092,6 +1092,39 @@
     if (autoExprPreview) autoExprPreview.style.display = 'none';
   });
 
+  // ── Fullscreen region marker ──
+  const fullscreenMarkBtn = document.getElementById('fullscreenMarkBtn');
+  fullscreenMarkBtn?.addEventListener('click', () => {
+    if (!converterImage) { setStatus('请先加载一张图片'); return; }
+    // Convert converterImage to dataUrl for the fullscreen window
+    const tc = document.createElement('canvas');
+    tc.width = converterImage.width;
+    tc.height = converterImage.height;
+    const tctx = tc.getContext('2d');
+    tctx.drawImage(converterImage, 0, 0);
+    const dataUrl = tc.toDataURL('image/png');
+    if (window.electronAPI?.openRegionMarker) {
+      window.electronAPI.openRegionMarker({ dataUrl });
+      setStatus('已打开全屏标记窗口...');
+    }
+  });
+
+  // Receive region results from fullscreen marker
+  if (window.electronAPI?.onRegionResult) {
+    window.electronAPI.onRegionResult((regions) => {
+      if (regions && regions.eyes && regions.mouth) {
+        autoExpr.eyes = regions.eyes;
+        autoExpr.mouth = regions.mouth;
+        updateRegionStatus();
+        updateGenerateBtn();
+        drawSelOverlay();
+        setStatus('区域标记已同步: 眼睛(' + regions.eyes.w + '×' + regions.eyes.h + ') 嘴巴(' + regions.mouth.w + '×' + regions.mouth.h + ')');
+      } else if (regions === null) {
+        setStatus('标记已取消');
+      }
+    });
+  }
+
   function updateRegionStatus() {
     const p = [];
     if (autoExpr.eyes) p.push('👁️ 眼睛已标记');
