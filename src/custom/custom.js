@@ -1056,8 +1056,13 @@
   const origLoadConverterFile = loadConverterFile;
   // Patch: show region controls after image loads
   function showRegionControlsAfterLoad() {
-    if (regionControls) regionControls.style.display = '';
-    syncOverlaySize();
+    if (regionControls) {
+      regionControls.style.display = '';
+    }
+    // Defer overlay sync to next frame so DOM has layout
+    requestAnimationFrame(function() {
+      syncOverlaySize();
+    });
   }
 
   function syncOverlaySize() {
