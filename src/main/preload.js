@@ -54,6 +54,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 
   /**
+   * Subscribe to open-skin-selector event from main process (context menu).
+   * @param {() => void} callback
+   * @returns {() => void} unsubscribe function
+   */
+  onOpenSkinSelector: (callback) => {
+    const listener = () => callback();
+    ipcRenderer.on('open-skin-selector', listener);
+    return () => ipcRenderer.removeListener('open-skin-selector', listener);
+  },
+
+  /**
    * Subscribe to DPI change events (window moved between monitors).
    * @param {() => void} callback
    * @returns {() => void} unsubscribe function

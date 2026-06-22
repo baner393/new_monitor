@@ -133,7 +133,7 @@ function createWindow() {
   // Listen for console messages from renderer (new API)
   mainWindow.webContents.on('console-message', (event) => {
     const message = event.message;
-    if (message.includes('[BOUNCE]') || message.includes('[Input]') || message.includes('[GameLoop]')) {
+    if (message.includes('[BOUNCE]') || message.includes('[Input]') || message.includes('[GameLoop]') || message.includes('[FPS]') || message.includes('[Skin]') || message.includes('[SkinSelector]')) {
       console.log(`[RENDERER] ${message}`);
     }
   });
@@ -194,6 +194,14 @@ ipcMain.on('show-context-menu', (event) => {
       click: () => {
         if (mainWindow && !mainWindow.isDestroyed()) {
           mainWindow.webContents.send('open-settings');
+        }
+      },
+    },
+    {
+      label: '切换皮肤',
+      click: () => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('open-skin-selector');
         }
       },
     },

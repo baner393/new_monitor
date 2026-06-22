@@ -12,6 +12,7 @@ import { StateMachine } from './state-machine.js';
 import { InputManager } from './input.js';
 import { Panel } from './panel.js';
 import { SettingsPanel } from './settings.js';
+import { SkinSelector } from './skin-selector.js';
 
 // ── Font loading gate ─────────────────────────────────────────────────
 async function waitForFonts() {
@@ -68,12 +69,12 @@ pixiApp.stage.addChild(ropeContainer);
 ropeContainer.addChild(ropeGraphics);
 
 // ── Load sprites ───────────────────────────────────────────────────────
-const idleTexture  = PIXI.Texture.from(idleSpriteUrl);
-const hoverTexture = PIXI.Texture.from(hoverSpriteUrl);
-const pullTexture  = PIXI.Texture.from(pullSpriteUrl);
-const happyTexture = PIXI.Texture.from(happySpriteUrl);
-const painTexture  = PIXI.Texture.from(painSpriteUrl);
-const blinkTexture = PIXI.Texture.from(blinkSpriteUrl);
+let idleTexture  = PIXI.Texture.from(idleSpriteUrl);
+let hoverTexture = PIXI.Texture.from(hoverSpriteUrl);
+let pullTexture  = PIXI.Texture.from(pullSpriteUrl);
+let happyTexture = PIXI.Texture.from(happySpriteUrl);
+let painTexture  = PIXI.Texture.from(painSpriteUrl);
+let blinkTexture = PIXI.Texture.from(blinkSpriteUrl);
 
 // ── State Machine Presets ──────────────────────────────────────────────
 //
@@ -159,6 +160,45 @@ window.electronAPI.onOpenSettings(() => {
 window.electronAPI.onSettingsChanged((settings) => {
   console.log('[Settings] Settings changed:', settings);
   applySettings(settings);
+});
+
+// ── Skin Selector ─────────────────────────────────────────────────────
+const skinSelector = new SkinSelector();
+document.body.appendChild(skinSelector.container);
+
+// Load skins config
+skinSelector.loadSkins('./assets/skins/skins.json');
+
+// Handle skin change
+skinSelector.onSkinChange = (skinId, skinConfig) => {
+  console.log(`[Skin] Switching to: ${skinId}`, skinConfig);
+  const frames = skinConfig.frames || skinConfig.sprites;
+  if (frames) {
+    // Reload textures from new skin paths
+    idleTexture  = PIXI.Texture.from(frames.idle);
+    hoverTexture = PIXI.Texture.from(frames.hover);
+    pullTexture  = PIXI.Texture.from(frames.pull);
+    happyTexture = PIXI.Texture.from(frames.happy);
+    painTexture  = PIXI.Texture.from(frames.pain);
+    blinkTexture = PIXI.Texture.from(frames.blink_closed || frames.blink);
+    // Apply idle texture immediately
+    bodySprite.texture = idleTexture;
+    console.log(`[Skin] Textures reloaded for: ${skinId}`);
+  }
+};
+
+// Restore last selected skin
+const savedSkin = localStorage.getItem('selectedSkin');
+if (savedSkin) {
+  skinSelector.currentSkin = savedSkin;
+}
+
+// Listen for open-skin-selector from context menu
+window.electronAPI.onOpenSkinSelector(() => {
+  console.log('[SkinSelector] Opening skin selector from context menu');
+  if (!skinSelector.isOpen) {
+    skinSelector.open();
+  }
 });
 
 // Load saved settings on startup
@@ -416,11 +456,20 @@ function onStateChange() {
 // ── Game Loop ──────────────────────────────────────────────────────────
 let elapsed = 0;
 let frameCount = 0;
+let fpsTime = 0;
+let fpsCount = 0;
 
 pixiApp.ticker.add((delta) => {
   const dt = delta / 60;
   elapsed += dt;
   frameCount++;
+  fpsCount++;
+  fpsTime += dt;
+  if (fpsTime >= 1.0) {
+    console.log(`[FPS] ${Math.round(fpsCount / fpsTime)}`);
+    fpsCount = 0;
+    fpsTime = 0;
+  }
 
   // Check for state transitions
   onStateChange();
