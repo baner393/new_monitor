@@ -180,6 +180,7 @@
   let canvasIsDrawing = false;
   let canvasHistory = [];
   let canvasHistoryIndex = -1;
+  let canvasBrushSize = 1;
 
   // Panning state
   let canvasIsPanning = false;
@@ -289,21 +290,35 @@
   }
 
   function canvasDrawPixel(x, y, color) {
-    if (x < 0 || x >= canvasGridSize || y < 0 || y >= canvasGridSize) return;
-    pixelGrid[y][x] = color;
-    drawCtx.fillStyle = color;
-    drawCtx.fillRect(x * pixelScale, y * pixelScale, pixelScale, pixelScale);
-    if (pixelScale >= 4) {
-      drawCtx.strokeStyle = 'rgba(255,255,255,0.08)';
-      drawCtx.lineWidth = 0.5;
-      drawCtx.strokeRect(x * pixelScale + 0.5, y * pixelScale + 0.5, pixelScale, pixelScale);
+    const half = Math.floor(canvasBrushSize / 2);
+    for (let dy = -half; dy < canvasBrushSize - half; dy++) {
+      for (let dx = -half; dx < canvasBrushSize - half; dx++) {
+        const px = x + dx;
+        const py = y + dy;
+        if (px < 0 || px >= canvasGridSize || py < 0 || py >= canvasGridSize) continue;
+        pixelGrid[py][px] = color;
+        drawCtx.fillStyle = color;
+        drawCtx.fillRect(px * pixelScale, py * pixelScale, pixelScale, pixelScale);
+        if (pixelScale >= 4) {
+          drawCtx.strokeStyle = 'rgba(255,255,255,0.08)';
+          drawCtx.lineWidth = 0.5;
+          drawCtx.strokeRect(px * pixelScale + 0.5, py * pixelScale + 0.5, pixelScale, pixelScale);
+        }
+      }
     }
   }
 
   function canvasErasePixel(x, y) {
-    if (x < 0 || x >= canvasGridSize || y < 0 || y >= canvasGridSize) return;
-    pixelGrid[y][x] = null;
-    drawCtx.clearRect(x * pixelScale, y * pixelScale, pixelScale, pixelScale);
+    const half = Math.floor(canvasBrushSize / 2);
+    for (let dy = -half; dy < canvasBrushSize - half; dy++) {
+      for (let dx = -half; dx < canvasBrushSize - half; dx++) {
+        const px = x + dx;
+        const py = y + dy;
+        if (px < 0 || px >= canvasGridSize || py < 0 || py >= canvasGridSize) continue;
+        pixelGrid[py][px] = null;
+        drawCtx.clearRect(px * pixelScale, py * pixelScale, pixelScale, pixelScale);
+      }
+    }
   }
 
   function canvasFloodFill(startX, startY, fillColor) {
@@ -419,6 +434,26 @@
   // Canvas size change
   canvasSizeSelect?.addEventListener('change', () => initDrawCanvas());
 
+  // Canvas brush size
+  document.getElementById('canvasBrushSize')?.addEventListener('change', (e) => {
+    canvasBrushSize = parseInt(e.target.value, 10) || 1;
+    setStatus('画笔大小: ' + canvasBrushSize + '×' + canvasBrushSize);
+  });
+
+  // Expression brush size
+  document.getElementById('exprBrushSize')?.addEventListener('change', (e) => {
+    exprBrushSize = parseInt(e.target.value, 10) || 1;
+    setStatus('画笔大小: ' + exprBrushSize + '×' + exprBrushSize);
+  });
+
+  // ── Resolution mode toggle for skin loading ──
+  const loadResMode = document.getElementById('loadResMode');
+  const loadResCustom = document.getElementById('loadResCustom');
+  loadResMode?.addEventListener('change', () => {
+    const isCustom = loadResMode.value === 'custom';
+    if (loadResCustom) loadResCustom.style.display = isCustom ? '' : 'none';
+  });
+
   // Export
   exportCanvasBtn?.addEventListener('click', () => {
     const out = gridToImageData(pixelGrid, canvasGridSize, canvasGridSize);
@@ -481,6 +516,7 @@
   let exprIsDrawing = false;
   let exprHistory = {};
   let exprHistoryIndex = {};
+  let exprBrushSize = 1;
 
   // Expression panning
   let exprIsPanning = false;
@@ -698,22 +734,36 @@
 
   function exprDrawPixel(x, y, color) {
     const size = getExprSize();
-    if (x < 0 || x >= size || y < 0 || y >= size) return;
-    pixelGrid[y][x] = color;
-    exprCtx.fillStyle = color;
-    exprCtx.fillRect(x * exprPixelScale, y * exprPixelScale, exprPixelScale, exprPixelScale);
-    if (exprPixelScale >= 4) {
-      exprCtx.strokeStyle = 'rgba(255,255,255,0.08)';
-      exprCtx.lineWidth = 0.5;
-      exprCtx.strokeRect(x * exprPixelScale + 0.5, y * exprPixelScale + 0.5, exprPixelScale, exprPixelScale);
+    const half = Math.floor(exprBrushSize / 2);
+    for (let dy = -half; dy < exprBrushSize - half; dy++) {
+      for (let dx = -half; dx < exprBrushSize - half; dx++) {
+        const px = x + dx;
+        const py = y + dy;
+        if (px < 0 || px >= size || py < 0 || py >= size) continue;
+        pixelGrid[py][px] = color;
+        exprCtx.fillStyle = color;
+        exprCtx.fillRect(px * exprPixelScale, py * exprPixelScale, exprPixelScale, exprPixelScale);
+        if (exprPixelScale >= 4) {
+          exprCtx.strokeStyle = 'rgba(255,255,255,0.08)';
+          exprCtx.lineWidth = 0.5;
+          exprCtx.strokeRect(px * exprPixelScale + 0.5, py * exprPixelScale + 0.5, exprPixelScale, exprPixelScale);
+        }
+      }
     }
   }
 
   function exprErasePixel(x, y) {
     const size = getExprSize();
-    if (x < 0 || x >= size || y < 0 || y >= size) return;
-    pixelGrid[y][x] = null;
-    exprCtx.clearRect(x * exprPixelScale, y * exprPixelScale, exprPixelScale, exprPixelScale);
+    const half = Math.floor(exprBrushSize / 2);
+    for (let dy = -half; dy < exprBrushSize - half; dy++) {
+      for (let dx = -half; dx < exprBrushSize - half; dx++) {
+        const px = x + dx;
+        const py = y + dy;
+        if (px < 0 || px >= size || py < 0 || py >= size) continue;
+        pixelGrid[py][px] = null;
+        exprCtx.clearRect(px * exprPixelScale, py * exprPixelScale, exprPixelScale, exprPixelScale);
+      }
+    }
   }
 
   function exprFloodFill(startX, startY, fillColor) {
@@ -892,21 +942,28 @@
       reader.onload = (ev) => {
         const img = new Image();
         img.onload = () => {
-          // Preserve original resolution
-          const w = img.width;
-          const h = img.height;
-          const size = Math.max(w, h); // use largest dimension as grid size
+          // Read resolution mode
+          const resMode = loadResMode?.value || 'original';
+          let targetW = img.width;
+          let targetH = img.height;
+          if (resMode === 'custom') {
+            const customSize = parseInt(loadResCustom?.value || '64', 10);
+            targetW = customSize;
+            targetH = customSize;
+          }
+          const size = Math.max(targetW, targetH);
           const grid = createEmptyGrid(size);
-          // Draw image pixel by pixel
+          // Draw image pixel by pixel (with optional resize)
           const tmpCanvas = document.createElement('canvas');
-          tmpCanvas.width = w;
-          tmpCanvas.height = h;
+          tmpCanvas.width = targetW;
+          tmpCanvas.height = targetH;
           const tmpCtx = tmpCanvas.getContext('2d');
-          tmpCtx.drawImage(img, 0, 0);
-          const imgData = tmpCtx.getImageData(0, 0, w, h);
-          for (let y = 0; y < h; y++) {
-            for (let x = 0; x < w; x++) {
-              const i = (y * w + x) * 4;
+          tmpCtx.imageSmoothingEnabled = false; // pixel-art resize
+          tmpCtx.drawImage(img, 0, 0, targetW, targetH);
+          const imgData = tmpCtx.getImageData(0, 0, targetW, targetH);
+          for (let y = 0; y < targetH; y++) {
+            for (let x = 0; x < targetW; x++) {
+              const i = (y * targetW + x) * 4;
               const r = imgData.data[i];
               const g = imgData.data[i + 1];
               const b = imgData.data[i + 2];
@@ -920,7 +977,6 @@
           }
 
           if (applyAll) {
-            // Apply this frame to ALL expressions
             EXPRESSIONS.forEach(exp => {
               exprData[exp.id] = {
                 grid: cloneGrid(grid),
@@ -928,12 +984,13 @@
                 loaded: true
               };
             });
-            setStatus('已加载: ' + file.name + ' → 应用到所有状态 (' + w + '×' + h + ')');
+            const modeLabel = resMode === 'custom' ? ' → 缩放至 ' + targetW + '×' + targetH : '';
+            setStatus('已加载: ' + file.name + ' → 应用到所有状态 (' + img.width + '×' + img.height + modeLabel + ')');
           } else {
             exprData[matchId] = { grid, size, loaded: true };
-            setStatus('已加载: ' + file.name + ' → ' + matchId + ' (' + w + '×' + h + ')');
+            const modeLabel = resMode === 'custom' ? ' → 缩放至 ' + targetW + '×' + targetH : '';
+            setStatus('已加载: ' + file.name + ' → ' + matchId + ' (' + img.width + '×' + img.height + modeLabel + ')');
           }
-
           refreshAllThumbnails();
           loadedCount++;
           if (loadedCount >= total) finishSkinLoad();

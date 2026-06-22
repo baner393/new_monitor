@@ -29,7 +29,13 @@
   let pixelGrid = [];
   let history = [];
   let historyIndex = -1;
+  let brushSize = 1;
 
+  // Brush size selector
+  document.getElementById('brushSize')?.addEventListener('change', (e) => {
+    brushSize = parseInt(e.target.value, 10) || 1;
+    setStatus('画笔大小: ' + brushSize + '×' + brushSize);
+  });
   function setStatus(text) { statusText.textContent = text; }
 
   function createEmptyGrid(size) {
@@ -112,21 +118,35 @@
   }
 
   function drawPixel(x, y, color) {
-    if (x < 0 || x >= drawSize || y < 0 || y >= drawSize) return;
-    pixelGrid[y][x] = color;
-    drawCtx.fillStyle = color;
-    drawCtx.fillRect(x * pixelScale, y * pixelScale, pixelScale, pixelScale);
-    if (pixelScale >= 4) {
-      drawCtx.strokeStyle = 'rgba(255,255,255,0.08)';
-      drawCtx.lineWidth = 0.5;
-      drawCtx.strokeRect(x * pixelScale + 0.5, y * pixelScale + 0.5, pixelScale, pixelScale);
+    const half = Math.floor(brushSize / 2);
+    for (let dy = -half; dy < brushSize - half; dy++) {
+      for (let dx = -half; dx < brushSize - half; dx++) {
+        const px = x + dx;
+        const py = y + dy;
+        if (px < 0 || px >= drawSize || py < 0 || py >= drawSize) continue;
+        pixelGrid[py][px] = color;
+        drawCtx.fillStyle = color;
+        drawCtx.fillRect(px * pixelScale, py * pixelScale, pixelScale, pixelScale);
+        if (pixelScale >= 4) {
+          drawCtx.strokeStyle = 'rgba(255,255,255,0.08)';
+          drawCtx.lineWidth = 0.5;
+          drawCtx.strokeRect(px * pixelScale + 0.5, py * pixelScale + 0.5, pixelScale, pixelScale);
+        }
+      }
     }
   }
 
   function erasePixel(x, y) {
-    if (x < 0 || x >= drawSize || y < 0 || y >= drawSize) return;
-    pixelGrid[y][x] = null;
-    drawCtx.clearRect(x * pixelScale, y * pixelScale, pixelScale, pixelScale);
+    const half = Math.floor(brushSize / 2);
+    for (let dy = -half; dy < brushSize - half; dy++) {
+      for (let dx = -half; dx < brushSize - half; dx++) {
+        const px = x + dx;
+        const py = y + dy;
+        if (px < 0 || px >= drawSize || py < 0 || py >= drawSize) continue;
+        pixelGrid[py][px] = null;
+        drawCtx.clearRect(px * pixelScale, py * pixelScale, pixelScale, pixelScale);
+      }
+    }
   }
 
   function floodFill(startX, startY, fillColor) {
