@@ -1016,6 +1016,11 @@
           loadedCount++;
           if (loadedCount >= total) onAllDone();
         };
+        img.onerror = () => {
+          console.warn('[SkinLoad] Failed to load:', file.name);
+          loadedCount++;
+          if (loadedCount >= total) onAllDone();
+        };
         img.src = ev.target.result;
       };
       reader.readAsDataURL(file);
@@ -1227,7 +1232,8 @@
   function clearRegion(grid, region) {
     const { x, y, w, h } = region;
     for (let sy = 0; sy < h; sy++) for (let sx = 0; sx < w; sx++) {
-      if (y+sy < grid.length && x+sx < grid[0].length) grid[y+sy][x+sx] = null;
+      const gy = y + sy, gx = x + sx;
+      if (gy >= 0 && gy < grid.length && gx >= 0 && gx < (grid[0]?.length || 0)) grid[gy][gx] = null;
     }
   }
 
@@ -1271,9 +1277,10 @@
 
   function replaceWithPainEyes(grid, size, region) {
     const { x, y, w, h } = region;
-    clearRegion(grid, region);
     const half = Math.floor(w / 2);
+    // Save eye color BEFORE clearing (clearRegion would null it out)
     const eyeColor = grid[y]?.[x] || 'rgb(0,0,0)';
+    clearRegion(grid, region);
     // Left eye: > shape
     for (let dy = 0; dy < h; dy++) {
       const t = h > 1 ? dy / (h - 1) : 0.5;
