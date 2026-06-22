@@ -1052,7 +1052,10 @@
   const applyToEditorBtn = document.getElementById('applyToEditorBtn');
 
   const autoExpr = {
-    eyes: null, mouth: null, mode: null,
+    leftEye: { region: null, pixels: [] },
+    rightEye: { region: null, pixels: [] },
+    mouth: { region: null, pixels: [] },
+    mode: null,
     baseGrid: null, baseSize: 0, results: {},
   };
   let selStart = null, selCur = null;
@@ -1096,7 +1099,9 @@
   selectMouthBtn?.addEventListener('click', () => enterSelMode('mouth'));
 
   clearRegionsBtn?.addEventListener('click', () => {
-    autoExpr.eyes = autoExpr.mouth = null;
+    autoExpr.leftEye = { region: null, pixels: [] };
+    autoExpr.rightEye = { region: null, pixels: [] };
+    autoExpr.mouth = { region: null, pixels: [] };
     updateRegionStatus(); updateGenerateBtn();
     drawSelOverlay();
     if (autoExprPreview) autoExprPreview.style.display = 'none';
@@ -1122,13 +1127,17 @@
   // Receive region results from fullscreen marker
   if (window.electronAPI?.onRegionResult) {
     window.electronAPI.onRegionResult((regions) => {
-      if (regions && regions.eyes && regions.mouth) {
-        autoExpr.eyes = regions.eyes;
+      if (regions && regions.leftEye && regions.rightEye && regions.mouth &&
+          regions.leftEye.region && regions.rightEye.region && regions.mouth.region &&
+          regions.leftEye.pixels?.length > 0 && regions.rightEye.pixels?.length > 0 && regions.mouth.pixels?.length > 0) {
+        autoExpr.leftEye = regions.leftEye;
+        autoExpr.rightEye = regions.rightEye;
         autoExpr.mouth = regions.mouth;
         updateRegionStatus();
         updateGenerateBtn();
         drawSelOverlay();
-        setStatus('区域标记已同步: 眼睛(' + regions.eyes.w + '×' + regions.eyes.h + ') 嘴巴(' + regions.mouth.w + '×' + regions.mouth.h + ')');
+        const le = regions.leftEye, re = regions.rightEye, mo = regions.mouth;
+        setStatus('标记已同步: 左眼(' + le.pixels.length + 'px) 右眼(' + re.pixels.length + 'px) 嘴巴(' + mo.pixels.length + 'px)');
       } else if (regions === null) {
         setStatus('标记已取消');
       }
@@ -1137,12 +1146,23 @@
 
   function updateRegionStatus() {
     const p = [];
-    if (autoExpr.eyes) p.push('👁️ 眼睛已标记');
-    if (autoExpr.mouth) p.push('👄 嘴巴已标记');
+    const features = [
+      { key: 'leftEye', label: '👁️ 左眼' },
+      { key: 'rightEye', label: '👁️ 右眼' },
+      { key: 'mouth', label: '👄 嘴巴' },
+    ];
+    for (const f of features) {
+      const d = autoExpr[f.key];
+      if (d && d.region && d.pixels?.length > 0) p.push(f.label + ' ✓');
+      else if (d && d.region) p.push(f.label + ' 区域');
+    }
     regionStatus.textContent = p.join(' | ') || '未标记任何区域';
   }
   function updateGenerateBtn() {
-    if (generateExprBtn) generateExprBtn.disabled = !(autoExpr.eyes && autoExpr.mouth);
+    const ready = autoExpr.leftEye?.region && autoExpr.leftEye?.pixels?.length > 0 &&
+                  autoExpr.rightEye?.region && autoExpr.rightEye?.pixels?.length > 0 &&
+                  autoExpr.mouth?.region && autoExpr.mouth?.pixels?.length > 0;
+    if (generateExprBtn) generateExprBtn.disabled = !ready;
   }
 
   // Overlay mouse events
@@ -1176,14 +1196,46 @@
   function drawSelOverlay() {
     if (!selCtx || !selOverlay) return;
     selCtx.clearRect(0, 0, selOverlay.width, selOverlay.height);
-    if (autoExpr.eyes) drawRegionRect(selCtx, autoExpr.eyes, 'rgba(100,200,255,0.35)', 'rgba(100,200,255,0.9)', '眼睛');
-    if (autoExpr.mouth) drawRegionRect(selCtx, autoExpr.mouth, 'rgba(255,150,100,0.35)', 'rgba(255,150,100,0.9)', '嘴巴');
+    // Draw regions and pixels for each feature
+    const features = [
+      { key: 'leftEye', color: 'rgba(100,200,255,0.35)', stroke: '#66ccff', label: '左眼' },
+      { key: 'rightEye', color: 'rgba(100,255,150,0.35)', stroke: '#66ff99', label: '右眼' },
+      { key: 'mouth', color: 'rgba(255,150,100,0.35)', stroke: '#ff9966', label: '嘴巴' },
+    ];
+    for (const f of features) {
+      const d = autoExpr[f.key];
+      if (!d) continue;
+      // Draw region bounding box
+      if (d.region) {
+        const r = d.region;
+        selCtx.strokeStyle = f.stroke;
+        selCtx.lineWidth = 2;
+        selCtx.setLineDash([4, 4]);
+        selCtx.strokeRect(r.x, r.y, r.w, r.h);
+        selCtx.setLineDash([]);
+        selCtx.fillStyle = f.stroke;
+        selCtx.font = 'bold 10px sans-serif';
+        selCtx.fillText(f.label, r.x + 2, r.y - 2 > 10 ? r.y - 2 : r.y + 12);
+      }
+      // Draw selected pixels
+      if (d.pixels) {
+        for (const p of d.pixels) {
+          selCtx.fillStyle = f.stroke;
+          selCtx.globalAlpha = 0.6;
+          selCtx.fillRect(p.x, p.y, 1, 1);
+          selCtx.globalAlpha = 1;
+        }
+      }
+    }
+    // Draw drag preview
     if (selStart && selCur && autoExpr.mode) {
       const x = Math.min(selStart.x, selCur.x), y = Math.min(selStart.y, selCur.y);
       const w = Math.abs(selCur.x - selStart.x), h = Math.abs(selCur.y - selStart.y);
-      selCtx.fillStyle = autoExpr.mode === 'eyes' ? 'rgba(100,200,255,0.3)' : 'rgba(255,150,100,0.3)';
+      const modeColors = { eyes: 'rgba(100,200,255,0.3)', mouth: 'rgba(255,150,100,0.3)' };
+      const modeStrokes = { eyes: '#66ccff', mouth: '#ff9966' };
+      selCtx.fillStyle = modeColors[autoExpr.mode] || 'rgba(200,200,200,0.3)';
       selCtx.fillRect(x, y, w, h);
-      selCtx.strokeStyle = autoExpr.mode === 'eyes' ? '#66ccff' : '#ff9966';
+      selCtx.strokeStyle = modeStrokes[autoExpr.mode] || '#ccc';
       selCtx.lineWidth = 2;
       selCtx.strokeRect(x, y, w, h);
     }
@@ -1281,36 +1333,34 @@
   }
 
   function replaceWithPainEyes(grid, size, region) {
-    function replaceWithPainEyes(grid, size, region) {
-      const { x, y, w, h } = region;
-      const half = Math.floor(w / 2);
-      const eyeColor = grid[y]?.[x] || 'rgb(0,0,0)';
-      clearRegion(grid, region);
-      // >< shape: indent peaks at midpoint, zero at top/bottom
-      const mid = (h - 1) / 2;
-      for (let dy = 0; dy < h; dy++) {
-        const t = mid > 0 ? (mid - Math.abs(dy - mid)) / mid : 1;
-        const indent = Math.round(t * half * 0.8);
-        // Left eye: > shape (opens rightward)
-        const gx1 = x + half - 1 - indent;
-        const gx2 = x + half - 1 - indent + 1;
-        if (gx1 >= x && gx1 < x + half && y + dy >= 0 && y + dy < size) grid[y + dy][gx1] = eyeColor;
-        if (gx2 >= x && gx2 < x + half && y + dy >= 0 && y + dy < size) grid[y + dy][gx2] = eyeColor;
-        // Right eye: < shape (opens leftward)
-        const gx3 = x + half + indent;
-        const gx4 = x + half + indent - 1;
-        if (gx3 >= x + half && gx3 < x + w && y + dy >= 0 && y + dy < size) grid[y + dy][gx3] = eyeColor;
-        if (gx4 >= x + half && gx4 < x + w && y + dy >= 0 && y + dy < size) grid[y + dy][gx4] = eyeColor;
-      }
-      const gx2 = x + half + indent - 1;
-      if (gx1 >= x + half && gx1 < x + w && y + dy >= 0 && y + dy < size) grid[y + dy][gx1] = eyeColor;
-      if (gx2 >= x + half && gx2 < x + w && y + dy >= 0 && y + dy < size) grid[y + dy][gx2] = eyeColor;
+    const { x, y, w, h } = region;
+    const half = Math.floor(w / 2);
+    const eyeColor = grid[y]?.[x] || 'rgb(0,0,0)';
+    clearRegion(grid, region);
+    // >< shape: indent peaks at midpoint, zero at top/bottom
+    const mid = (h - 1) / 2;
+    for (let dy = 0; dy < h; dy++) {
+      const t = mid > 0 ? (mid - Math.abs(dy - mid)) / mid : 1;
+      const indent = Math.round(t * half * 0.8);
+      // Left eye: > shape (opens rightward)
+      const gx1 = x + half - 1 - indent;
+      const gx2 = x + half - 1 - indent + 1;
+      if (gx1 >= x && gx1 < x + half && y + dy >= 0 && y + dy < size) grid[y + dy][gx1] = eyeColor;
+      if (gx2 >= x && gx2 < x + half && y + dy >= 0 && y + dy < size) grid[y + dy][gx2] = eyeColor;
+      // Right eye: < shape (opens leftward)
+      const gx3 = x + half + indent;
+      const gx4 = x + half + indent - 1;
+      if (gx3 >= x + half && gx3 < x + w && y + dy >= 0 && y + dy < size) grid[y + dy][gx3] = eyeColor;
+      if (gx4 >= x + half && gx4 < x + w && y + dy >= 0 && y + dy < size) grid[y + dy][gx4] = eyeColor;
     }
   }
 
   // ── Generate expressions ──
   generateExprBtn?.addEventListener('click', () => {
-    if (!autoExpr.eyes || !autoExpr.mouth || !converterImage) return;
+    if (!autoExpr.leftEye || !autoExpr.rightEye || !autoExpr.mouth || !converterImage) return;
+    if (!autoExpr.leftEye.region || !autoExpr.rightEye.region || !autoExpr.mouth.region) return;
+    if (!autoExpr.leftEye.pixels?.length || !autoExpr.rightEye.pixels?.length || !autoExpr.mouth.pixels?.length) return;
+
     // Build base grid from converter image
     const img = converterImage;
     const sz = Math.max(img.width, img.height);
@@ -1323,29 +1373,47 @@
       const i = (py * img.width + px) * 4;
       if (id.data[i + 3] > 128) baseGrid[py][px] = 'rgb(' + id.data[i] + ',' + id.data[i+1] + ',' + id.data[i+2] + ')';
     }
-    // autoExpr.eyes/mouth coordinates are already in image pixel space
-    // (selOverlay maps CSS pixels → canvas pixels via selOverlay.width/getBoundingClientRect)
-    // No additional scaling needed
-    const eyes = { x: autoExpr.eyes.x, y: autoExpr.eyes.y, w: autoExpr.eyes.w, h: autoExpr.eyes.h };
-    const mouth = { x: autoExpr.mouth.x, y: autoExpr.mouth.y, w: autoExpr.mouth.w, h: autoExpr.mouth.h };
+
+    // Extract regions and pixel sets
+    const leftEyeRegion = autoExpr.leftEye.region;
+    const rightEyeRegion = autoExpr.rightEye.region;
+    const mouthRegion = autoExpr.mouth.region;
+    const leftEyePixels = new Set(autoExpr.leftEye.pixels.map(p => p.x + ',' + p.y));
+    const rightEyePixels = new Set(autoExpr.rightEye.pixels.map(p => p.x + ',' + p.y));
+    const mouthPixels = new Set(autoExpr.mouth.pixels.map(p => p.x + ',' + p.y));
 
     autoExpr.results = {};
-    autoExpr.results.idle   = { grid: cloneGrid(baseGrid), size: sz };
-    // Hover: 眼睛睁大，嘴巴缩小（卖萌）
-    let g = cloneGrid(baseGrid); scaleRegion(g, sz, eyes, 1.3); scaleRegion(g, sz, mouth, 0.7);
-    autoExpr.results.hover  = { grid: g, size: sz };
-    // Pull: 惊讶，眼睛嘴巴都睁大，粉色舌头
-    g = cloneGrid(baseGrid); scaleRegion(g, sz, eyes, 1.4); scaleRegion(g, sz, mouth, 1.35); addTongue(g, sz, mouth);
-    autoExpr.results.pull   = { grid: g, size: sz };
-    // Happy: 眼睛微缩下弯，嘴巴上扬
-    g = cloneGrid(baseGrid); scaleRegion(g, sz, eyes, 0.85); curveRegion(g, sz, eyes, 1); curveRegion(g, sz, mouth, -1);
-    autoExpr.results.happy  = { grid: g, size: sz };
-    // Pain: 眼睛变 ><，嘴巴不变
-    g = cloneGrid(baseGrid); replaceWithPainEyes(g, sz, eyes);
-    autoExpr.results.pain   = { grid: g, size: sz };
-    // Blink: 眼睛消失
-    g = cloneGrid(baseGrid); clearRegion(g, eyes);
-    autoExpr.results.blink  = { grid: g, size: sz };
+    autoExpr.results.idle = { grid: cloneGrid(baseGrid), size: sz };
+
+    // Hover: eyes enlarge, mouth shrinks (cute)
+    let g = cloneGrid(baseGrid);
+    scaleRegion(g, sz, leftEyeRegion, 1.3); scaleRegion(g, sz, rightEyeRegion, 1.3);
+    scaleRegion(g, sz, mouthRegion, 0.7);
+    autoExpr.results.hover = { grid: g, size: sz };
+
+    // Pull: surprise, eyes+mouth enlarge, pink tongue
+    g = cloneGrid(baseGrid);
+    scaleRegion(g, sz, leftEyeRegion, 1.4); scaleRegion(g, sz, rightEyeRegion, 1.4);
+    scaleRegion(g, sz, mouthRegion, 1.35); addTongue(g, sz, mouthRegion);
+    autoExpr.results.pull = { grid: g, size: sz };
+
+    // Happy: eyes shrink+curve down, mouth curves up
+    g = cloneGrid(baseGrid);
+    scaleRegion(g, sz, leftEyeRegion, 0.85); scaleRegion(g, sz, rightEyeRegion, 0.85);
+    curveRegion(g, sz, leftEyeRegion, 1); curveRegion(g, sz, rightEyeRegion, 1);
+    curveRegion(g, sz, mouthRegion, -1);
+    autoExpr.results.happy = { grid: g, size: sz };
+
+    // Pain: eyes become >< shape using pixel positions, mouth unchanged
+    g = cloneGrid(baseGrid);
+    replaceWithPainEyes(g, sz, leftEyeRegion); replaceWithPainEyes(g, sz, rightEyeRegion);
+    autoExpr.results.pain = { grid: g, size: sz };
+
+    // Blink: clear only the selected eye pixels (precise)
+    g = cloneGrid(baseGrid);
+    for (const pk of leftEyePixels) { const [px, py] = pk.split(',').map(Number); if (py < sz && px < sz) g[py][px] = null; }
+    for (const pk of rightEyePixels) { const [px, py] = pk.split(',').map(Number); if (py < sz && px < sz) g[py][px] = null; }
+    autoExpr.results.blink = { grid: g, size: sz };
 
     renderAutoExprPreview();
     setStatus('已生成 6 个表情');
