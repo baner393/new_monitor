@@ -632,11 +632,14 @@
 
     // Reset expr zoom
     exprZoomPercent = 100;
-    const fit = getExprBaseScale();
-    exprPixelScale = fit;
     exprZoomLabel.textContent = '100%';
     resetExprPan();
-    resizeExprCanvas();
+    // Use rAF to ensure container has layout after display change
+    requestAnimationFrame(function() {
+      const fit = getExprBaseScale();
+      exprPixelScale = fit;
+      resizeExprCanvas();
+    });
     setStatus('选中表情: ' + exprId + ' (' + data.size + '×' + data.size + ')');
   }
 
@@ -931,14 +934,42 @@
 
     let loadedCount = 0;
     const total = files.length;
-    const batchResults = []; // collect results, apply all at once
+
+    // Helper: process one loaded image into exprData
+    function applyOneImage(matchId, grid, size) {
+      if (applyAll) {
+        EXPRESSIONS.forEach(exp => {
+          exprData[exp.id] = { grid: cloneGrid(grid), size, loaded: true };
+        });
+      } else {
+        exprData[matchId] = { grid: cloneGrid(grid), size, loaded: true };
+      }
+    }
+
+    // Helper: finalize after all files loaded
+    function onAllDone() {
+      refreshAllThumbnails();
+      // If currently editing an expression that was just loaded, reload pixelGrid
+      if (currentExprId && exprData[currentExprId] && exprData[currentExprId].loaded) {
+        pixelGrid = cloneGrid(exprData[currentExprId].grid);
+        requestAnimationFrame(function() {
+          exprPixelScale = getExprBaseScale();
+          exprZoomPercent = 100;
+          exprZoomLabel.textContent = '100%';
+          resizeExprCanvas();
+        });
+      }
+      const modeLabel = resMode === 'custom' ? ' → 缩放至 ' + customResSize + '×' + customResSize : '';
+      setStatus('已加载 ' + loadedCount + ' 个表情' + modeLabel);
+      finishSkinLoad();
+    }
 
     Array.from(files).forEach(file => {
       const stem = file.name.replace(/\.png$/i, '').toLowerCase();
       const matchId = nameMap[stem] || nameMap[stem + '.png'];
       if (!matchId) {
         loadedCount++;
-        if (loadedCount >= total) applyBatchResults();
+        if (loadedCount >= total) onAllDone();
         return;
       }
 
@@ -978,38 +1009,16 @@
             }
           }
 
-          batchResults.push({ matchId, grid, size, file, imgW: img.width, imgH: img.height, applyAll });
+          // Write directly to exprData (cloneGrid to avoid shared refs)
+          applyOneImage(matchId, grid, size);
           loadedCount++;
-          if (loadedCount >= total) applyBatchResults();
+          if (loadedCount >= total) onAllDone();
         };
         img.src = ev.target.result;
       };
       reader.readAsDataURL(file);
     });
 
-    function applyBatchResults() {
-      if (applyAll && batchResults.length > 0) {
-        // Use the first result's grid for all expressions
-        const first = batchResults[0];
-        EXPRESSIONS.forEach(exp => {
-          exprData[exp.id] = {
-            grid: cloneGrid(first.grid),
-            size: first.size,
-            loaded: true
-          };
-        });
-      } else {
-        // Apply each result to its matched expression
-        for (const r of batchResults) {
-          exprData[r.matchId] = { grid: r.grid, size: r.size, loaded: true };
-        }
-      }
-      // Single refresh after ALL files are processed
-      refreshAllThumbnails();
-      const modeLabel = resMode === 'custom' ? ' → 缩放至 ' + customResSize + '×' + customResSize : '';
-      setStatus('已加载 ' + batchResults.length + ' 个表情' + modeLabel);
-      finishSkinLoad();
-    }
   });
 
   function finishSkinLoad() {
