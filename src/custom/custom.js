@@ -1247,111 +1247,174 @@
     ctx.fillText(label, r.x + 3, r.y + 13);
   }
 
-  // ── Pixel transformation helpers ──
-  function scaleRegion(grid, size, region, factor) {
-    const { x, y, w, h } = region;
-    const nw = Math.max(1, Math.round(w * factor));
-    const nh = Math.max(1, Math.round(h * factor));
-    const ox = x + Math.floor((w - nw) / 2);
-    const oy = y + Math.floor((h - nh) / 2);
-    // Extract to canvas
-    const src = document.createElement('canvas'); src.width = w; src.height = h;
-    const sctx = src.getContext('2d');
-    for (let sy = 0; sy < h; sy++) for (let sx = 0; sx < w; sx++) {
-      const c = grid[y + sy]?.[x + sx];
-      if (c) { sctx.fillStyle = c; sctx.fillRect(sx, sy, 1, 1); }
+  // ── Pixel transformation helpers (Gemini优化版) ──
+  // region = 安全沙盒（蒙版），pixelBounds = 变形基准
+
+  // 解析像素坐标 "x,y" → {x, y}
+  function parseKey(pk) {
+    const [x, y] = pk.split(',').map(Number);
+    return { x, y };
+  }
+
+  // 获取像素集合的元数据：bounding box + 几何中心 + 颜色
+  function getPixelMeta(grid, pixelSet) {
+    if (!pixelSet || pixelSet.size === 0) return null;
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    let color = null;
+    for (const pk of pixelSet) {
+      const { x, y } = parseKey(pk);
+      if (x < minX) minX = x; if (x > maxX) maxX = x;
+      if (y < minY) minY = y; if (y > maxY) maxY = y;
+      if (!color && grid[y]?.[x]) color = grid[y][x];
     }
-    // Scale
-    const dst = document.createElement('canvas'); dst.width = nw; dst.height = nh;
-    const dctx = dst.getContext('2d'); dctx.imageSmoothingEnabled = false;
-    dctx.drawImage(src, 0, 0, nw, nh);
-    // Clear expanded region (ox..ox+nw, oy..oy+nh) to remove residual pixels
-    const clearMinX = Math.max(0, ox), clearMinY = Math.max(0, oy);
-    const clearMaxX = Math.min(size, ox + nw), clearMaxY = Math.min(size, oy + nh);
-    for (let gy = clearMinY; gy < clearMaxY; gy++) {
-      for (let gx = clearMinX; gx < clearMaxX; gx++) {
-        grid[gy][gx] = null;
+    if (minX === Infinity) return null;
+    return {
+      x: minX, y: minY,
+      w: maxX - minX + 1, h: maxY - minY + 1,
+      cx: minX + (maxX - minX) / 2,
+      cy: minY + (maxY - minY) / 2,
+      color: color || 'rgb(0,0,0)'
+    };
+  }
+
+  // 安全绘制像素（必须在 region 内且在画布内）
+  function drawPixelSafe(grid, size, x, y, color, region) {
+    if (x >= region.x && x < region.x + region.w &&
+        y >= region.y && y < region.y + region.h &&
+        x >= 0 && x < size && y >= 0 && y < size) {
+      grid[y][x] = color;
+    }
+  }
+
+  // 清除像素集合
+  function clearPixelSet(grid, size, pixelSet) {
+    for (const pk of pixelSet) {
+      const { x, y } = parseKey(pk);
+      if (y >= 0 && y < size && x >= 0 && x < size) grid[y][x] = null;
+    }
+  }
+
+  // ═══ 核心表情生成算法 ═══
+
+  /**
+   * 1. 缩放方案 (Hover/Pull) — 基于像素骨架等比放大
+   * 不填满 region，而是保留原形状按比例放大
+   */
+  function scalePixelsAdvanced(grid, size, region, pixelSet, factor) {
+    const meta = getPixelMeta(grid, pixelSet);
+    if (!meta) return;
+    clearPixelSet(grid, size, pixelSet);
+    // 基于几何中心等比放大每个像素
+    for (const pk of pixelSet) {
+      const { x, y } = parseKey(pk);
+      const dx = x - meta.cx;
+      const dy = y - meta.cy;
+      const startX = Math.round(meta.cx + dx * factor);
+      const startY = Math.round(meta.cy + dy * factor);
+      // 根据倍数决定像素肥大度
+      const thickness = Math.max(1, Math.round(factor));
+      for (let tx = 0; tx < thickness; tx++) {
+        for (let ty = 0; ty < thickness; ty++) {
+          drawPixelSafe(grid, size, startX + tx, startY + ty, meta.color, region);
+        }
       }
     }
-    // Write scaled
-    const img = dctx.getImageData(0, 0, nw, nh);
-    for (let dy = 0; dy < nh; dy++) for (let dx = 0; dx < nw; dx++) {
-      const i = (dy * nw + dx) * 4;
-      if (img.data[i+3] > 128) {
-        const gx = ox + dx, gy = oy + dy;
-        if (gx >= 0 && gx < size && gy >= 0 && gy < size)
-          grid[gy][gx] = 'rgb(' + img.data[i] + ',' + img.data[i+1] + ',' + img.data[i+2] + ')';
-      }
-    }
   }
 
-  function clearRegion(grid, region) {
-    const { x, y, w, h } = region;
-    for (let sy = 0; sy < h; sy++) for (let sx = 0; sx < w; sx++) {
-      const gy = y + sy, gx = x + sx;
-      if (gy >= 0 && gy < grid.length && gx >= 0 && gx < (grid[0]?.length || 0)) grid[gy][gx] = null;
-    }
-  }
-
-  function shiftColumn(grid, size, x, yStart, h, shift) {
-    const col = [];
-    for (let dy = 0; dy < h; dy++) {
-      const gy = yStart + dy;
-      col.push((gy >= 0 && gy < size) ? grid[gy][x] : null);
-    }
-    for (let dy = 0; dy < h; dy++) {
-      const gy = yStart + dy;
-      if (gy >= 0 && gy < size) grid[gy][x] = null;
-    }
-    for (let dy = 0; dy < h; dy++) {
-      const srcIdx = dy + shift;
-      const gy = yStart + dy;
-      if (srcIdx >= 0 && srcIdx < h && gy >= 0 && gy < size) grid[gy][x] = col[srcIdx];
-    }
-  }
-
-  function curveRegion(grid, size, region, dir) {
-    // dir: 1 = down (frown top), -1 = up (smile)
-    const { x, y, w, h } = region;
+  /**
+   * 2. 开心弯眼 (Happy) — 抛物线弧线算法
+   * 丢弃原像素，直接在原位置绘制像素弧线 ∪
+   */
+  function drawHappyEye(grid, size, region, pixelSet) {
+    const meta = getPixelMeta(grid, pixelSet);
+    if (!meta) return;
+    clearPixelSet(grid, size, pixelSet);
+    // 弧线宽度参考原眼睛宽度，稍微加宽
+    const w = Math.min(region.w, meta.w + 2);
+    const h = Math.max(2, Math.round(w * 0.5));
+    const startX = Math.round(meta.cx - w / 2);
+    const startY = Math.round(meta.cy - h / 2) + 1;
+    // 绘制开口向上的弧线 (笑眼 ∪)
     for (let dx = 0; dx < w; dx++) {
-      const center = (w - 1) / 2;
-      const dist = center > 0 ? Math.abs(dx - center) / center : 0;
-      const shift = Math.round(dist * dir);
-      if (shift !== 0) shiftColumn(grid, size, x + dx, y, h, shift);
+      const t = dx / (w - 1 || 1);
+      const dy = Math.round(4 * h * t * (1 - t));
+      const targetX = startX + dx;
+      const targetY = startY + dy;  // 向下弯
+      drawPixelSafe(grid, size, targetX, targetY, meta.color, region);
+      // 加粗防断裂
+      if (dx > 0 && dx < w - 1) {
+        drawPixelSafe(grid, size, targetX, targetY + 1, meta.color, region);
+      }
     }
   }
 
-  function addTongue(grid, size, mouth) {
-    const { x, y, w, h } = mouth;
+  /**
+   * 3. 受伤眼睛 (Pain ><) — 基于 pixelBounds 而非 region
+   * >< 大小参考原眼睛，紧凑覆盖眼眶
+   */
+  function drawPainEye(grid, size, region, pixelSet, isLeftEye) {
+    const meta = getPixelMeta(grid, pixelSet);
+    if (!meta) return;
+    clearPixelSet(grid, size, pixelSet);
+    // 限制 >< 尺寸：基于原眼睛大小，不盲目变大
+    const sizeW = Math.min(region.w, Math.max(3, meta.w));
+    const sizeH = Math.min(region.h, Math.max(3, meta.h));
+    const cx = Math.floor(meta.cx);
+    const cy = Math.floor(meta.cy);
+    const half = Math.floor(sizeW / 2);
+    // 绘制 > 或 <
+    for (let dy = -half; dy <= half; dy++) {
+      const dx = half - Math.abs(dy);
+      let targetX;
+      if (isLeftEye) {
+        targetX = cx - half + dx;  // > 向右突
+      } else {
+        targetX = cx + half - dx;  // < 向左突
+      }
+      const targetY = cy + dy;
+      drawPixelSafe(grid, size, targetX, targetY, meta.color, region);
+      // 加粗
+      drawPixelSafe(grid, size, targetX + (isLeftEye ? -1 : 1), targetY, meta.color, region);
+    }
+  }
+
+  /**
+   * 4. 眨眼 (Blink) — 清除像素，渲染层显示皮肤色
+   */
+  function drawBlinkEye(grid, size, pixelSet) {
+    clearPixelSet(grid, size, pixelSet);
+  }
+
+  /**
+   * 5. 吐舌头 (Pull) — 眼睛放大 + 嘴巴下方画舌头
+   */
+  function drawPullMouth(grid, size, region, pixelSet) {
+    const meta = getPixelMeta(grid, pixelSet);
+    if (!meta) return;
+    scalePixelsAdvanced(grid, size, region, pixelSet, 1.2);
+    // 在嘴巴下方画粉色舌头
+    const tongueColor = '#FF80A0';
+    const tongueWidth = Math.max(2, Math.floor(meta.w * 0.8));
+    const startX = Math.round(meta.cx - tongueWidth / 2);
+    const startY = meta.y + meta.h;
+    for (let dy = 0; dy < 2; dy++) {
+      for (let dx = 0; dx < tongueWidth; dx++) {
+        drawPixelSafe(grid, size, startX + dx, startY + dy, tongueColor, region);
+      }
+    }
+  }
+
+  /**
+   * 6. 添加舌头 (辅助)
+   */
+  function addTongue(grid, size, mouthRegion) {
+    const { x, y, w, h } = mouthRegion;
     const ty = y + h;
     const tc = 'rgb(255,140,170)';
     for (let dx = Math.floor(w * 0.25); dx < Math.ceil(w * 0.75); dx++) {
       const gx = x + dx;
       if (ty < size && gx >= 0 && gx < size) grid[ty][gx] = tc;
       if (ty + 1 < size && gx >= 0 && gx < size) grid[ty + 1][gx] = tc;
-    }
-  }
-
-  function replaceWithPainEyes(grid, size, region) {
-    const { x, y, w, h } = region;
-    const half = Math.floor(w / 2);
-    const eyeColor = grid[y]?.[x] || 'rgb(0,0,0)';
-    clearRegion(grid, region);
-    // >< shape: indent peaks at midpoint, zero at top/bottom
-    const mid = (h - 1) / 2;
-    for (let dy = 0; dy < h; dy++) {
-      const t = mid > 0 ? (mid - Math.abs(dy - mid)) / mid : 1;
-      const indent = Math.round(t * half * 0.8);
-      // Left eye: > shape (opens rightward)
-      const gx1 = x + half - 1 - indent;
-      const gx2 = x + half - 1 - indent + 1;
-      if (gx1 >= x && gx1 < x + half && y + dy >= 0 && y + dy < size) grid[y + dy][gx1] = eyeColor;
-      if (gx2 >= x && gx2 < x + half && y + dy >= 0 && y + dy < size) grid[y + dy][gx2] = eyeColor;
-      // Right eye: < shape (opens leftward)
-      const gx3 = x + half + indent;
-      const gx4 = x + half + indent - 1;
-      if (gx3 >= x + half && gx3 < x + w && y + dy >= 0 && y + dy < size) grid[y + dy][gx3] = eyeColor;
-      if (gx4 >= x + half && gx4 < x + w && y + dy >= 0 && y + dy < size) grid[y + dy][gx4] = eyeColor;
     }
   }
 
@@ -1385,35 +1448,44 @@
     autoExpr.results = {};
     autoExpr.results.idle = { grid: cloneGrid(baseGrid), size: sz };
 
-    // Hover: eyes enlarge, mouth shrinks (cute)
+    // Hover: eyes enlarge (基于像素骨架放大，保留形状)
     let g = cloneGrid(baseGrid);
-    scaleRegion(g, sz, leftEyeRegion, 1.3); scaleRegion(g, sz, rightEyeRegion, 1.3);
-    scaleRegion(g, sz, mouthRegion, 0.7);
+    scalePixelsAdvanced(g, sz, leftEyeRegion, leftEyePixels, 1.3);
+    scalePixelsAdvanced(g, sz, rightEyeRegion, rightEyePixels, 1.3);
+    scalePixelsAdvanced(g, sz, mouthRegion, mouthPixels, 0.8);
     autoExpr.results.hover = { grid: g, size: sz };
 
-    // Pull: surprise, eyes+mouth enlarge, pink tongue
+    // Pull: surprise, eyes+mouth enlarge + tongue
     g = cloneGrid(baseGrid);
-    scaleRegion(g, sz, leftEyeRegion, 1.4); scaleRegion(g, sz, rightEyeRegion, 1.4);
-    scaleRegion(g, sz, mouthRegion, 1.35); addTongue(g, sz, mouthRegion);
+    scalePixelsAdvanced(g, sz, leftEyeRegion, leftEyePixels, 1.4);
+    scalePixelsAdvanced(g, sz, rightEyeRegion, rightEyePixels, 1.4);
+    drawPullMouth(g, sz, mouthRegion, mouthPixels);
     autoExpr.results.pull = { grid: g, size: sz };
 
-    // Happy: eyes shrink+curve down, mouth curves up
+    // Happy: eyes become ∪ shape (抛物线弧线), mouth curves up
     g = cloneGrid(baseGrid);
-    scaleRegion(g, sz, leftEyeRegion, 0.85); scaleRegion(g, sz, rightEyeRegion, 0.85);
-    curveRegion(g, sz, leftEyeRegion, 1); curveRegion(g, sz, rightEyeRegion, 1);
-    curveRegion(g, sz, mouthRegion, -1);
+    drawHappyEye(g, sz, leftEyeRegion, leftEyePixels);
+    drawHappyEye(g, sz, rightEyeRegion, rightEyePixels);
+    // Mouth: scale down slightly + shift up for smile
+    scalePixelsAdvanced(g, sz, mouthRegion, mouthPixels, 0.9);
     autoExpr.results.happy = { grid: g, size: sz };
 
-    // Pain: eyes become >< shape using pixel positions, mouth unchanged
+    // Pain: eyes become >< shape (基于pixelBounds)
     g = cloneGrid(baseGrid);
-    replaceWithPainEyes(g, sz, leftEyeRegion); replaceWithPainEyes(g, sz, rightEyeRegion);
+    drawPainEye(g, sz, leftEyeRegion, leftEyePixels, true);
+    drawPainEye(g, sz, rightEyeRegion, rightEyePixels, false);
     autoExpr.results.pain = { grid: g, size: sz };
 
-    // Blink: clear only the selected eye pixels (precise)
+    // Blink: clear eye pixels (渲染层显示皮肤色)
     g = cloneGrid(baseGrid);
-    for (const pk of leftEyePixels) { const [px, py] = pk.split(',').map(Number); if (py < sz && px < sz) g[py][px] = null; }
-    for (const pk of rightEyePixels) { const [px, py] = pk.split(',').map(Number); if (py < sz && px < sz) g[py][px] = null; }
+    drawBlinkEye(g, sz, leftEyePixels);
+    drawBlinkEye(g, sz, rightEyePixels);
     autoExpr.results.blink = { grid: g, size: sz };
+
+    // 同步生成结果到 exprData，让编辑器也能加载
+    for (const [exprId, result] of Object.entries(autoExpr.results)) {
+      exprData[exprId] = { grid: cloneGrid(result.grid), size: result.size, loaded: true };
+    }
 
     renderAutoExprPreview();
     setStatus('已生成 6 个表情');

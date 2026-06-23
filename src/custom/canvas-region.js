@@ -382,17 +382,36 @@
 
   // ── Confirm ──
   confirmBtn.addEventListener('click', () => {
-    // Convert pixel Sets to arrays for IPC
+    // Convert pixel Sets to arrays for IPC, mapping back to original image coordinates
+    const originalSize = Math.max(originalImage.width, originalImage.height);
+    const scaleFactor = originalSize / gridSize;  // gridSize → original size
+
     const result = {};
     for (const [key, d] of Object.entries(data)) {
-      result[key] = {
-        region: d.region,
-        pixels: Array.from(d.pixels).map(s => {
-          const [x, y] = s.split(',').map(Number);
-          return { x, y };
-        }),
-      };
+      // Scale region back to original coordinates
+      let scaledRegion = null;
+      if (d.region) {
+        scaledRegion = {
+          x: Math.round(d.region.x * scaleFactor),
+          y: Math.round(d.region.y * scaleFactor),
+          w: Math.round(d.region.w * scaleFactor),
+          h: Math.round(d.region.h * scaleFactor),
+        };
+      }
+      // Scale pixel coordinates back to original coordinates
+      const scaledPixels = Array.from(d.pixels).map(s => {
+        const [x, y] = s.split(',').map(Number);
+        return {
+          x: Math.round(x * scaleFactor),
+          y: Math.round(y * scaleFactor),
+        };
+      });
+      result[key] = { region: scaledRegion, pixels: scaledPixels };
     }
+
+    console.log('[Confirm] Grid size:', gridSize, '→ Original:', originalSize, 'Scale:', scaleFactor);
+    console.log('[Confirm] Left eye pixels:', result.leftEye.pixels.length);
+
     if (window.electronAPI?.regionMarkDone) {
       window.electronAPI.regionMarkDone(result);
     }
