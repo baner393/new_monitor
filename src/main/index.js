@@ -443,6 +443,42 @@ ipcMain.handle('skin-import-delete', async (event, skinId) => {
   }
 });
 
+// Get current skin info (frames paths) for the expression editor
+ipcMain.handle('skin-get-current', async () => {
+  try {
+    const data = fs.readFileSync(SKINS_JSON_PATH, 'utf-8');
+    const config = JSON.parse(data);
+    const currentId = config.defaultSkin || 'turtle';
+    const skin = config.skins.find(s => s.id === currentId);
+    if (!skin) return { success: false, error: 'skin not found' };
+    // Resolve frame paths to absolute file:// paths
+    const frames = {};
+    for (const [state, relPath] of Object.entries(skin.frames || {})) {
+      const fullPath = path.join(SKINS_BASE_PATH, relPath.replace('assets/skins/', ''));
+      frames[state] = `file://${fullPath.replace(/\\/g, '/')}`;
+    }
+    return { success: true, skinId: currentId, frames, baseSize: skin.baseSize || 24 };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// Save a PNG file into the skins folder
+ipcMain.handle('skin-save-png', async (event, { skinId, exprId, pngBase64 }) => {
+  try {
+    const destDir = path.join(SKINS_BASE_PATH, skinId);
+    if (!fs.existsSync(destDir)) {
+      fs.mkdirSync(destDir, { recursive: true });
+    }
+    const buffer = Buffer.from(pngBase64, 'base64');
+    const fileName = exprId + '.png';
+    fs.writeFileSync(path.join(destDir, fileName), buffer);
+    return { success: true, path: `assets/skins/${skinId}/${fileName}` };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
 app.whenReady().then(createWindow);
 
 app.on('window-all-closed', () => {

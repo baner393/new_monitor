@@ -918,6 +918,11 @@
           </select>
           <input type="file" id="skinFilesInput" accept="image/png" multiple style="display:none" />
         </div>
+        <!-- ══ 加载当前皮肤 ══ -->
+        <div style="margin-top:8px; padding-top:8px; border-top:1px solid var(--border-mid); display:flex; align-items:center; gap:8px;">
+          <button class="btn" id="loadCurrentSkinBtn">📂 加载当前皮肤</button>
+          <span id="currentSkinLabel" style="font-size:11px; color:#888;"></span>
+        </div>
       </div>
 
       <div class="expression-grid" id="expressionGrid">
@@ -964,6 +969,26 @@
               <div style="display:flex; align-items:center; gap:12px;">
                 <button class="btn" id="exprExportBtn">导出此表情</button>
                 <button class="btn" id="exportAllBtn">📦 导出所有表情</button>
+              </div>
+              <!-- ══ 导入皮肤库 ══ -->
+              <div style="margin-top:8px; padding-top:8px; border-top:1px solid var(--border-mid);">
+                <div style="font-size:11px; color:#aaa; margin-bottom:6px;">📥 将编辑好的表情直接导入皮肤库</div>
+                <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                  <input type="text" id="importLibSkinId" style="background:rgba(14,16,24,0.8); color:var(--text-color); border:1px solid var(--border-mid); padding:5px 8px; font-family:inherit; font-size:12px; width:100px;" placeholder="skin-id">
+                  <input type="text" id="importLibSkinName" style="background:rgba(14,16,24,0.8); color:var(--text-color); border:1px solid var(--border-mid); padding:5px 8px; font-family:inherit; font-size:12px; width:120px;" placeholder="显示名称">
+                  <label style="font-size:11px; color:#888;">分辨率:</label>
+                  <select id="importLibRes" style="background:rgba(14,16,24,0.8); color:var(--text-color); border:1px solid var(--border-mid); padding:4px 6px; font-family:inherit; font-size:11px;">
+                    <option value="0">保持原样</option>
+                    <option value="24">24×24</option>
+                    <option value="32">32×32</option>
+                    <option value="48">48×48</option>
+                    <option value="64">64×64</option>
+                    <option value="96">96×96</option>
+                    <option value="128">128×128</option>
+                  </select>
+                  <button class="btn primary" id="importToLibraryBtn" style="font-size:12px; padding:6px 14px;">📥 导入皮肤库</button>
+                  <span id="importLibStatus" style="font-size:11px; color:#888;"></span>
+                </div>
               </div>
             </div>
           </div>

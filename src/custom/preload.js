@@ -35,4 +35,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   skinImportReadJson: () => ipcRenderer.invoke('skin-import-read-json'),
   skinImportWriteJson: (config) => ipcRenderer.invoke('skin-import-write-json', config),
   skinImportDelete: (skinId) => ipcRenderer.invoke('skin-import-delete', skinId),
+
+  // ── Expression Editor APIs ──
+  skinGetCurrent: () => ipcRenderer.invoke('skin-get-current'),
+  skinSavePng: (skinId, exprId, pngBase64) => ipcRenderer.invoke('skin-save-png', { skinId, exprId, pngBase64 }),
 });

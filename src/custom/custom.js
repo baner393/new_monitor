@@ -1623,6 +1623,226 @@
     setStatus(exported > 0 ? '已导出 ' + exported + ' 个表情' : '没有已加载的表情可导出');
   });
 
+  // ── Load current skin (from main window) ──
+  const loadCurrentSkinBtn = document.getElementById('loadCurrentSkinBtn');
+  const currentSkinLabel = document.getElementById('currentSkinLabel');
+
+  loadCurrentSkinBtn?.addEventListener('click', async () => {
+    if (!window.electronAPI?.skinGetCurrent) {
+      setStatus('❌ electronAPI 不可用');
+      return;
+    }
+    const result = await window.electronAPI.skinGetCurrent();
+    if (!result?.success) {
+      setStatus('❌ 获取当前皮肤失败');
+      return;
+    }
+    currentSkinLabel.textContent = '当前: ' + (result.skinId || '?');
+    setStatus('正在加载皮肤: ' + result.skinId + '...');
+    const frames = result.frames || {};
+    const entries = Object.entries(frames);
+    if (!entries.length) {
+      setStatus('⚠ 该皮肤没有帧数据');
+      return;
+    }
+
+    // Save current editor state first
+    if (currentExprId && exprData[currentExprId]) {
+      exprData[currentExprId].grid = cloneGrid(pixelGrid);
+    }
+
+    let loaded = 0;
+    for (const [state, filePath] of entries) {
+      // Map state names: blink_closed → blink
+      const exprId = state === 'blink_closed' ? 'blink' : state;
+      if (!exprData[exprId]) continue;
+
+      try {
+        const response = await fetch(filePath);
+        if (!response.ok) throw new Error('HTTP ' + response.status);
+        const blob = await response.blob();
+
+        const img = await new Promise((resolve, reject) => {
+          const image = new Image();
+          image.onload = () => resolve(image);
+          image.onerror = () => reject(new Error('Image decode failed'));
+          image.src = URL.createObjectURL(blob);
+        });
+
+        const size = Math.max(img.width, img.height);
+        const grid = createEmptyGrid(size);
+        const tmpCanvas = document.createElement('canvas');
+        tmpCanvas.width = img.width;
+        tmpCanvas.height = img.height;
+        const tmpCtx = tmpCanvas.getContext('2d');
+        tmpCtx.imageSmoothingEnabled = false;
+        tmpCtx.drawImage(img, 0, 0);
+        const imageData = tmpCtx.getImageData(0, 0, img.width, img.height);
+        for (let y = 0; y < img.height; y++) {
+          for (let x = 0; x < img.width; x++) {
+            const i = (y * img.width + x) * 4;
+            const a = imageData.data[i + 3];
+            if (a > 128) {
+              grid[y][x] = 'rgb(' + imageData.data[i] + ',' + imageData.data[i + 1] + ',' + imageData.data[i + 2] + ')';
+            }
+          }
+        }
+        exprData[exprId] = { grid, size, loaded: true };
+        loaded++;
+      } catch (err) {
+        console.warn('[SkinLoad] Failed to load frame:', state, err.message);
+      }
+    }
+    refreshAllThumbnails();
+    setStatus('✅ 已加载当前皮肤 (' + result.skinId + '): ' + loaded + ' 个帧');
+  });
+
+  // ── Import expressions into skin library ──
+  const importToLibraryBtn = document.getElementById('importToLibraryBtn');
+  const importLibStatus = document.getElementById('importLibStatus');
+  const importLibSkinId = document.getElementById('importLibSkinId');
+  const importLibSkinName = document.getElementById('importLibSkinName');
+  const importLibRes = document.getElementById('importLibRes');
+
+  importToLibraryBtn?.addEventListener('click', async () => {
+    try {
+      if (!window.electronAPI?.skinSavePng) {
+        importLibStatus.textContent = '❌ electronAPI 不可用';
+        return;
+      }
+      let skinId = importLibSkinId.value.trim();
+      if (!skinId) {
+        importLibStatus.textContent = '⚠ 请输入皮肤 ID';
+        return;
+      }
+      if (!/^[a-zA-Z0-9_-]+$/.test(skinId)) {
+        importLibStatus.textContent = '⚠ ID 只能包含字母、数字、下划线和连字符';
+        return;
+      }
+      if (['turtle', 'cat'].includes(skinId)) {
+        importLibStatus.textContent = '⚠ 不能覆盖内置皮肤';
+        return;
+      }
+      const displayName = importLibSkinName.value.trim() || skinId;
+      const resVal = parseInt(importLibRes.value, 10);
+
+      // Save current editor state first
+      if (currentExprId && exprData[currentExprId]) {
+        exprData[currentExprId].grid = cloneGrid(pixelGrid);
+      }
+
+      importToLibraryBtn.disabled = true;
+      importLibStatus.textContent = '正在导出并导入皮肤库...';
+
+      // Generate and save PNGs for each loaded expression
+      const frames = {};
+      let saved = 0;
+      for (const exp of EXPRESSIONS) {
+        const data = exprData[exp.id];
+        if (!data || !data.loaded) continue;
+
+        // Determine output size
+        let outSize = data.size;
+        if (resVal > 0) {
+          outSize = resVal;
+        }
+
+        // Generate PNG
+        const canvas = document.createElement('canvas');
+        canvas.width = outSize;
+        canvas.height = outSize;
+        const ctx = canvas.getContext('2d');
+        ctx.imageSmoothingEnabled = false;
+
+        if (outSize !== data.size) {
+          // Draw on intermediate canvas then scale
+          const tmpCanvas = document.createElement('canvas');
+          tmpCanvas.width = data.size;
+          tmpCanvas.height = data.size;
+          const tmpCtx = tmpCanvas.getContext('2d');
+          for (let y = 0; y < data.size; y++) {
+            for (let x = 0; x < data.size; x++) {
+              const c = data.grid[y]?.[x];
+              if (c) {
+                tmpCtx.fillStyle = c;
+                tmpCtx.fillRect(x, y, 1, 1);
+              }
+            }
+          }
+          ctx.drawImage(tmpCanvas, 0, 0, outSize, outSize);
+        } else {
+          for (let y = 0; y < outSize; y++) {
+            for (let x = 0; x < outSize; x++) {
+              const c = data.grid[y]?.[x];
+              if (c) {
+                ctx.fillStyle = c;
+                ctx.fillRect(x, y, 1, 1);
+              }
+            }
+          }
+        }
+
+        // Convert to base64 (strip data:image/png;base64, header)
+        const dataUrl = canvas.toDataURL('image/png');
+        const base64 = dataUrl.split(',')[1];
+
+        const saveResult = await window.electronAPI.skinSavePng(skinId, exp.id, base64);
+        if (saveResult.success) {
+          // Map blink → blink_closed (file name is blink.png, state key is blink_closed)
+          const stateKey = exp.id === 'blink' ? 'blink_closed' : exp.id;
+          frames[stateKey] = saveResult.path;
+          saved++;
+        } else {
+          console.warn('[SkinLib] Failed to save:', exp.id, saveResult.error);
+        }
+      }
+
+      if (saved === 0) {
+        importLibStatus.textContent = '⚠ 没有已加载的表情可保存';
+        importToLibraryBtn.disabled = false;
+        return;
+      }
+
+      // Auto-detect baseSize
+      const idleData = exprData.idle;
+      const baseSize = idleData && idleData.loaded ? idleData.size : (resVal > 0 ? resVal : 24);
+      const TARGET_SIZE = 60;
+      const scale = TARGET_SIZE / baseSize;
+
+      // Update skins.json
+      const config = await window.electronAPI.skinImportReadJson();
+      if (!config.skins) config.skins = [];
+      const existingIndex = config.skins.findIndex(s => s.id === skinId);
+      const skinEntry = {
+        id: skinId,
+        name: skinId,
+        displayName,
+        author: '自定义',
+        description: '从表情编辑器导入',
+        frames,
+        preview: frames.idle || frames.blink_closed || Object.values(frames)[0],
+        scale,
+        baseSize,
+      };
+
+      if (existingIndex >= 0) {
+        config.skins[existingIndex] = skinEntry;
+        importLibStatus.textContent = '✅ 已更新皮肤库: ' + displayName;
+      } else {
+        config.skins.push(skinEntry);
+        importLibStatus.textContent = '✅ 已导入皮肤库: ' + displayName;
+      }
+
+      await window.electronAPI.skinImportWriteJson(config);
+      importToLibraryBtn.disabled = false;
+      setStatus('✅ 已导入 ' + saved + ' 个表情到皮肤库: ' + displayName);
+    } catch (err) {
+      console.error('[SkinLib] Import error:', err);
+      importLibStatus.textContent = '❌ 导入失败: ' + (err.message || '未知错误');
+      importToLibraryBtn.disabled = false;
+    }
+  });
+
   // ══════════════════════════════════════════════════════════════
   // Global Keyboard Shortcuts
   // ══════════════════════════════════════════════════════════════
