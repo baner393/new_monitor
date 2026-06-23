@@ -378,8 +378,8 @@ let blinkTimer = 0;
 let nextBlinkAt = 3 + Math.random() * 2; // 3-5 seconds
 let isBlinking = false;
 let _wasOverSprite = false;  // Hover tracking
-let _painTimer = 0;          // Pain duration counter
-let _painCooldown = 0;       // Pain cooldown to prevent re-trigger
+let _painCooldown = 0;      // Collision cooldown to prevent spam
+let _showPainTimer = 0;     // Pain texture overlay (seconds remaining)
 let blinkProgress = 0;
 const BLINK_DURATION = 0.15; // 150ms
 
@@ -567,39 +567,31 @@ pixiApp.ticker.add((delta) => {
   }
 
   // State-specific behavior
-  // ── Hover detection ──
-  if (state === 'IDLE') {
+  // ── Hover detection (IDLE ↔ HOVER) ──
+  if (state === 'IDLE' || state === 'HOVER') {
+    let mx = 0, my = 0;
+    try {
+      const p = pixiApp.renderer.events.pointer;
+      if (p) { mx = p.x; my = p.y; }
+    } catch (e) { /* ignore if events not available */ }
     const b = bodySprite.getBounds();
-    const mx = pixiApp.renderer.events.pointer.x;
-    const my = pixiApp.renderer.events.pointer.y;
     const over = mx >= b.x && mx <= b.x + b.width && my >= b.y && my <= b.y + b.height;
     if (over && !_wasOverSprite) {
       _wasOverSprite = true;
-      try { stateMachine.transition('TURTLE_HOVER'); } catch (e) {}
+      if (state === 'IDLE') { try { stateMachine.transition('TURTLE_HOVER'); } catch (e) {} }
     } else if (!over && _wasOverSprite) {
       _wasOverSprite = false;
-      try { stateMachine.transition('TURTLE_LEAVE'); } catch (e) {}
+      if (state === 'HOVER') { try { stateMachine.transition('TURTLE_LEAVE'); } catch (e) {} }
     }
-  }
-  // Reset hover flag when leaving IDLE
-  if (state !== 'IDLE' && state !== 'HOVER') {
+    _wasOverSprite = over;
+  } else {
     _wasOverSprite = false;
   }
 
-  // ── Pain state: just show sprite at physics position, timer auto-recovers
-  if (state === 'PAIN') {
-    sprite.x = physics.turtle.x;
-    sprite.y = physics.turtle.y;
-    if (!_painTimer) {
-      _painTimer = 0;
-    }
-    _painTimer += dt;
-    if (_painTimer >= 0.4) {
-      _painTimer = 0;
-      try { stateMachine.transition('PAIN_TIMEOUT'); } catch (e) {}
-    }
-  } else {
-    _painTimer = 0;
+  // ── Pain texture overlay (0.4s flash, no state machine change) ──
+  if (_showPainTimer > 0) {
+    bodySprite.texture = painTexture;
+    _showPainTimer -= dt;
   }
 
   if (state === 'PULLING') {
@@ -651,10 +643,10 @@ pixiApp.ticker.add((delta) => {
       stateMachine.transition('PHYSICS_SETTLED');
     }
 
-    // Pain on collision: detect if turtle just bounced off a wall
+    // Pain on collision: flash texture overlay for 0.4s
     if (physics._justCollided && _painCooldown <= 0) {
       physics._justCollided = false;
-      try { stateMachine.transition('TURTLE_HURT'); } catch (e) {}
+      _showPainTimer = 0.4;
       _painCooldown = 0.8; // 0.8s cooldown before next pain
     }
     // Decrement cooldown

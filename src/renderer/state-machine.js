@@ -39,7 +39,6 @@ export const COLLAPSING      = 'COLLAPSING';
 export const PULLEY_MOMENTUM = 'PULLEY_MOMENTUM';
 export const PULLEY_DRAG     = 'PULLEY_DRAG';
 export const PULLEY_PHYSICS  = 'PULLEY_PHYSICS';
-export const PAIN            = 'PAIN';
 
 /** All valid states as an array (handy for iteration / validation). */
 export const ALL_STATES = [
@@ -54,7 +53,6 @@ export const ALL_STATES = [
   PULLEY_MOMENTUM,
   PULLEY_DRAG,
   PULLEY_PHYSICS,
-  PAIN,
 ];
 
 // ─── Transition Table ───────────────────────────────────────────────
@@ -118,11 +116,6 @@ const TRANSITIONS = {
     PHYSICS_SETTLED:     IDLE,
     LEFT_CLICK_TURTLE:   PULLING,
     RIGHT_CLICK_TURTLE:  PULLEY_DRAG,
-    TURTLE_HURT:         PAIN,
-  },
-
-  [PAIN]: {
-    PAIN_TIMEOUT:        PULLEY_PHYSICS,
   },
 };
 
