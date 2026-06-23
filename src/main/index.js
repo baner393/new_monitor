@@ -106,8 +106,7 @@ function createWindow() {
     skipTaskbar: true,
     hasShadow: false,
     fullscreenable: false,
-    thickFrame: false,
-    type: 'toolbar',
+    titleBarStyle: 'hidden',
     title: '',
     webPreferences: {
       nodeIntegration: false,
