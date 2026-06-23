@@ -122,7 +122,7 @@ const TRANSITIONS = {
   },
 
   [PAIN]: {
-    PAIN_TIMEOUT:        IDLE,
+    PAIN_TIMEOUT:        PULLEY_PHYSICS,
   },
 };
 

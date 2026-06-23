@@ -95,8 +95,10 @@ let blinkTexture = PIXI.Texture.from(blinkSpriteUrl);
 function setSpriteTextureForState(state) {
   switch (state) {
     case 'IDLE':
-    case 'HOVER':
       bodySprite.texture = idleTexture;
+      break;
+    case 'HOVER':
+      bodySprite.texture = hoverTexture;
       break;
     case 'PULLING':
     case 'BOUNCING':
@@ -377,6 +379,7 @@ let nextBlinkAt = 3 + Math.random() * 2; // 3-5 seconds
 let isBlinking = false;
 let _wasOverSprite = false;  // Hover tracking
 let _painTimer = 0;          // Pain duration counter
+let _painCooldown = 0;       // Pain cooldown to prevent re-trigger
 let blinkProgress = 0;
 const BLINK_DURATION = 0.15; // 150ms
 
@@ -583,8 +586,10 @@ pixiApp.ticker.add((delta) => {
     _wasOverSprite = false;
   }
 
-  // ── Pain auto-recovery ──
+  // ── Pain state: just show sprite at physics position, timer auto-recovers
   if (state === 'PAIN') {
+    sprite.x = physics.turtle.x;
+    sprite.y = physics.turtle.y;
     if (!_painTimer) {
       _painTimer = 0;
     }
@@ -647,9 +652,14 @@ pixiApp.ticker.add((delta) => {
     }
 
     // Pain on collision: detect if turtle just bounced off a wall
-    if (physics._justCollided) {
+    if (physics._justCollided && _painCooldown <= 0) {
       physics._justCollided = false;
       try { stateMachine.transition('TURTLE_HURT'); } catch (e) {}
+      _painCooldown = 0.8; // 0.8s cooldown before next pain
+    }
+    // Decrement cooldown
+    if (_painCooldown > 0) {
+      _painCooldown -= dt;
     }
 
   } else if (state === 'PULLEY_MOMENTUM') {
