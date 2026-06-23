@@ -87,6 +87,9 @@ class PhysicsEngine {
     this.windowWidth = 200        // 窗口宽度 (px)
     this.windowHeight = 400       // 窗口高度 (px)
     this.turtleSize  = 48         // 精灵大小 (px)
+
+    // ── 碰撞状态 ──
+    this._justCollided = false     // 刚发生碰撞（供外部读取后重置）
   }
 
   // ──────────────────────────────────────────
@@ -252,16 +255,19 @@ class PhysicsEngine {
     if (this.turtle.x < margin) {
       this.turtle.x = margin
       this.turtle.vx = Math.abs(this.turtle.vx) * this.ropeBounceRest
+      this._justCollided = true
     }
     if (this.turtle.x > this.windowWidth - margin) {
       this.turtle.x = this.windowWidth - margin
       this.turtle.vx = -Math.abs(this.turtle.vx) * this.ropeBounceRest
+      this._justCollided = true
     }
 
     // 底部边界
     if (this.turtle.y > this.windowHeight - margin) {
       this.turtle.y = this.windowHeight - margin
       this.turtle.vy = -Math.abs(this.turtle.vy) * this.ropeBounceRest
+      this._justCollided = true
       // 地面摩擦
       this.turtle.vx *= Math.pow(0.95, dt * 60)
     }
@@ -270,6 +276,7 @@ class PhysicsEngine {
     if (this.turtle.y < margin) {
       this.turtle.y = margin
       this.turtle.vy = Math.abs(this.turtle.vy) * this.ropeBounceRest
+      this._justCollided = true
     }
 
     // ── 滑轮物理 ──

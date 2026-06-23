@@ -1,3 +1,4 @@
+// Import blink state constants and modules at the top
 import * as PIXI from 'pixi.js';
 import { BaseTexture, SCALE_MODES } from 'pixi.js';
 import idleSpriteUrl from '../../assets/sprites/idle.png';
@@ -108,6 +109,9 @@ function setSpriteTextureForState(state) {
     case 'PANEL_OPEN':
     case 'COLLAPSING':
       bodySprite.texture = happyTexture;
+      break;
+    case 'PAIN':
+      bodySprite.texture = painTexture;
       break;
     default:
       bodySprite.texture = idleTexture;
@@ -371,6 +375,8 @@ let breathTime = 0;
 let blinkTimer = 0;
 let nextBlinkAt = 3 + Math.random() * 2; // 3-5 seconds
 let isBlinking = false;
+let _wasOverSprite = false;  // Hover tracking
+let _painTimer = 0;          // Pain duration counter
 let blinkProgress = 0;
 const BLINK_DURATION = 0.15; // 150ms
 
@@ -558,6 +564,39 @@ pixiApp.ticker.add((delta) => {
   }
 
   // State-specific behavior
+  // ── Hover detection ──
+  if (state === 'IDLE') {
+    const b = bodySprite.getBounds();
+    const mx = pixiApp.renderer.events.pointer.x;
+    const my = pixiApp.renderer.events.pointer.y;
+    const over = mx >= b.x && mx <= b.x + b.width && my >= b.y && my <= b.y + b.height;
+    if (over && !_wasOverSprite) {
+      _wasOverSprite = true;
+      try { stateMachine.transition('TURTLE_HOVER'); } catch (e) {}
+    } else if (!over && _wasOverSprite) {
+      _wasOverSprite = false;
+      try { stateMachine.transition('TURTLE_LEAVE'); } catch (e) {}
+    }
+  }
+  // Reset hover flag when leaving IDLE
+  if (state !== 'IDLE' && state !== 'HOVER') {
+    _wasOverSprite = false;
+  }
+
+  // ── Pain auto-recovery ──
+  if (state === 'PAIN') {
+    if (!_painTimer) {
+      _painTimer = 0;
+    }
+    _painTimer += dt;
+    if (_painTimer >= 0.4) {
+      _painTimer = 0;
+      try { stateMachine.transition('PAIN_TIMEOUT'); } catch (e) {}
+    }
+  } else {
+    _painTimer = 0;
+  }
+
   if (state === 'PULLING') {
     // During PULLING, use raw target from input, apply rope constraint
     const target = inputManager._pullTarget;
@@ -605,6 +644,12 @@ pixiApp.ticker.add((delta) => {
     if (totalEnergy !== undefined && totalEnergy < THROW_SETTLE_THRESHOLD) {
       console.log('[THROW] Settled, transitioning to IDLE');
       stateMachine.transition('PHYSICS_SETTLED');
+    }
+
+    // Pain on collision: detect if turtle just bounced off a wall
+    if (physics._justCollided) {
+      physics._justCollided = false;
+      try { stateMachine.transition('TURTLE_HURT'); } catch (e) {}
     }
 
   } else if (state === 'PULLEY_MOMENTUM') {
