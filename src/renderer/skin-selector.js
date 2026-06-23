@@ -1,11 +1,11 @@
-/**
- * SkinSelector - 皮肤选择面板
- *
- * 功能：
- * - 显示可用皮肤列表（名称、预览图、描述）
- * - 点击切换皮肤
- * - 记住上次选择（localStorage）
- */
+  /**
+   * 皮肤选择面板
+   *
+   * 功能：
+   * - 显示可用皮肤列表（名称、预览图、描述）
+   * - 点击切换皮肤
+   * - 记住上次选择（localStorage）
+   */
 
 export class SkinSelector {
   constructor() {
@@ -30,6 +30,7 @@ export class SkinSelector {
     this.skins = [];
     this.currentSkin = 'turtle';
     this.onSkinChange = null;
+    this._configPath = null;
 
     this._buildUI();
   }
@@ -89,8 +90,9 @@ export class SkinSelector {
    * @param {string} configPath - skins.json 的路径
    */
   async loadSkins(configPath) {
+    this._configPath = configPath;
     try {
-      const response = await fetch(configPath);
+      const response = await fetch(configPath + '?t=' + Date.now()); // cache bust
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const config = await response.json();
 
@@ -110,6 +112,15 @@ export class SkinSelector {
       console.log('[SkinSelector] Skins loaded:', this.skins.map(s => s.id));
     } catch (err) {
       console.error('[SkinSelector] Failed to load skins:', err.message);
+    }
+  }
+
+  /**
+   * 重新加载皮肤配置（导入新皮肤后调用）
+   */
+  async reload() {
+    if (this._configPath) {
+      await this.loadSkins(this._configPath);
     }
   }
 

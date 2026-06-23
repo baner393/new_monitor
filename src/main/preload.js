@@ -87,6 +87,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 
   /**
+   * Subscribe to skins-reloaded event (after skin import in custom mode).
+   * @param {() => void} callback
+   * @returns {() => void} unsubscribe function
+   */
+  onSkinsReloaded: (callback) => {
+    const listener = () => callback();
+    ipcRenderer.on('skins-reloaded', listener);
+    return () => ipcRenderer.removeListener('skins-reloaded', listener);
+  },
+
+  /**
    * Settings API — persistent configuration via IPC.
    */
   settings: {

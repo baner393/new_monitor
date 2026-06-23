@@ -1056,6 +1056,7 @@
     rightEye: { region: null, pixels: [] },
     mouth: { region: null, pixels: [] },
     mode: null,
+    resolution: null,  // from fullscreen marker, null = use original image size
     baseGrid: null, baseSize: 0, results: {},
   };
   let selStart = null, selCur = null;
@@ -1067,6 +1068,9 @@
     if (regionControls) {
       regionControls.style.display = '';
     }
+    // Enable the selection buttons
+    if (selectEyesBtn) selectEyesBtn.disabled = false;
+    if (selectMouthBtn) selectMouthBtn.disabled = false;
     // Defer overlay sync to next frame so DOM has layout
     requestAnimationFrame(function() {
       syncOverlaySize();
@@ -1102,6 +1106,7 @@
     autoExpr.leftEye = { region: null, pixels: [] };
     autoExpr.rightEye = { region: null, pixels: [] };
     autoExpr.mouth = { region: null, pixels: [] };
+    autoExpr.resolution = null;
     updateRegionStatus(); updateGenerateBtn();
     drawSelOverlay();
     if (autoExprPreview) autoExprPreview.style.display = 'none';
@@ -1133,11 +1138,16 @@
         autoExpr.leftEye = regions.leftEye;
         autoExpr.rightEye = regions.rightEye;
         autoExpr.mouth = regions.mouth;
+        // Store resolution from fullscreen marker
+        if (regions.resolution) {
+          autoExpr.resolution = regions.resolution;
+        }
         updateRegionStatus();
         updateGenerateBtn();
         drawSelOverlay();
         const le = regions.leftEye, re = regions.rightEye, mo = regions.mouth;
-        setStatus('标记已同步: 左眼(' + le.pixels.length + 'px) 右眼(' + re.pixels.length + 'px) 嘴巴(' + mo.pixels.length + 'px)');
+        const resInfo = regions.resolution ? ' 分辨率:' + regions.resolution : '';
+        setStatus('标记已同步: 左眼(' + le.pixels.length + 'px) 右眼(' + re.pixels.length + 'px) 嘴巴(' + mo.pixels.length + 'px)' + resInfo);
       } else if (regions === null) {
         setStatus('标记已取消');
       }
@@ -1426,24 +1436,37 @@
 
     // Build base grid from converter image
     const img = converterImage;
-    const sz = Math.max(img.width, img.height);
+    // Use resolution from fullscreen marker if available, otherwise original size
+    const targetSize = autoExpr.resolution || Math.max(img.width, img.height);
+    const sz = targetSize;
     const baseGrid = createEmptyGrid(sz);
-    const tc = document.createElement('canvas'); tc.width = img.width; tc.height = img.height;
+    const tc = document.createElement('canvas'); tc.width = sz; tc.height = sz;
     const tctx = tc.getContext('2d'); tctx.imageSmoothingEnabled = false;
-    tctx.drawImage(img, 0, 0);
-    const id = tctx.getImageData(0, 0, img.width, img.height);
-    for (let py = 0; py < img.height; py++) for (let px = 0; px < img.width; px++) {
-      const i = (py * img.width + px) * 4;
+    tctx.drawImage(img, 0, 0, sz, sz);
+    const id = tctx.getImageData(0, 0, sz, sz);
+    for (let py = 0; py < sz; py++) for (let px = 0; px < sz; px++) {
+      const i = (py * sz + px) * 4;
       if (id.data[i + 3] > 128) baseGrid[py][px] = 'rgb(' + id.data[i] + ',' + id.data[i+1] + ',' + id.data[i+2] + ')';
     }
 
-    // Extract regions and pixel sets
-    const leftEyeRegion = autoExpr.leftEye.region;
-    const rightEyeRegion = autoExpr.rightEye.region;
-    const mouthRegion = autoExpr.mouth.region;
-    const leftEyePixels = new Set(autoExpr.leftEye.pixels.map(p => p.x + ',' + p.y));
-    const rightEyePixels = new Set(autoExpr.rightEye.pixels.map(p => p.x + ',' + p.y));
-    const mouthPixels = new Set(autoExpr.mouth.pixels.map(p => p.x + ',' + p.y));
+    // Scale coordinates from original image space to target resolution
+    const originalSize = Math.max(img.width, img.height);
+    const coordScale = sz / originalSize;
+    function scaleCoord(c) {
+      return { x: Math.round(c.x * coordScale), y: Math.round(c.y * coordScale) };
+    }
+    function scaleRegion(r) {
+      return r ? { x: Math.round(r.x * coordScale), y: Math.round(r.y * coordScale),
+                    w: Math.max(1, Math.round(r.w * coordScale)), h: Math.max(1, Math.round(r.h * coordScale)) } : null;
+    }
+
+    // Extract regions and pixel sets (scaled to target resolution)
+    const leftEyeRegion = scaleRegion(autoExpr.leftEye.region);
+    const rightEyeRegion = scaleRegion(autoExpr.rightEye.region);
+    const mouthRegion = scaleRegion(autoExpr.mouth.region);
+    const leftEyePixels = new Set(autoExpr.leftEye.pixels.map(p => { const s = scaleCoord(p); return s.x + ',' + s.y; }));
+    const rightEyePixels = new Set(autoExpr.rightEye.pixels.map(p => { const s = scaleCoord(p); return s.x + ',' + s.y; }));
+    const mouthPixels = new Set(autoExpr.mouth.pixels.map(p => { const s = scaleCoord(p); return s.x + ',' + s.y; }));
 
     autoExpr.results = {};
     autoExpr.results.idle = { grid: cloneGrid(baseGrid), size: sz };
@@ -1647,12 +1670,325 @@
   }
 
   // ══════════════════════════════════════════════════════════════
+  // Skin Import Module
+  // ══════════════════════════════════════════════════════════════
+
+  const SKIN_STATE_MAP = {
+    'idle.png': 'idle', 'normal.png': 'idle', 'default.png': 'idle',
+    'hover.png': 'hover', 'mouse.png': 'hover',
+    'pull.png': 'pull', 'drag.png': 'pull',
+    'happy.png': 'happy', 'smile.png': 'happy',
+    'pain.png': 'pain', 'hurt.png': 'pain',
+    'blink.png': 'blink_closed', 'blink_closed.png': 'blink_closed', 'closed.png': 'blink_closed',
+  };
+
+  let skinImportData = {
+    folderPath: null,
+    files: {},      // { stateKey: fileName }
+    detectedImages: {}, // { stateKey: Image }
+  };
+
+  const skinImportDropZone = document.getElementById('skinImportDropZone');
+  const skinImportDetectedBox = document.getElementById('skinImportDetectedBox');
+  const skinImportDetected = document.getElementById('skinImportDetected');
+  const skinImportFormBox = document.getElementById('skinImportFormBox');
+  const skinImportActionBox = document.getElementById('skinImportActionBox');
+  const skinImportBtn = document.getElementById('skinImportBtn');
+  const skinImportStatus = document.getElementById('skinImportStatus');
+  const skinLibraryList = document.getElementById('skinLibraryList');
+  const skinImportId = document.getElementById('skinImportId');
+  const skinImportName = document.getElementById('skinImportName');
+  const skinImportAuthor = document.getElementById('skinImportAuthor');
+  const skinImportDesc = document.getElementById('skinImportDesc');
+  
+
+  // Folder selection
+  skinImportDropZone?.addEventListener('click', async () => {
+    console.log('[SkinImport] Drop zone clicked');
+    if (!window.electronAPI?.skinImportSelectFolder) {
+      console.error('[SkinImport] skinImportSelectFolder API not available');
+      return;
+    }
+    try {
+      const folderPath = await window.electronAPI.skinImportSelectFolder();
+      console.log('[SkinImport] Selected folder:', folderPath);
+      if (!folderPath) return;
+      skinImportData.folderPath = folderPath;
+
+      // Read files in folder
+      const files = await window.electronAPI.skinImportReadFiles(folderPath);
+      if (!files || !files.length) {
+        skinImportStatus.textContent = '文件夹为空';
+        return;
+      }
+
+      // Detect state files
+      skinImportData.files = {};
+      skinImportData.detectedImages = {};
+      const detected = [];
+
+      for (const file of files) {
+        const lower = file.toLowerCase();
+        if (lower.endsWith('.png')) {
+          const stateKey = SKIN_STATE_MAP[lower];
+          if (stateKey) {
+            skinImportData.files[stateKey] = file;
+            detected.push({ stateKey, fileName: file });
+          }
+        }
+      }
+
+      if (!detected.length) {
+        skinImportStatus.textContent = '未识别到状态文件（需要 idle.png 等）';
+        skinImportDetectedBox.style.display = 'none';
+        skinImportFormBox.style.display = 'none';
+        skinImportActionBox.style.display = 'none';
+        return;
+      }
+
+      // Show detected files
+      skinImportDetectedBox.style.display = '';
+      skinImportDetected.innerHTML = detected.map(d =>
+        `<div>✅ ${d.fileName} → <span style="color:var(--title-color)">${d.stateKey}</span></div>`
+      ).join('');
+
+      // Auto-fill ID from folder name
+      const folderName = folderPath.split(/[\\/]/).pop() || 'imported-skin';
+      skinImportId.value = folderName.replace(/[^a-zA-Z0-9_-]/g, '-').toLowerCase();
+      skinImportName.value = folderName;
+
+      // Show form
+      skinImportFormBox.style.display = '';
+      skinImportActionBox.style.display = '';
+      skinImportBtn.disabled = false;
+      skinImportStatus.textContent = `已识别 ${detected.length} 个状态文件`;
+    } catch (err) {
+      console.error('[SkinImport] Error:', err);
+      skinImportStatus.textContent = '❌ 错误: ' + err.message;
+    }
+  });
+
+  // Import button
+  skinImportBtn?.addEventListener('click', async () => {
+    try {
+      if (!skinImportData.folderPath || !window.electronAPI?.skinImportCopy) return;
+
+    const skinId = skinImportId.value.trim();
+    const displayName = skinImportName.value.trim() || skinId;
+    const author = skinImportAuthor.value.trim() || 'Unknown';
+    const description = skinImportDesc.value.trim() || '';
+    const baseSize = 24; // will be auto-detected from idle image below
+
+    if (!skinId) {
+      skinImportStatus.textContent = '⚠ 请输入皮肤ID';
+      return;
+    }
+
+    // Validate ID format
+    if (!/^[a-zA-Z0-9_-]+$/.test(skinId)) {
+      skinImportStatus.textContent = '⚠ ID 只能包含字母、数字、下划线和连字符';
+      return;
+    }
+
+    skinImportBtn.disabled = true;
+    skinImportStatus.textContent = '导入中...';
+
+    // Copy files
+    const filesToCopy = Object.values(skinImportData.files);
+    const copyResult = await window.electronAPI.skinImportCopy(
+      skinImportData.folderPath, skinId, filesToCopy
+    );
+
+    if (!copyResult.success) {
+      skinImportStatus.textContent = '❌ 复制失败: ' + copyResult.error;
+      skinImportBtn.disabled = false;
+      return;
+    }
+
+    // Build frames object
+    const frames = {};
+    for (const [stateKey, fileName] of Object.entries(skinImportData.files)) {
+      frames[stateKey] = `assets/skins/${skinId}/${fileName}`;
+    }
+
+    // Read existing skins.json
+    let config = await window.electronAPI.skinImportReadJson();
+    if (!config.skins) config.skins = [];
+
+    // Protect built-in skins from being overwritten
+    const BUILT_IN_SKINS = ['turtle', 'cat'];
+    if (BUILT_IN_SKINS.includes(skinId)) {
+      skinImportStatus.textContent = `⚠ "${skinId}" 是内置皮肤，不能覆盖。请使用其他 ID`;
+      skinImportBtn.disabled = false;
+      return;
+    }
+
+    // Auto-detect baseSize from idle image if not set
+    let detectedBaseSize = baseSize;
+    if (skinImportData.files.idle) {
+      try {
+        const img = new Image();
+        await new Promise((resolve, reject) => {
+          img.onload = resolve;
+          img.onerror = reject;
+          img.src = `file://${skinImportData.folderPath}/${skinImportData.files.idle}`;
+        });
+        detectedBaseSize = Math.max(img.width, img.height);
+      } catch (e) {
+        // Use user-provided value if detection fails
+      }
+    }
+
+    // Calculate scale: normalize to TARGET_SIZE (60px display)
+    const TARGET_SIZE = 60;
+    const autoScale = TARGET_SIZE / detectedBaseSize;
+
+    // Check for duplicate ID
+    const existingIndex = config.skins.findIndex(s => s.id === skinId);
+    const skinEntry = {
+      id: skinId,
+      name: skinId,
+      displayName,
+      author,
+      description,
+      frames,
+      preview: frames.idle || Object.values(frames)[0],
+      scale: autoScale,
+      baseSize: detectedBaseSize,
+    };
+
+    if (existingIndex >= 0) {
+      // Update existing
+      config.skins[existingIndex] = skinEntry;
+      skinImportStatus.textContent = `✅ 已更新皮肤: ${displayName}`;
+    } else {
+      // Add new
+      config.skins.push(skinEntry);
+      skinImportStatus.textContent = `✅ 已导入皮肤: ${displayName}`;
+    }
+
+    // Write skins.json
+    const writeResult = await window.electronAPI.skinImportWriteJson(config);
+    if (!writeResult.success) {
+      skinImportStatus.textContent = '❌ 写入 skins.json 失败: ' + writeResult.error;
+      skinImportBtn.disabled = false;
+      return;
+    }
+
+    // Refresh skin library
+    loadSkinLibrary(config.skins);
+
+    // Notify main window to reload skins
+    // The main window will re-fetch skins.json on next skin selector open
+    skinImportBtn.disabled = false;
+
+    // Reset form for next import
+    skinImportData = { folderPath: null, files: {}, detectedImages: {} };
+  } catch (err) {
+      console.error('[SkinImport] Import error:', err);
+      skinImportStatus.textContent = '❌ 导入失败: ' + (err.message || '未知错误');
+      skinImportBtn.disabled = false;
+    }
+  });
+
+  // ═══ Skin Library Management ═══
+  const BUILT_IN_SKINS = ['turtle', 'cat'];
+
+  // Load and display skin library
+  async function loadSkinLibrary(skins) {
+    if (!skinLibraryList) return;
+    if (!skins) {
+      const config = await window.electronAPI?.skinImportReadJson();
+      skins = config?.skins || [];
+    }
+
+    if (!skins.length) {
+      skinLibraryList.innerHTML = '<div style="font-size:12px; color:#666; padding:12px;">皮肤库为空</div>';
+      return;
+    }
+
+    // Separate built-in and custom skins
+    const builtIn = skins.filter(s => BUILT_IN_SKINS.includes(s.id));
+    const custom = skins.filter(s => !BUILT_IN_SKINS.includes(s.id));
+
+    let html = '';
+
+    // Built-in skins section
+    if (builtIn.length) {
+      html += `<div style="font-size:11px; color:#888; margin-bottom:8px; padding-bottom:4px; border-bottom:1px solid var(--border-mid);">🔒 内置皮肤（不可删除）</div>`;
+      html += '<div style="display:flex; flex-wrap:wrap; gap:10px; margin-bottom:16px;">';
+      for (const skin of builtIn) {
+        html += renderSkinCard(skin, false);
+      }
+      html += '</div>';
+    }
+
+    // Custom skins section
+    if (custom.length) {
+      html += `<div style="font-size:11px; color:#888; margin-bottom:8px; padding-bottom:4px; border-bottom:1px solid var(--border-mid);">📥 自定义皮肤</div>`;
+      html += '<div style="display:flex; flex-wrap:wrap; gap:10px;">';
+      for (const skin of custom) {
+        html += renderSkinCard(skin, true);
+      }
+      html += '</div>';
+    } else if (!builtIn.length) {
+      html += '<div style="font-size:12px; color:#666; padding:12px;">暂无自定义皮肤</div>';
+    } else {
+      html += '<div style="font-size:12px; color:#666; padding:12px;">暂无自定义皮肤，使用上方导入功能添加</div>';
+    }
+
+    skinLibraryList.innerHTML = html;
+
+    // Bind delete buttons
+    skinLibraryList.querySelectorAll('[data-delete-skin]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const skinId = btn.getAttribute('data-delete-skin');
+        const skinName = btn.getAttribute('data-skin-name') || skinId;
+        if (!confirm(`确定要删除皮肤「${skinName}」吗？此操作不可恢复。`)) return;
+
+        // Delete from skins.json
+        const config = await window.electronAPI?.skinImportReadJson();
+        if (config && config.skins) {
+          config.skins = config.skins.filter(s => s.id !== skinId);
+          await window.electronAPI.skinImportWriteJson(config);
+        }
+
+        // Delete folder
+        await window.electronAPI.skinImportDelete(skinId);
+
+        // Refresh list
+        loadSkinLibrary(config?.skins);
+        setStatus(`已删除皮肤: ${skinName}`);
+      });
+    });
+  }
+
+  function renderSkinCard(skin, canDelete) {
+    const isBuiltIn = BUILT_IN_SKINS.includes(skin.id);
+    return `
+      <div style="display:flex; align-items:center; gap:10px; padding:10px 14px; background:rgba(20,22,32,0.6); border:1px solid var(--border-mid); border-radius:4px; min-width:200px; flex:1; max-width:320px;">
+        <img src="${skin.preview}" style="width:40px; height:40px; image-rendering:pixelated; border-radius:2px; background:rgba(0,0,0,0.3);" onerror="this.style.display='none'">
+        <div style="flex:1; min-width:0;">
+          <div style="font-size:13px; font-weight:bold; color:var(--text-color); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${skin.displayName || skin.id}</div>
+          <div style="font-size:10px; color:#888; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${skin.author || 'Unknown'} · ${skin.id}</div>
+          ${skin.description ? `<div style="font-size:10px; color:#666; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${skin.description}</div>` : ''}
+        </div>
+        ${canDelete ? `<button class="btn" data-delete-skin="${skin.id}" data-skin-name="${skin.displayName || skin.id}" style="padding:4px 8px; font-size:11px; color:#cc6666; border-color:#663333; flex-shrink:0;">🗑️</button>` : `<span style="font-size:10px; color:#555; flex-shrink:0;">内置</span>`}
+      </div>
+    `;
+  }
+
+  // ══════════════════════════════════════════════════════════════
   // Init
   // ══════════════════════════════════════════════════════════════
 
   function init() {
     buildExpressionCards();
     initDrawCanvas();
+    // Load skin library
+    if (window.electronAPI?.skinImportReadJson) {
+      loadSkinLibrary();
+    }
     setStatus('就绪 — 选择标签页开始编辑');
   }
 

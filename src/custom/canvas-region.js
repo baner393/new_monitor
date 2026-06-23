@@ -412,6 +412,9 @@
     console.log('[Confirm] Grid size:', gridSize, '→ Original:', originalSize, 'Scale:', scaleFactor);
     console.log('[Confirm] Left eye pixels:', result.leftEye.pixels.length);
 
+    // Pass resolution along with region data
+    result.resolution = gridSize;
+
     if (window.electronAPI?.regionMarkDone) {
       window.electronAPI.regionMarkDone(result);
     }

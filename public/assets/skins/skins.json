@@ -3,38 +3,74 @@
     {
       "id": "turtle",
       "name": "turtle",
-      "displayName": "乌龟",
-      "author": "Turtle Monitor",
-      "description": "默认的小乌龟皮肤",
+      "displayName": "turtle",
+      "author": "Unknown",
+      "description": "",
       "frames": {
-        "idle": "assets/sprites/idle.png",
-        "hover": "assets/sprites/hover.png",
-        "pull": "assets/sprites/pull.png",
-        "happy": "assets/sprites/happy.png",
-        "pain": "assets/sprites/pain.png",
-        "blink_closed": "assets/sprites/blink_closed.png"
+        "blink_closed": "assets/skins/turtle/blink.png",
+        "happy": "assets/skins/turtle/happy.png",
+        "hover": "assets/skins/turtle/hover.png",
+        "idle": "assets/skins/turtle/idle.png",
+        "pain": "assets/skins/turtle/pain.png",
+        "pull": "assets/skins/turtle/pull.png"
       },
-      "preview": "assets/sprites/idle.png",
+      "preview": "assets/skins/turtle/idle.png",
       "scale": 2.5,
       "baseSize": 24
     },
     {
       "id": "cat",
       "name": "cat",
-      "displayName": "小猫",
-      "author": "Turtle Monitor",
-      "description": "可爱的小猫皮肤",
+      "displayName": "cat",
+      "author": "Unknown",
+      "description": "",
       "frames": {
-        "idle": "assets/skins/cat/idle.png",
-        "hover": "assets/skins/cat/hover.png",
-        "pull": "assets/skins/cat/pull.png",
+        "blink_closed": "assets/skins/cat/blink_closed.png",
         "happy": "assets/skins/cat/happy.png",
+        "hover": "assets/skins/cat/hover.png",
+        "idle": "assets/skins/cat/idle.png",
         "pain": "assets/skins/cat/pain.png",
-        "blink_closed": "assets/skins/cat/blink_closed.png"
+        "pull": "assets/skins/cat/pull.png"
       },
       "preview": "assets/skins/cat/idle.png",
-      "scale": 1.0,
-      "baseSize": 480
+      "scale": 0.9375,
+      "baseSize": 64
+    },
+    {
+      "id": "123",
+      "name": "123",
+      "displayName": "123",
+      "author": "Unknown",
+      "description": "",
+      "frames": {
+        "blink_closed": "assets/skins/123/blink.png",
+        "happy": "assets/skins/123/happy.png",
+        "hover": "assets/skins/123/hover.png",
+        "idle": "assets/skins/123/idle.png",
+        "pain": "assets/skins/123/pain.png",
+        "pull": "assets/skins/123/pull.png"
+      },
+      "preview": "assets/skins/123/idle.png",
+      "scale": 2.5,
+      "baseSize": 24
+    },
+    {
+      "id": "ca",
+      "name": "ca",
+      "displayName": "ca",
+      "author": "Unknown",
+      "description": "",
+      "frames": {
+        "blink_closed": "assets/skins/ca/blink.png",
+        "happy": "assets/skins/ca/happy.png",
+        "hover": "assets/skins/ca/hover.png",
+        "idle": "assets/skins/ca/idle.png",
+        "pain": "assets/skins/ca/pain.png",
+        "pull": "assets/skins/ca/pull.png"
+      },
+      "preview": "assets/skins/ca/idle.png",
+      "scale": 0.9375,
+      "baseSize": 64
     }
   ],
   "defaultSkin": "turtle"

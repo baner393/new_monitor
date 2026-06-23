@@ -169,6 +169,14 @@ document.body.appendChild(skinSelector.container);
 // Load skins config
 skinSelector.loadSkins('./assets/skins/skins.json');
 
+// Reload skins when imported from custom mode
+if (window.electronAPI?.onSkinsReloaded) {
+  window.electronAPI.onSkinsReloaded(() => {
+    console.log('[SkinSelector] Reloading skins after import...');
+    skinSelector.reload();
+  });
+}
+
 // Track current skin's baseSize for settings panel scaling
 let currentSkinBaseSize = 24; // default turtle baseSize (matches PNG dimensions)
 

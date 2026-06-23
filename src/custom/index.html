@@ -750,6 +750,10 @@
       <span class="icon">😊</span>
       表情编辑
     </div>
+    <div class="tab" data-tab="skin-import">
+      <span class="icon">📦</span>
+      皮肤导入与管理
+    </div>
   </div>
 
   <!-- Tab Content -->
@@ -979,6 +983,69 @@
         </div>
       </div>
     </div>
+
+    <!-- Tab 4: 皮肤导入与管理 -->
+    <div class="tab-panel" id="panel-skin-import">
+      <h2 class="section-title">📦 皮肤导入与管理</h2>
+
+      <!-- ══ Section 1: 皮肤导入 ══ -->
+      <div class="group-box" style="margin-bottom:20px;">
+        <div class="group-box-label">📥 皮肤导入</div>
+        <p style="font-size:11px; color:#888; margin-bottom:12px;">
+          将同一系列皮肤的不同状态文件夹导入到皮肤库中。系统会自动识别 idle, hover, pull, happy, pain, blink_closed 等状态文件。
+        </p>
+
+        <!-- Step 1: Select Folder -->
+        <div style="margin-bottom:12px;">
+          <div style="font-size:12px; color:#aaa; margin-bottom:6px;">① 选择皮肤文件夹</div>
+          <div id="skinImportDropZone" class="drop-zone" style="margin-bottom:0; padding:20px;">
+            <div class="icon" style="font-size:32px;">📂</div>
+            <div>点击选择文件夹</div>
+            <div style="font-size:11px; color:#666; margin-top:4px;">包含 idle.png, hover.png 等状态文件</div>
+          </div>
+        </div>
+
+        <!-- Step 2: Detected Files -->
+        <div style="display:none; margin-bottom:12px;" id="skinImportDetectedBox">
+          <div style="font-size:12px; color:#aaa; margin-bottom:6px;">② 已识别的状态文件</div>
+          <div id="skinImportDetected" style="font-size:12px; line-height:2;"></div>
+        </div>
+
+        <!-- Step 3: Metadata Form -->
+        <div style="display:none; margin-bottom:12px;" id="skinImportFormBox">
+          <div style="font-size:12px; color:#aaa; margin-bottom:6px;">③ 填写皮肤信息</div>
+          <div style="display:grid; grid-template-columns:auto 1fr; gap:8px 12px; align-items:center;">
+            <label style="font-size:12px; color:#aaa;">皮肤ID:</label>
+            <input type="text" id="skinImportId" style="background:rgba(14,16,24,0.8); color:var(--text-color); border:1px solid var(--border-mid); padding:6px 10px; font-family:inherit; font-size:12px; border-radius:3px;" placeholder="my-skin">
+
+            <label style="font-size:12px; color:#aaa;">显示名称:</label>
+            <input type="text" id="skinImportName" style="background:rgba(14,16,24,0.8); color:var(--text-color); border:1px solid var(--border-mid); padding:6px 10px; font-family:inherit; font-size:12px; border-radius:3px;" placeholder="我的皮肤">
+
+            <label style="font-size:12px; color:#aaa;">作者:</label>
+            <input type="text" id="skinImportAuthor" style="background:rgba(14,16,24,0.8); color:var(--text-color); border:1px solid var(--border-mid); padding:6px 10px; font-family:inherit; font-size:12px; border-radius:3px;" placeholder="用户名">
+
+            <label style="font-size:12px; color:#aaa;">描述:</label>
+            <input type="text" id="skinImportDesc" style="background:rgba(14,16,24,0.8); color:var(--text-color); border:1px solid var(--border-mid); padding:6px 10px; font-family:inherit; font-size:12px; border-radius:3px;" placeholder="一个酷炫的皮肤">
+          </div>
+        </div>
+
+        <!-- Step 4: Import Button -->
+        <div style="display:none; margin-bottom:8px;" id="skinImportActionBox">
+          <button class="btn primary" id="skinImportBtn" disabled>🚀 导入皮肤</button>
+          <span id="skinImportStatus" style="font-size:12px; color:#888; margin-left:12px;"></span>
+        </div>
+      </div>
+
+      <!-- ══ Section 2: 皮肤库管理 ══ -->
+      <div class="group-box">
+        <div class="group-box-label">🗂️ 皮肤库管理</div>
+        <div id="skinLibraryList" style="min-height:60px;">
+          <div style="font-size:12px; color:#666;">加载中...</div>
+        </div>
+      </div>
+
+    </div>
+
   </div>
 
   <!-- Status Bar -->

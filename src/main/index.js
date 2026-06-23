@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Menu } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu, dialog } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
@@ -348,6 +348,98 @@ ipcMain.handle('region-request-image', () => pendingRegionImage || { dataUrl: nu
 ipcMain.on('region-mark-done', (event, regions) => {
   if (customWindow && !customWindow.isDestroyed()) {
     customWindow.webContents.send('region-result', regions);
+  }
+});
+
+// ── Skin Import IPC ─────────────────────────────────────────────
+const SKINS_BASE_PATH = path.join(app.getAppPath(), 'public', 'assets', 'skins');
+const SKINS_JSON_PATH = path.join(SKINS_BASE_PATH, 'skins.json');
+
+// Open folder selection dialog
+ipcMain.handle('skin-import-select-folder', async () => {
+  const result = await dialog.showOpenDialog(customWindow, {
+    properties: ['openDirectory'],
+    title: '选择皮肤文件夹',
+  });
+  if (result.canceled || !result.filePaths.length) return null;
+  return result.filePaths[0];
+});
+
+// Read files from a directory
+ipcMain.handle('skin-import-read-files', async (event, dirPath) => {
+  try {
+    const files = fs.readdirSync(dirPath);
+    return files;
+  } catch (err) {
+    console.error('[SkinImport] Failed to read directory:', err.message);
+    return [];
+  }
+});
+
+// Copy skin files to the skins directory
+ipcMain.handle('skin-import-copy', async (event, { srcDir, skinId, files }) => {
+  try {
+    const destDir = path.join(SKINS_BASE_PATH, skinId);
+    if (!fs.existsSync(destDir)) {
+      fs.mkdirSync(destDir, { recursive: true });
+    }
+    for (const file of files) {
+      const srcPath = path.join(srcDir, file);
+      const destPath = path.join(destDir, file);
+      fs.copyFileSync(srcPath, destPath);
+    }
+    return { success: true, destDir };
+  } catch (err) {
+    console.error('[SkinImport] Failed to copy files:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+// Read skins.json
+ipcMain.handle('skin-import-read-json', async () => {
+  try {
+    const data = fs.readFileSync(SKINS_JSON_PATH, 'utf-8');
+    return JSON.parse(data);
+  } catch (err) {
+    console.error('[SkinImport] Failed to read skins.json:', err.message);
+    return { skins: [], defaultSkin: 'turtle' };
+  }
+});
+
+// Write skins.json
+ipcMain.handle('skin-import-write-json', async (event, config) => {
+  try {
+    // Backup first
+    if (fs.existsSync(SKINS_JSON_PATH)) {
+      const backupPath = SKINS_JSON_PATH + '.bak';
+      fs.copyFileSync(SKINS_JSON_PATH, backupPath);
+    }
+    fs.writeFileSync(SKINS_JSON_PATH, JSON.stringify(config, null, 2), 'utf-8');
+    // Notify main window to reload skins
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('skins-reloaded');
+    }
+    return { success: true };
+  } catch (err) {
+    console.error('[SkinImport] Failed to write skins.json:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+// Delete skin folder
+ipcMain.handle('skin-import-delete', async (event, skinId) => {
+  try {
+    const skinDir = path.join(SKINS_BASE_PATH, skinId);
+    if (!fs.existsSync(skinDir)) {
+      return { success: true }; // already gone
+    }
+    // Recursively delete the folder
+    fs.rmSync(skinDir, { recursive: true, force: true });
+    console.log('[SkinImport] Deleted skin folder:', skinDir);
+    return { success: true };
+  } catch (err) {
+    console.error('[SkinImport] Failed to delete skin folder:', err.message);
+    return { success: false, error: err.message };
   }
 });
 

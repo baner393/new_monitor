@@ -27,4 +27,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('region-result', listener);
     return () => ipcRenderer.removeListener('region-result', listener);
   },
+
+  // ── Skin Import APIs ──
+  skinImportSelectFolder: () => ipcRenderer.invoke('skin-import-select-folder'),
+  skinImportReadFiles: (dirPath) => ipcRenderer.invoke('skin-import-read-files', dirPath),
+  skinImportCopy: (srcDir, skinId, files) => ipcRenderer.invoke('skin-import-copy', { srcDir, skinId, files }),
+  skinImportReadJson: () => ipcRenderer.invoke('skin-import-read-json'),
+  skinImportWriteJson: (config) => ipcRenderer.invoke('skin-import-write-json', config),
+  skinImportDelete: (skinId) => ipcRenderer.invoke('skin-import-delete', skinId),
 });
