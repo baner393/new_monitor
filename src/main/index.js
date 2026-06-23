@@ -106,7 +106,9 @@ function createWindow() {
     skipTaskbar: true,
     hasShadow: false,
     fullscreenable: false,
-    title: 'Turtle Monitor',
+    thickFrame: false,
+    type: 'toolbar',
+    title: '',
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
