@@ -482,6 +482,18 @@ ipcMain.handle('skin-save-png', async (event, { skinId, exprId, pngBase64 }) => 
 
 app.whenReady().then(createWindow);
 
+// ── Global exception handler ──────────────────────────────────────────
+// Suppress EPIPE errors when stdout/stderr pipe is broken (terminal closed).
+// Without this, EPIPE triggers a modal error dialog that blocks the main process.
+const _origConsoleError = console.error;
+process.on('uncaughtException', (err) => {
+  if (err.code === 'EPIPE' || (err.message && (err.message.includes('EPIPE') || err.message.includes('broken pipe')))) {
+    return; // Silently ignore — pipe was closed, harmless
+  }
+  // For genuine bugs, delegate to original console.error
+  _origConsoleError('[FATAL]', err);
+});
+
 app.on('window-all-closed', () => {
   if (gpuMonitor) gpuMonitor.stop();
   if (process.platform !== 'darwin') {
