@@ -126,7 +126,7 @@ export class InputManager {
         this.physics.startDrag(e.clientX, e.clientY);
 
         window.electronAPI.setIgnoreMouseEvents(false);
-        this.stateMachine.transition('RIGHT_CLICK_TURTLE');
+        try { this.stateMachine.transition('RIGHT_CLICK_TURTLE'); } catch (e) {}
 
         console.log('[Input] THROW_DRAG started at', e.clientX, e.clientY,
           'anchorX=', this.physics.screenAnchorX.toFixed(3));

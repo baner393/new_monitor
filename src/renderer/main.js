@@ -641,7 +641,7 @@ pixiApp.ticker.add((delta) => {
     // Check if physics has settled
     if (totalEnergy !== undefined && totalEnergy < THROW_SETTLE_THRESHOLD) {
       console.log('[THROW] Settled, transitioning to IDLE');
-      stateMachine.transition('PHYSICS_SETTLED');
+      try { stateMachine.transition('PHYSICS_SETTLED'); } catch (e) {}
     }
 
     // Pain on collision: flash texture overlay for 0.4s
