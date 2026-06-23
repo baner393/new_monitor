@@ -4,6 +4,7 @@ module.exports = {
   packagerConfig: {
     name: 'turtle-monitor',
     executableName: 'turtle-monitor',
+    icon: './assets/icon',
   },
   makers: [
     {

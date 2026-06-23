@@ -2,3 +2,8 @@ node_modules/
 out/
 .vite/
 *.log
+.codegraph/
+*.bak
+tmp_screenshot.*
+*.ps1
+assets/blink_closed.png
