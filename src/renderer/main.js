@@ -571,8 +571,9 @@ pixiApp.ticker.add((delta) => {
   if (state === 'IDLE' || state === 'HOVER') {
     let mx = 0, my = 0;
     try {
-      const p = pixiApp.renderer.events.pointer;
-      if (p) { mx = p.x; my = p.y; }
+      const events = pixiApp.renderer && pixiApp.renderer.events;
+      const p = events && events.pointer;
+      if (p && typeof p.x === 'number') { mx = p.x; my = p.y; }
     } catch (e) { /* ignore if events not available */ }
     const b = bodySprite.getBounds();
     const over = mx >= b.x && mx <= b.x + b.width && my >= b.y && my <= b.y + b.height;
