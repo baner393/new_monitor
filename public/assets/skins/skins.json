@@ -37,20 +37,20 @@
       "baseSize": 64
     },
     {
-      "id": "123",
-      "name": "123",
-      "displayName": "123",
+      "id": "turtl",
+      "name": "turtl",
+      "displayName": "turtl",
       "author": "Unknown",
       "description": "",
       "frames": {
-        "blink_closed": "assets/skins/123/blink.png",
-        "happy": "assets/skins/123/happy.png",
-        "hover": "assets/skins/123/hover.png",
-        "idle": "assets/skins/123/idle.png",
-        "pain": "assets/skins/123/pain.png",
-        "pull": "assets/skins/123/pull.png"
+        "blink_closed": "assets/skins/turtl/blink.png",
+        "happy": "assets/skins/turtl/happy.png",
+        "hover": "assets/skins/turtl/hover.png",
+        "idle": "assets/skins/turtl/idle.png",
+        "pain": "assets/skins/turtl/pain.png",
+        "pull": "assets/skins/turtl/pull.png"
       },
-      "preview": "assets/skins/123/idle.png",
+      "preview": "assets/skins/turtl/idle.png",
       "scale": 2.5,
       "baseSize": 24
     },

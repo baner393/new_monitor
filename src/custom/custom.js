@@ -936,6 +936,9 @@
 
     let loadedCount = 0;
     const total = files.length;
+    // Track only files that actually match an expression
+    let matchedTotal = 0;
+    let matchedDone = 0;
 
     // Helper: process one loaded image into exprData
     function applyOneImage(matchId, grid, size) {
@@ -946,14 +949,33 @@
       } else {
         exprData[matchId] = { grid: cloneGrid(grid), size, loaded: true };
       }
+      // Show debug info in status bar
+      var debugStr = '📊 ';
+      EXPRESSIONS.forEach(function(e){
+        var d = exprData[e.id];
+        debugStr += e.id + '=' + (d&&d.loaded?'✅':'⬜') + (d?'('+d.size+')':'') + ' ';
+      });
+      setStatus(debugStr);
     }
 
-    // Helper: finalize after all files loaded
+    // Helper: finalize after all MATCHED files loaded
     function onAllDone() {
       refreshAllThumbnails();
       // If currently editing an expression that was just loaded, reload pixelGrid
+      // Also auto-select the last loaded expression if nothing was selected
+      let needsEditorUpdate = false;
       if (currentExprId && exprData[currentExprId] && exprData[currentExprId].loaded) {
         pixelGrid = cloneGrid(exprData[currentExprId].grid);
+        needsEditorUpdate = true;
+      } else if (!currentExprId && matchedTotal === 1 && matchedDone >= matchedTotal) {
+        // Auto-select the only loaded expression
+        const onlyExpr = EXPRESSIONS.find(e => exprData[e.id]?.loaded);
+        if (onlyExpr) {
+          selectExpression(onlyExpr.id);
+          needsEditorUpdate = true;
+        }
+      }
+      if (needsEditorUpdate) {
         requestAnimationFrame(function() {
           exprPixelScale = getExprBaseScale();
           exprZoomPercent = 100;
@@ -969,11 +991,13 @@
     Array.from(files).forEach(file => {
       const stem = file.name.replace(/\.png$/i, '').toLowerCase();
       const matchId = nameMap[stem] || nameMap[stem + '.png'];
+      console.log('[SkinLoad] file=' + file.name + ' stem=' + stem + ' matchId=' + matchId + ' nameMap[stem]=' + nameMap[stem] + ' nameMap[stem+.png]=' + nameMap[stem + '.png']);
       if (!matchId) {
         loadedCount++;
-        if (loadedCount >= total) onAllDone();
+        if (loadedCount >= total && matchedDone >= matchedTotal) onAllDone();
         return;
       }
+      matchedTotal++;
 
       const reader = new FileReader();
       reader.onload = (ev) => {
@@ -1013,13 +1037,16 @@
 
           // Write directly to exprData (cloneGrid to avoid shared refs)
           applyOneImage(matchId, grid, size);
+          console.log('[SkinLoad] applied matchId=' + matchId + ' size=' + size + ' applyAll=' + applyAll);
           loadedCount++;
-          if (loadedCount >= total) onAllDone();
+          matchedDone++;
+          if (matchedDone >= matchedTotal && loadedCount >= total) onAllDone();
         };
         img.onerror = () => {
           console.warn('[SkinLoad] Failed to load:', file.name);
           loadedCount++;
-          if (loadedCount >= total) onAllDone();
+          matchedDone++;
+          if (matchedDone >= matchedTotal && loadedCount >= total) onAllDone();
         };
         img.src = ev.target.result;
       };
