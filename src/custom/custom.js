@@ -989,6 +989,44 @@
     }
 
     Array.from(files).forEach(file => {
+      // If loading into current expression, skip filename matching
+      if (_loadToCurrentExpr) {
+        if (currentExprId && exprData[currentExprId]) {
+          const reader = new FileReader();
+          reader.onload = (ev) => {
+            const img = new Image();
+            img.onload = () => {
+              const size = Math.max(img.width, img.height);
+              const grid = createEmptyGrid(size);
+              const tmpCanvas = document.createElement('canvas');
+              tmpCanvas.width = img.width;
+              tmpCanvas.height = img.height;
+              const tmpCtx = tmpCanvas.getContext('2d');
+              tmpCtx.imageSmoothingEnabled = false;
+              tmpCtx.drawImage(img, 0, 0);
+              const imageData = tmpCtx.getImageData(0, 0, img.width, img.height);
+              for (let y = 0; y < img.height; y++) {
+                for (let x = 0; x < img.width; x++) {
+                  const i = (y * img.width + x) * 4;
+                  const a = imageData.data[i + 3];
+                  if (a > 128) {
+                    grid[y][x] = 'rgb(' + imageData.data[i] + ',' + imageData.data[i + 1] + ',' + imageData.data[i + 2] + ')';
+                  }
+                }
+              }
+              exprData[currentExprId] = { grid, size, loaded: true };
+              refreshAllThumbnails();
+              setStatus('✅ 已加载到 ' + currentExprId + ' (' + size + '×' + size + ')');
+              _loadToCurrentExpr = false;
+            };
+            img.src = ev.target.result;
+          };
+          reader.readAsDataURL(file);
+        }
+        _loadToCurrentExpr = false;
+        return;
+      }
+
       const stem = file.name.replace(/\.png$/i, '').toLowerCase();
       const matchId = nameMap[stem] || nameMap[stem + '.png'];
       console.log('[SkinLoad] file=' + file.name + ' stem=' + stem + ' matchId=' + matchId + ' nameMap[stem]=' + nameMap[stem] + ' nameMap[stem+.png]=' + nameMap[stem + '.png']);
@@ -1623,78 +1661,20 @@
     setStatus(exported > 0 ? '已导出 ' + exported + ' 个表情' : '没有已加载的表情可导出');
   });
 
-  // ── Load current skin (from main window) ──
+  // ── Load image into currently selected expression ──
   const loadCurrentSkinBtn = document.getElementById('loadCurrentSkinBtn');
   const currentSkinLabel = document.getElementById('currentSkinLabel');
 
-  loadCurrentSkinBtn?.addEventListener('click', async () => {
-    if (!window.electronAPI?.skinGetCurrent) {
-      setStatus('❌ electronAPI 不可用');
+  // Reuse the existing skinFilesInput for file picking
+  let _loadToCurrentExpr = false;
+  loadCurrentSkinBtn?.addEventListener('click', () => {
+    if (!currentExprId) {
+      setStatus('⚠ 请先点击一个表情卡片（如 idle/hover/pull）选中它');
       return;
     }
-    const result = await window.electronAPI.skinGetCurrent();
-    if (!result?.success) {
-      setStatus('❌ 获取当前皮肤失败');
-      return;
-    }
-    currentSkinLabel.textContent = '当前: ' + (result.skinId || '?');
-    setStatus('正在加载皮肤: ' + result.skinId + '...');
-    const frames = result.frames || {};
-    const entries = Object.entries(frames);
-    if (!entries.length) {
-      setStatus('⚠ 该皮肤没有帧数据');
-      return;
-    }
-
-    // Save current editor state first
-    if (currentExprId && exprData[currentExprId]) {
-      exprData[currentExprId].grid = cloneGrid(pixelGrid);
-    }
-
-    let loaded = 0;
-    for (const [state, filePath] of entries) {
-      // Map state names: blink_closed → blink
-      const exprId = state === 'blink_closed' ? 'blink' : state;
-      if (!exprData[exprId]) continue;
-
-      try {
-        const response = await fetch(filePath);
-        if (!response.ok) throw new Error('HTTP ' + response.status);
-        const blob = await response.blob();
-
-        const img = await new Promise((resolve, reject) => {
-          const image = new Image();
-          image.onload = () => resolve(image);
-          image.onerror = () => reject(new Error('Image decode failed'));
-          image.src = URL.createObjectURL(blob);
-        });
-
-        const size = Math.max(img.width, img.height);
-        const grid = createEmptyGrid(size);
-        const tmpCanvas = document.createElement('canvas');
-        tmpCanvas.width = img.width;
-        tmpCanvas.height = img.height;
-        const tmpCtx = tmpCanvas.getContext('2d');
-        tmpCtx.imageSmoothingEnabled = false;
-        tmpCtx.drawImage(img, 0, 0);
-        const imageData = tmpCtx.getImageData(0, 0, img.width, img.height);
-        for (let y = 0; y < img.height; y++) {
-          for (let x = 0; x < img.width; x++) {
-            const i = (y * img.width + x) * 4;
-            const a = imageData.data[i + 3];
-            if (a > 128) {
-              grid[y][x] = 'rgb(' + imageData.data[i] + ',' + imageData.data[i + 1] + ',' + imageData.data[i + 2] + ')';
-            }
-          }
-        }
-        exprData[exprId] = { grid, size, loaded: true };
-        loaded++;
-      } catch (err) {
-        console.warn('[SkinLoad] Failed to load frame:', state, err.message);
-      }
-    }
-    refreshAllThumbnails();
-    setStatus('✅ 已加载当前皮肤 (' + result.skinId + '): ' + loaded + ' 个帧');
+    currentSkinLabel.textContent = '→ ' + currentExprId;
+    _loadToCurrentExpr = true;
+    skinFilesInput?.click();
   });
 
   // ── Import expressions into skin library ──

@@ -803,15 +803,19 @@
             <span id="regionStatus" style="font-size:12px; color:#888899;"></span>
           </div>
           <div style="margin-top:8px; font-size:11px; color:#ff9966;">
-            ⚠️ 请点击「⛶ 全屏标记」打开全屏窗口进行精确的两步标记（框选区域 → 标记像素）
+            ⚠️ 请点击「⛶ 全屏标记」打开全屏窗口进行精确的两步标记（框选区域 → 标记像素）<br>
+            💡 标记的是预览图中原始图片的对应部位位置，不在转换后的图片上标记。
           </div>
         </div>
 
         <div class="group-box" style="margin-top:12px;">
-          <div class="group-box-label">✨ 自动生成表情</div>
+          <div class="group-box-label">✨ 自动生成表情 <span style="color:#ff9944; font-size:10px;">(内测)</span></div>
           <div style="display:flex; align-items:center; gap:12px;">
             <button class="btn primary" id="generateExprBtn" disabled>生成所有表情</button>
             <span style="font-size:11px; color:#888899;">需先标记眼睛和嘴巴区域</span>
+          </div>
+          <div style="margin-top:6px; font-size:11px; color:#ff9944;">
+            ⚠️ 内测功能，生成的眉毛/嘴巴位置可能不准确，建议生成后在表情编辑器中手动调整。
           </div>
         </div>
       </div>
@@ -834,7 +838,8 @@
       <h2 class="section-title">🎨 像素画布</h2>
       <p class="hint">
         在像素画布上自由绘制皮肤。支持自定义画布尺寸，绘制完成后可导出为宠物可用的格式。<br>
-        💡 <b>建议点击右侧「⛶ 全屏」按钮</b>展开全屏窗口，获得最佳绘画体验（支持滚轮缩放、右键拖拽移动画布）。
+        💡 <b>建议点击右侧「⛶ 全屏」按钮</b>展开全屏窗口，获得最佳绘画体验（支持滚轮缩放、右键拖拽移动画布）。<br>
+        ⌨️ 快捷键：B=画笔 · E=橡皮 · G=填充 · I=吸色 · Ctrl+Z=撤销 · 滚轮=缩放 · 右键=拖拽画布
       </p>
 
       <div class="toolbar">
@@ -888,7 +893,8 @@
       <p class="hint">
         为角色编辑不同表情和动作。每个表情对应特定的触发条件。<br>
         💡 先点击「加载现有皮肤」载入基础帧，或直接在空白画布上绘制。<br>
-        💡 勾选「应用到所有状态帧」可将一张图片同时设为所有表情的基础帧。
+        💡 勾选「应用到所有状态帧」可将一张图片同时设为所有表情的基础帧。<br>
+        💡 从皮肤转换器导出的图片无需改名，直接可用。手动导入的图片请将文件名改为对应的表情名（如 <code>idle.png</code>、<code>hover.png</code>），系统会自动匹配。
       </p>
 
       <!-- ══ 加载皮肤设置 ══ -->
@@ -918,9 +924,9 @@
           </select>
           <input type="file" id="skinFilesInput" accept="image/png" multiple style="display:none" />
         </div>
-        <!-- ══ 加载当前皮肤 ══ -->
+        <!-- ══ 加载选中的表情 ══ -->
         <div style="margin-top:8px; padding-top:8px; border-top:1px solid var(--border-mid); display:flex; align-items:center; gap:8px;">
-          <button class="btn" id="loadCurrentSkinBtn">📂 加载当前皮肤</button>
+          <button class="btn primary" id="loadCurrentSkinBtn" title="先点击一个表情卡片选中它，再点击此按钮选择图片加载到该表情">📂 加载表情</button>
           <span id="currentSkinLabel" style="font-size:11px; color:#888;"></span>
         </div>
       </div>
@@ -1003,6 +1009,11 @@
               B: 画笔 / E: 橡皮<br>
               G: 填充 / I: 吸色<br>
               Ctrl+Z: 撤销
+            </div>
+            <div style="margin-top:16px; font-size:13px; color:var(--title-color); margin-bottom:8px; font-family:'Mojang','Unifont','Microsoft YaHei',sans-serif;">💡 加载提示</div>
+            <div style="font-size:11px; color:#888899; line-height:1.8;">
+              点击「📁 加载现有皮肤」批量导入（文件名自动匹配）<br>
+              点击「📂 加载表情」单选文件导入（不依赖文件名）
             </div>
           </div>
         </div>
