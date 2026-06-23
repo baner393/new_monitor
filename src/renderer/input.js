@@ -126,7 +126,7 @@ export class InputManager {
         this.physics.startDrag(e.clientX, e.clientY);
 
         window.electronAPI.setIgnoreMouseEvents(false);
-        try { this.stateMachine.transition('RIGHT_CLICK_TURTLE'); } catch (e) {}
+        this.stateMachine.transition('RIGHT_CLICK_TURTLE');
 
         console.log('[Input] THROW_DRAG started at', e.clientX, e.clientY,
           'anchorX=', this.physics.screenAnchorX.toFixed(3));
@@ -250,6 +250,9 @@ export class InputManager {
             console.log('[Input] THROW_RELEASED, velocity=',
               `vx=${vx.toFixed(0)}, vy=${vy.toFixed(0)}`);
 
+            // Restore mouse passthrough so blank-area clicks don't interfere
+            window.electronAPI.setIgnoreMouseEvents(true);
+
             // Transition to PULLEY_PHYSICS (physics simulation state)
             this.stateMachine.transition('RIGHT_RELEASE');
           }
@@ -271,6 +274,8 @@ export class InputManager {
         pullExceeded: this._pullExceeded,
         velocity: { ...this._dragVelocity }
       });
+      // Restore mouse passthrough
+      window.electronAPI.setIgnoreMouseEvents(true);
     }
 
     // No need to restore window - it's already full-screen
