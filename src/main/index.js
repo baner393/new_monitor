@@ -247,6 +247,7 @@ function openCustomMode() {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      webSecurity: false,
       preload: path.join(app.getAppPath(), 'src', 'custom', 'preload.js'),
     },
   });
