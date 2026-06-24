@@ -130,7 +130,7 @@ const SETTINGS_DEFS = [
         key: 'blinkDuration',
         label: '眨眼时长',
         hint: '闭眼状态的持续时间，越长闭眼越明显',
-        min: 0.05, max: 0.5, step: 0.05,
+        min: 0.05, max: 1.5, step: 0.05,
         unit: '秒',
       },
     ],
