@@ -524,9 +524,9 @@ pixiApp.ticker.add((delta) => {
   // Update settings panel animation
   settingsPanel.updateAnimation(dt);
 
-  // Compute rope anchor (top of window)
+  // Compute rope anchor (top of window; offset 50px down because window extends 50px above screen to hide white border)
   const anchorX = physics.screenAnchorX * window.innerWidth;
-  const anchorY = 0;
+  const anchorY = 50;
 
   // Calculate pull distance BEFORE updating physics
   const pullDist = (state === 'PULLING') ? 

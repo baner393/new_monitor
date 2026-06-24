@@ -12,6 +12,9 @@ let gpuMonitor;
 let pendingGridData = null;
 let pendingRegionImage = null; // temp storage for region marker image data
 
+// ── Chromium flags (must be before app.whenReady) ────────────
+app.commandLine.appendSwitch('enable-transparent-visuals');
+
 // ── Settings persistence ────────────────────────────────────────────
 const SETTINGS_PATH = path.join(os.homedir(), '.hermes', 'profiles', 'coordinator', 'turtle-settings.json');
 
@@ -94,11 +97,12 @@ function createWindow() {
   const { x: screenX, y: screenY } = primaryDisplay.workArea;
   
   // Full-screen transparent window (transparent pixels are nearly free in GPU)
+  // y:-50 extends 50px above screen to hide DWM white border outside visible area
   mainWindow = new BrowserWindow({
-    x: screenX,
-    y: screenY,
-    width: screenWidth,
-    height: screenHeight,
+    x: screenX - 2,
+    y: screenY - 50,
+    width: screenWidth + 4,
+    height: screenHeight + 50,
     frame: false,
     transparent: true,
     alwaysOnTop: true,
@@ -107,12 +111,22 @@ function createWindow() {
     hasShadow: false,
     fullscreenable: false,
     titleBarStyle: 'hidden',
-    title: '',
+    title: ' ',
+    // titleBarOverlay 会绘制渐变白线，桌面宠物不需要原生窗口按钮，完全删除
+    backgroundThrottling: false,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
       preload: path.join(__dirname, 'preload.js'),
     },
+  });
+
+  // Remove menu bar to prevent Alt-triggered black text
+  mainWindow.setMenu(null);
+
+  // Force empty title after load (combat DWM cached title text)
+  mainWindow.webContents.on('did-finish-load', () => {
+    mainWindow.setTitle(' ');
   });
 
   // Fix DPI scaling - prevent Windows from auto-scaling
