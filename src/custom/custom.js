@@ -1786,7 +1786,7 @@
       // Auto-detect baseSize
       const idleData = exprData.idle;
       const baseSize = idleData && idleData.loaded ? idleData.size : (resVal > 0 ? resVal : 24);
-      const TARGET_SIZE = 60;
+      const TARGET_SIZE = 64;
       const scale = TARGET_SIZE / baseSize;
 
       // Update skins.json
@@ -2066,8 +2066,8 @@
       }
     }
 
-    // Calculate scale: normalize to TARGET_SIZE (60px display)
-    const TARGET_SIZE = 60;
+    // Calculate scale: normalize to TARGET_SIZE (64px display)
+    const TARGET_SIZE = 64;
     const autoScale = TARGET_SIZE / detectedBaseSize;
 
     // Check for duplicate ID
