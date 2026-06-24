@@ -872,16 +872,6 @@ pixiApp.ticker.add((delta) => {
     debugGraphics.drawCircle(physics.pulley.x, physics.pulley.y, 5);
     debugGraphics.endFill();
 
-    // Velocity vector (green line from turtle)
-    if (state === 'PULLEY_PHYSICS') {
-      const vScale = 0.05;
-      debugGraphics.lineStyle(2, 0x00ff00, 0.6);
-      debugGraphics.moveTo(sprite.x, sprite.y);
-      debugGraphics.lineTo(
-        sprite.x + physics.turtle.vx * vScale,
-        sprite.y + physics.turtle.vy * vScale
-      );
-    }
   }
 
   // Log every 60 frames
