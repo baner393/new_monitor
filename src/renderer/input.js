@@ -109,7 +109,8 @@ export class InputManager {
       if (this._isOverSprite(e.clientX, e.clientY)) {
         // Right-click on turtle → start throw drag
         const state = this.stateMachine.getState();
-        if (state !== 'IDLE' && state !== 'HOVER' && state !== 'PULLEY_MOMENTUM' && state !== 'PULLEY_PHYSICS') return;
+        if (state !== 'IDLE' && state !== 'HOVER' && state !== 'PULLEY_MOMENTUM' && state !== 'PULLEY_PHYSICS'
+        && state !== 'EXPANDING' && state !== 'PANEL_OPEN' && state !== 'COLLAPSING' && state !== 'HAPPY') return;
 
         this._isRightDragging = true;
         this._rightDragStartX = e.clientX;

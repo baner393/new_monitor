@@ -407,6 +407,11 @@ function updateRopeReturn(dt) {
   }
 }
 
+// ── Panel drag state (step 6: right-drag while GPU panel is open) ────
+let _panelDragActive = false;     // panel was open when right-drag started
+let _savedRopeStiffness = 500;    // restore after panel drag
+let _savedAirDamping = 0.98;      // restore after panel drag
+
 // ── Idle animation state (breathing + blinking) ─────────────────────
 let breathTime = 0;
 let blinkTimer = 0;
@@ -523,6 +528,37 @@ function onStateChange() {
   if (prevState === 'PULLEY_MOMENTUM' && newState === 'IDLE') {
     startRopeReturn();
     console.log(`[MOMENTUM→IDLE] Starting rope return`);
+  }
+
+  // PULLEY_DRAG from panel state → save panel context, apply stable physics
+  if (newState === 'PULLEY_DRAG' && (prevState === 'PANEL_OPEN' || prevState === 'EXPANDING' || prevState === 'HAPPY' || prevState === 'COLLAPSING')) {
+    _panelDragActive = true;
+    if (settingsPanel.getValue('panelMoveStable')) {
+      _savedRopeStiffness = physics.ropeStiffness;
+      _savedAirDamping = physics.airDamping;
+      physics.ropeStiffness = 100;
+      physics.airDamping = 0.9;
+      console.log(`[PanelDrag] Started, stable params: stiffness=100, damping=0.9`);
+    } else {
+      // Stable mode disabled → apply current physics settings (from right-click props)
+      console.log(`[PanelDrag] Started, using current physics settings (stable mode off)`);
+    }
+  }
+
+  // PULLEY_PHYSICS settled → PANEL_OPEN (panel drag) or IDLE (normal throw)
+  if (_panelDragActive && prevState === 'PULLEY_DRAG' && newState === 'PULLEY_PHYSICS') {
+    console.log(`[PanelDrag] Physics started, panel follows turtle`);
+  }
+  if (_panelDragActive && prevState === 'PULLEY_PHYSICS' && newState === 'PANEL_OPEN') {
+    // Restore normal physics if stable mode was enabled
+    if (settingsPanel.getValue('panelMoveStable')) {
+      physics.ropeStiffness = _savedRopeStiffness;
+      physics.airDamping = _savedAirDamping;
+    }
+    _panelDragActive = false;
+    // Re-enable mouse events for panel interaction
+    window.electronAPI.setIgnoreMouseEvents(false);
+    console.log(`[PanelDrag] Returned to PANEL_OPEN, physics restored`);
   }
 
   // Log pulley state transitions
@@ -683,6 +719,11 @@ pixiApp.ticker.add((delta) => {
     sprite.x = physics.turtle.x;
     sprite.y = physics.turtle.y;
 
+    // Panel follow: keep panel at turtle position during panel drag
+    if (_panelDragActive && panel.isOpen) {
+      panel.setPosition(physics.pulley.x, sprite.y + 80);
+    }
+
   } else if (state === 'PULLEY_PHYSICS') {
     // ── New throw physics simulation ──
     const totalEnergy = physics.updatePulleyPhysics(dt);
@@ -691,10 +732,21 @@ pixiApp.ticker.add((delta) => {
     sprite.x = physics.turtle.x;
     sprite.y = physics.turtle.y;
 
+    // Panel follow during panel drag physics
+    if (_panelDragActive && panel.isOpen) {
+      panel.setPosition(physics.pulley.x, sprite.y + 80);
+    }
+
     // Check if physics has settled
     if (totalEnergy !== undefined && totalEnergy < THROW_SETTLE_THRESHOLD) {
-      console.log('[THROW] Settled, transitioning to IDLE');
-      stateMachine.transition('PHYSICS_SETTLED');
+      if (_panelDragActive) {
+        // Panel drag mode → return to PANEL_OPEN (not IDLE)
+        stateMachine.reset('PANEL_OPEN');
+        console.log('[PanelDrag] Settled → PANEL_OPEN');
+      } else {
+        console.log('[THROW] Settled, transitioning to IDLE');
+        stateMachine.transition('PHYSICS_SETTLED');
+      }
     }
 
     // Pain on collision: flash texture overlay for 0.4s

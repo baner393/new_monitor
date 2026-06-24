@@ -86,6 +86,7 @@ const DEFAULTS = {
   bounceRestitution: 0.6,
   airDamping:       0.98,
   ropeElasticity:   0.02,
+  panelMoveStable:  true, // 面板移动稳定：面板打开时右键拖拽使用稳定参数
 };
 
 // Setting definitions with labels, ranges, and hints
@@ -171,6 +172,18 @@ const SETTINGS_DEFS = [
         label: '空气阻尼',
         hint: '空气阻力，越小阻力越大',
         min: 0.9, max: 1.0, step: 0.01,
+        unit: '',
+      },
+    ],
+  },
+  {
+    section: '面板相关',
+    items: [
+      {
+        key: 'panelMoveStable',
+        label: '面板移动稳定',
+        hint: '面板打开时右键拖拽使用稳定参数（弹簧刚度100，空气阻尼0.9），关闭则用右键属性值',
+        min: 0, max: 1, step: 1,
         unit: '',
       },
     ],

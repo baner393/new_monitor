@@ -85,20 +85,24 @@ const TRANSITIONS = {
 
   [EXPANDING]: {
     PANEL_FULLY_OPEN:  PANEL_OPEN,
+    RIGHT_CLICK_TURTLE: PULLEY_DRAG,
   },
 
   // HAPPY state – shown when panel is expanding (sprite shows happy texture)
   [HAPPY]: {
     PANEL_FULLY_OPEN:  PANEL_OPEN,
     CLICK_OUTSIDE:     COLLAPSING,
+    RIGHT_CLICK_TURTLE: PULLEY_DRAG,
   },
 
   [PANEL_OPEN]: {
     CLICK_OUTSIDE:     COLLAPSING,
+    RIGHT_CLICK_TURTLE: PULLEY_DRAG,
   },
 
   [COLLAPSING]: {
     PANEL_FULLY_CLOSED: IDLE,
+    RIGHT_CLICK_TURTLE: PULLEY_DRAG,
   },
 
   [PULLEY_MOMENTUM]: {
