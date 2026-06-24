@@ -66,16 +66,17 @@ const debugGraphics = new PIXI.Graphics();
 pixiApp.stage.addChild(debugGraphics);
 
 // ── Debug overlay: blink duration display ──────────────────────────────
+// Must be added last (after all other stage children) so it draws on top
+const debugBg = new PIXI.Graphics();
 const debugText = new PIXI.Text('', {
-  fontFamily: 'monospace',
-  fontSize: 12,
-  fill: 0x88ff88,
+  fontFamily: '"Unifont", monospace',
+  fontSize: 14,
+  fill: 0x00ff00,
   stroke: 0x000000,
-  strokeThickness: 2,
+  strokeThickness: 3,
 });
-debugText.x = 8;
-debugText.y = 8;
-pixiApp.stage.addChild(debugText);
+debugText.x = 4;
+debugText.y = 4;
 
 // ── Layer Structure ────────────────────────────────────────────────────
 const ropeContainer = new PIXI.Container();
@@ -920,8 +921,11 @@ window.addEventListener('resize', () => {
 console.log('🐢 Turtle Monitor renderer ready');
 
   // Load saved settings after full initialization
-  loadAndApplySettings();
+    loadAndApplySettings();
 
-} // end init
+    // ── Debug overlay (added last to draw on top of everything) ─────
+    pixiApp.stage.addChild(debugBg);
+    pixiApp.stage.addChild(debugText);
+  } // end init
 
-init();
+  init();
