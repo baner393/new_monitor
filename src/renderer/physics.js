@@ -65,7 +65,7 @@ class PhysicsEngine {
 
     // ── 滑轮状态（右键甩动模式）──
     this.pulley = {
-      x: 0, y: 0,       // 像素坐标
+      x: 0, y: 50,       // 像素坐标 (y=50 matches anchorY compensation)
       vx: 0,             // 水平速度 (px/s)
     }
 
@@ -115,7 +115,7 @@ class PhysicsEngine {
 
     // 初始化滑轮位置（锚点）
     this.pulley.x = this.screenAnchorX * this.windowWidth
-    this.pulley.y = 0
+    this.pulley.y = 50
     this.pulley.vx = 0
 
     // 清空速度追踪器
@@ -388,7 +388,7 @@ class PhysicsEngine {
     this.turtle.dragging = false
 
     this.pulley.x = 0
-    this.pulley.y = 0
+    this.pulley.y = 50
     this.pulley.vx = 0
 
     this.velocityTracker.clear()

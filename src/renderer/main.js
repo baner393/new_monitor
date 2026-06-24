@@ -382,6 +382,31 @@ let bounceTime = 0;
 const BOUNCE_DURATION = 0.8;
 const MOMENTUM_STOP_THRESHOLD = 0.0005; // velocity below this → stop
 
+// ── Rope return animation state ───────────────────────────────────────
+let ropeReturnStartLen = 0;
+let ropeReturnTime = 0;
+const ROPE_RETURN_DURATION = 0.5; // 0.5s smooth transition
+let ropeReturnActive = false;
+
+function startRopeReturn() {
+  ropeReturnStartLen = physics.ropeLength;
+  ropeReturnTime = 0;
+  ropeReturnActive = true;
+}
+
+function updateRopeReturn(dt) {
+  if (!ropeReturnActive) return;
+  ropeReturnTime += dt;
+  const t = Math.min(ropeReturnTime / ROPE_RETURN_DURATION, 1);
+  // Smoothstep: t²(3-2t) for buttery smooth easing
+  const ease = t * t * (3 - 2 * t);
+  physics.ropeLength = physics.restRopeLength + (ropeReturnStartLen - physics.restRopeLength) * (1 - ease);
+  if (t >= 1) {
+    physics.ropeLength = physics.restRopeLength;
+    ropeReturnActive = false;
+  }
+}
+
 // ── Idle animation state (breathing + blinking) ─────────────────────
 let breathTime = 0;
 let blinkTimer = 0;
@@ -410,7 +435,7 @@ function updateBounce(dt) {
   
   // Target position (pendulum at user-configured rest rope length)
   const anchorX = physics.screenAnchorX * window.innerWidth;
-  const anchorY = 0;
+  const anchorY = 50; // Must match game loop anchorY (window offset compensation)
   const restLen = physics.restRopeLength;
   const targetX = anchorX + Math.sin(physics.pendulumAngle) * restLen;
   const targetY = anchorY + Math.cos(physics.pendulumAngle) * restLen;
@@ -442,7 +467,7 @@ function onStateChange() {
     startBounce(sprite.x, sprite.y);
     // Calculate pendulumAngle from actual pull end position
     const anchorX = physics.screenAnchorX * window.innerWidth;
-    const anchorY = 0;
+    const anchorY = 50; // Must match game loop anchorY (window offset compensation)
     const dx = sprite.x - anchorX;
     const dy = sprite.y - anchorY;
     physics.pendulumAngle = Math.atan2(dx, dy);
@@ -480,6 +505,24 @@ function onStateChange() {
   // PULLEY_DRAG → PULLEY_PHYSICS transition: initialize throw physics
   if (prevState === 'PULLEY_DRAG' && newState === 'PULLEY_PHYSICS') {
     console.log(`[THROW] Physics started: turtle(${physics.turtle.x.toFixed(0)}, ${physics.turtle.y.toFixed(0)}), vel(${physics.turtle.vx.toFixed(0)}, ${physics.turtle.vy.toFixed(0)})`);
+  }
+
+  // PULLEY_PHYSICS → IDLE: sync pendulum angle from actual physical position
+  // Prevents visual jump when switching from physical position to pendulum equation
+  if (prevState === 'PULLEY_PHYSICS' && newState === 'IDLE') {
+    const dx = physics.turtle.x - physics.pulley.x;
+    const dy = physics.turtle.y - physics.pulley.y;
+    physics.pendulumAngle = Math.atan2(dx, dy);
+    physics.pendulumOmega = Math.sqrt(physics.turtle.vx * physics.turtle.vx + physics.turtle.vy * physics.turtle.vy) / physics.ropeLength;
+    // Start 0.5s rope return animation (smoothly brings ropeLength to restRopeLength)
+    startRopeReturn();
+    console.log(`[PHYSICS→IDLE] Synced angle=${physics.pendulumAngle.toFixed(3)}, len=${physics.ropeLength.toFixed(0)}`);
+  }
+
+  // PULLEY_MOMENTUM → IDLE: also start rope return animation
+  if (prevState === 'PULLEY_MOMENTUM' && newState === 'IDLE') {
+    startRopeReturn();
+    console.log(`[MOMENTUM→IDLE] Starting rope return`);
   }
 
   // Log pulley state transitions
@@ -706,6 +749,8 @@ pixiApp.ticker.add((delta) => {
     
   } else {
     // IDLE/HOVER - pendulum drives position
+    // Rope return: 0.5s smoothstep animation to default length
+    updateRopeReturn(dt);
     const pendulumX = anchorX + Math.sin(physics.pendulumAngle) * physics.ropeLength;
     const pendulumY = anchorY + Math.cos(physics.pendulumAngle) * physics.ropeLength;
     sprite.x = pendulumX;
