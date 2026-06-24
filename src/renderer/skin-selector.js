@@ -109,6 +109,16 @@ export class SkinSelector {
       }
 
       this._renderSkinGrid();
+
+      // 触发皮肤切换回调，确保纹理实际加载
+      const activeSkin = this.skins.find(s => s.id === this.currentSkin);
+      if (activeSkin && this.onSkinChange) {
+        this.onSkinChange(this.currentSkin, {
+          ...activeSkin,
+          sprites: activeSkin.frames,
+        });
+      }
+
       console.log('[SkinSelector] Skins loaded:', this.skins.map(s => s.id));
     } catch (err) {
       console.error('[SkinSelector] Failed to load skins:', err.message);

@@ -202,20 +202,19 @@ skinSelector.onSkinChange = (skinId, skinConfig) => {
     bodySprite.texture = idleTexture;
 
     // Apply skin-specific scale (normalize to target display size)
-    const TARGET_SIZE = 60; // pixels
+    // Respect saved turtleSize setting instead of hardcoded value
     const baseSize = skinConfig.baseSize || 24;
     currentSkinBaseSize = baseSize; // remember for settings
-    const skinScale = TARGET_SIZE / baseSize;
+    // Get saved turtleSize from settings panel or use default
+    const savedTurtleSize = settingsPanel._values?.turtleSize || 64;
+    const skinScale = savedTurtleSize / baseSize;
     bodySprite.scale.set(skinScale);
-    console.log(`[Skin] Scale: ${skinScale.toFixed(2)} (baseSize: ${baseSize})`);
+    console.log(`[Skin] Scale: ${skinScale.toFixed(2)} (baseSize: ${baseSize}, turtleSize: ${savedTurtleSize})`);
   }
 };
 
-// Restore last selected skin
-const savedSkin = localStorage.getItem('selectedSkin');
-if (savedSkin) {
-  skinSelector.currentSkin = savedSkin;
-}
+// 皮肤恢复已在 skin-selector.loadSkins() 中完成（纹理 + 缩放一并触发）
+// 此处不再重复设置 currentSkin
 
 // Listen for open-skin-selector from context menu
 window.electronAPI.onOpenSkinSelector(() => {
@@ -225,18 +224,26 @@ window.electronAPI.onOpenSkinSelector(() => {
   }
 });
 
-// Load saved settings on startup
-(async () => {
+/**
+ * Load saved settings from main process and apply them.
+ * Called at the end of init(), after all modules are ready.
+ */
+async function loadAndApplySettings() {
   try {
     const saved = await window.electronAPI.settings.get();
     if (saved) {
       console.log('[Settings] Loaded saved settings:', saved);
-      applySettings(saved);
+      // Use the known-working path: set each value then save,
+      // which triggers settings-changed IPC → applySettings() reliably
+      for (const [key, val] of Object.entries(saved)) {
+        window.electronAPI.settings.set(key, val);
+      }
+      window.electronAPI.settings.save();
     }
   } catch (err) {
     console.warn('[Settings] Failed to load settings on startup:', err);
   }
-})();
+}
 
 /**
  * Apply settings to the physics engine and renderer.
@@ -784,6 +791,9 @@ window.addEventListener('resize', () => {
 });
 
 console.log('🐢 Turtle Monitor renderer ready');
+
+  // Load saved settings after full initialization
+  loadAndApplySettings();
 
 } // end init
 

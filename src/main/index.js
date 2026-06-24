@@ -124,10 +124,10 @@ function createWindow() {
   // Remove menu bar to prevent Alt-triggered black text
   mainWindow.setMenu(null);
 
-  // Force empty title after load (combat DWM cached title text)
-  mainWindow.webContents.on('did-finish-load', () => {
-    mainWindow.setTitle(' ');
-  });
+  // Push current settings to renderer after page fully loads (fallback)
+mainWindow.webContents.on('did-finish-load', () => {
+  mainWindow.setTitle(' ');
+});
 
   // Fix DPI scaling - prevent Windows from auto-scaling
   mainWindow.webContents.setZoomFactor(1);
