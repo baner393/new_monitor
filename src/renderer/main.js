@@ -344,6 +344,9 @@ document.addEventListener('mousedown', (e) => {
   const state = stateMachine.getState();
   if (state !== 'PANEL_OPEN') return;
 
+  // Safety: ensure window captures mouse events so click-outside works
+  window.electronAPI.setIgnoreMouseEvents(false);
+
   // Don't close GPU panel if settings panel is open
   if (settingsPanel.isOpen || settingsPanel.isAnimating) return;
 

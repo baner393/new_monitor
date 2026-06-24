@@ -137,7 +137,7 @@ export class InputManager {
     // ── Left button (button === 0) ──
     if (e.button !== 0) return;
     const state = this.stateMachine.getState();
-    if (state !== 'IDLE' && state !== 'HOVER') return;
+    if (state !== 'IDLE' && state !== 'HOVER' && state !== 'PULLEY_PHYSICS' && state !== 'PULLEY_MOMENTUM') return;
     if (!this._isOverSprite(e.clientX, e.clientY)) return;
 
     this._isDragging = true;
