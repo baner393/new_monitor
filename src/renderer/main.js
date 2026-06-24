@@ -65,18 +65,6 @@ const ropeRenderer = new RopeRenderer(ropeGraphics);
 const debugGraphics = new PIXI.Graphics();
 pixiApp.stage.addChild(debugGraphics);
 
-// ── Debug overlay: blink duration display ──────────────────────────────
-const debugText = new PIXI.Text('', {
-  fontFamily: 'monospace',
-  fontSize: 12,
-  fill: 0x88ff88,
-  stroke: 0x000000,
-  strokeThickness: 2,
-});
-debugText.x = 8;
-debugText.y = 8;
-pixiApp.stage.addChild(debugText);
-
 // ── Layer Structure ────────────────────────────────────────────────────
 const ropeContainer = new PIXI.Container();
 pixiApp.stage.addChild(ropeContainer);
@@ -662,9 +650,7 @@ pixiApp.ticker.add((delta) => {
       isBlinking = true;
       blinkProgress = 0;
       bodySprite.texture = blinkTexture; // squinting eyes
-      const blinkDur = settingsPanel.getValue('blinkDuration');
-      debugText.text = `眨眼时长: ${blinkDur.toFixed(2)}s`;
-      console.log(`[Blink] duration=${blinkDur.toFixed(2)}s`);
+      console.log(`[Blink] duration=${settingsPanel.getValue('blinkDuration').toFixed(2)}s, progress=0`);
     } else if (isBlinking) {
       blinkProgress += dt;
       if (blinkProgress >= settingsPanel.getValue('blinkDuration')) {
@@ -829,8 +815,6 @@ pixiApp.ticker.add((delta) => {
     
   } else {
     // IDLE/HOVER - pendulum drives position
-    // Show blink duration debug
-    debugText.text = `眨眼时长: ${settingsPanel.getValue('blinkDuration').toFixed(2)}s (isBlinking=${isBlinking})`;
     // Rope return: 0.5s smoothstep animation to default length
     updateRopeReturn(dt);
     const pendulumX = anchorX + Math.sin(physics.pendulumAngle) * physics.ropeLength;
