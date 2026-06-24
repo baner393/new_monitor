@@ -85,9 +85,26 @@ const DEFAULTS = {
   ropeDamping:      15,
   bounceRestitution: 0.6,
   airDamping:       0.98,
-  ropeElasticity:   0.02,
+  ropeElasticity:   5,      // 档位 1-12（旧版为浮点数 0.001-2.0，自动迁移）
   panelMoveStable:  true, // 面板移动稳定：面板打开时右键拖拽使用稳定参数
 };
+
+// ── 绳子弹性系数 12 档位映射（指数分布，每档感知变化幅度接近）──
+// 档位 1 = 最松，12 = 最紧
+export const ROPE_ELASTICITY_STEPS = [
+  0.001,  // 1: 极松
+  0.003,  // 2
+  0.006,  // 3
+  0.01,   // 4
+  0.02,   // 5: 适中 ⬅ 默认
+  0.04,   // 6
+  0.07,   // 7
+  0.12,   // 8
+  0.25,   // 9
+  0.5,    // 10
+  1.0,    // 11
+  2.0,    // 12: 极紧
+];
 
 // Setting definitions with labels, ranges, and hints
 const SETTINGS_DEFS = [
@@ -129,10 +146,10 @@ const SETTINGS_DEFS = [
       },
       {
         key: 'ropeElasticity',
-        label: '绳子弹性',
-        hint: '左键拖拽时绳子的弹性，越小越松/越大越紧',
-        min: 0.001, max: 2.0, step: 0.001,
-        unit: '',
+        label: '绳子弹性档位',
+        hint: '左键拖拽时绳子的弹性，档位 1(极松)~12(极紧)，每档感知变化幅度接近',
+        min: 1, max: 12, step: 1,
+        unit: '档',
       },
     ],
   },
@@ -847,6 +864,21 @@ export class SettingsPanel {
           for (const key of Object.keys(DEFAULTS)) {
             if (saved[key] !== undefined) {
               this._values[key] = saved[key];
+            }
+          }
+          // ── 向后兼容：旧 ropeElasticity 是浮点数(0.001~2.0)，新版是档位(1~12) ──
+          if (saved.ropeElasticity !== undefined) {
+            const v = saved.ropeElasticity;
+            if (v < 1 || v > 12 || !Number.isInteger(v)) {
+              // 旧格式：找最近的档位
+              let nearest = 5;
+              let minDist = Infinity;
+              for (let i = 0; i < ROPE_ELASTICITY_STEPS.length; i++) {
+                const dist = Math.abs(v - ROPE_ELASTICITY_STEPS[i]);
+                if (dist < minDist) { minDist = dist; nearest = i + 1; }
+              }
+              this._values.ropeElasticity = nearest;
+              console.log(`[Settings] Migrated ropeElasticity: ${v} → step ${nearest}`);
             }
           }
           this._updateAllSliders();

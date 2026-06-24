@@ -13,6 +13,7 @@ import { StateMachine } from './state-machine.js';
 import { InputManager } from './input.js';
 import { Panel } from './panel.js';
 import { SettingsPanel } from './settings.js';
+import { ROPE_ELASTICITY_STEPS } from './settings.js';
 import { SkinSelector } from './skin-selector.js';
 
 // ── Font loading gate ─────────────────────────────────────────────────
@@ -256,7 +257,14 @@ function applySettings(settings) {
   if (settings.ropeDamping !== undefined) physics.ropeDamping = settings.ropeDamping;
   if (settings.bounceRestitution !== undefined) physics.ropeBounceRest = settings.bounceRestitution;
   if (settings.airDamping !== undefined) physics.airDamping = settings.airDamping;
-  if (settings.ropeElasticity !== undefined) physics.ropeElasticity = settings.ropeElasticity;
+  if (settings.ropeElasticity !== undefined) {
+    // 新版：档位(1~12) → 浮点值；旧版：直接是浮点值
+    const step = settings.ropeElasticity;
+    physics.ropeElasticity = (step >= 1 && step <= 12 && Number.isInteger(step))
+      ? ROPE_ELASTICITY_STEPS[step - 1]
+      : step;
+    console.log(`[Settings] Rope elasticity: step=${step} → ${physics.ropeElasticity}`);
+  }
   
   // Handle turtleSize - update sprite scale (respect current skin's baseSize)
   if (settings.turtleSize !== undefined) {
