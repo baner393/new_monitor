@@ -87,7 +87,6 @@ const DEFAULTS = {
   airDamping:       0.98,
   ropeElasticity:   5,      // 档位 1-12（旧版为浮点数 0.001-2.0，自动迁移）
   panelMoveStable:  true, // 面板移动稳定：面板打开时右键拖拽使用稳定参数
-  blinkDuration:    0.15, // 眨眼(闭眼)时长（秒），0.05~0.5
 };
 
 // ── 绳子弹性系数 12 档位映射（指数分布，每档感知变化幅度接近）──
@@ -125,13 +124,6 @@ const SETTINGS_DEFS = [
         hint: '乌龟悬挂绳子的默认长度',
         min: 30, max: 400, step: 5,
         unit: 'px',
-      },
-      {
-        key: 'blinkDuration',
-        label: '眨眼时长',
-        hint: '闭眼状态的持续时间，越长闭眼越明显',
-        min: 0.05, max: 0.5, step: 0.05,
-        unit: '秒',
       },
     ],
   },

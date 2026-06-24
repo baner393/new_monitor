@@ -279,11 +279,6 @@ function applySettings(settings) {
     physics.restRopeLength = settings.ropeLength;
     console.log(`[Settings] Rope length: ${settings.ropeLength}`);
   }
-  
-  // Handle blinkDuration - no physics change, game loop reads it live from settingsPanel
-  if (settings.blinkDuration !== undefined) {
-    console.log(`[Settings] Blink duration: ${settings.blinkDuration}s`);
-  }
 }
 
 // Click-outside detection for settings panel
@@ -434,7 +429,7 @@ let _wasOverSprite = false;  // Hover tracking
 let _painCooldown = 0;      // Collision cooldown to prevent spam
 let _showPainTimer = 0;     // Pain texture overlay (seconds remaining)
 let blinkProgress = 0;
-// BLINK_DURATION 现在从 settings 读取（默认 0.15s）
+const BLINK_DURATION = 0.15; // 150ms
 
 function startBounce(fromX, fromY) {
   bounceStartPos = { x: fromX, y: fromY };
@@ -652,7 +647,7 @@ pixiApp.ticker.add((delta) => {
       bodySprite.texture = blinkTexture; // squinting eyes
     } else if (isBlinking) {
       blinkProgress += dt;
-      if (blinkProgress >= settingsPanel.getValue('blinkDuration')) {
+      if (blinkProgress >= BLINK_DURATION) {
         isBlinking = false;
         blinkTimer = 0;
         nextBlinkAt = 3 + Math.random() * 2;
