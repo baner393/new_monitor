@@ -650,7 +650,6 @@ pixiApp.ticker.add((delta) => {
       isBlinking = true;
       blinkProgress = 0;
       bodySprite.texture = blinkTexture; // squinting eyes
-      console.log(`[Blink] duration=${settingsPanel.getValue('blinkDuration').toFixed(2)}s, progress=0`);
     } else if (isBlinking) {
       blinkProgress += dt;
       if (blinkProgress >= settingsPanel.getValue('blinkDuration')) {
