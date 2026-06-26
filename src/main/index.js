@@ -171,6 +171,11 @@ mainWindow.webContents.on('did-finish-load', () => {
   gpuMonitor.start();
 }
 
+// ── Launch on Windows ──────────────────────────────────────────────
+app.whenReady().then(() => {
+  createWindow();
+});
+
 // IPC: renderer can toggle click-through
 ipcMain.on('set-ignore-mouse', (event, ignore) => {
   if (mainWindow && !mainWindow.isDestroyed()) {
@@ -226,12 +231,14 @@ ipcMain.on('show-context-menu', (event) => {
       },
     },
     { type: 'separator' },
-    {
-      label: '自定义模式',
-      click: () => {
-        openCustomMode();
+    ...(__IS_SPONSOR__ ? [
+      {
+        label: '自定义模式',
+        click: () => {
+          openCustomMode();
+        },
       },
-    },
+    ] : []),
     { type: 'separator' },
     {
       label: '退出',
@@ -246,6 +253,10 @@ ipcMain.on('show-context-menu', (event) => {
 
 // ── Custom Mode Window ────────────────────────────────────────
 function openCustomMode() {
+  if (!__IS_SPONSOR__) {
+    console.warn('[Edition] Custom mode is a sponsor-only feature');
+    return;
+  }
   if (customWindow && !customWindow.isDestroyed()) {
     customWindow.focus();
     return;
@@ -282,6 +293,10 @@ function openCustomMode() {
 
 // ── Fullscreen Canvas Window ──────────────────────────────────
 function openCanvasWindow(gridData) {
+  if (!__IS_SPONSOR__) {
+    console.warn('[Edition] Canvas window is a sponsor-only feature');
+    return;
+  }
   if (canvasWindow && !canvasWindow.isDestroyed()) {
     canvasWindow.focus();
     return;
@@ -317,185 +332,191 @@ function openCanvasWindow(gridData) {
   });
 }
 
-// IPC: custom window requests to open fullscreen canvas
-ipcMain.on('open-canvas-window', (event, gridData) => {
-  openCanvasWindow(gridData);
-});
-
-// IPC: fullscreen canvas requests grid data
-ipcMain.handle('canvas-request-grid', () => {
-  return pendingGridData || { size: 64, grid: null };
-});
-
-// IPC: fullscreen canvas saves grid data back
-ipcMain.on('canvas-save-grid', (event, grid) => {
-  const payload = pendingGridData?.expressionId
-    ? { grid, expressionId: pendingGridData.expressionId }
-    : { grid };
-  if (customWindow && !customWindow.isDestroyed()) {
-    customWindow.webContents.send('canvas-grid-updated', payload);
-  }
-});
-// ── Region Marker Window ──────────────────────────────────
-function openRegionMarker(imageData) {
-  if (regionWindow && !regionWindow.isDestroyed()) {
-    regionWindow.focus();
-    return;
-  }
-  pendingRegionImage = imageData;
-  const { screen } = require('electron');
-  const primaryDisplay = screen.getPrimaryDisplay();
-  const { width, height } = primaryDisplay.workAreaSize;
-  regionWindow = new BrowserWindow({
-    width, height, frame: false, backgroundColor: '#0e1018',
-    title: '标记区域 — 全屏模式',
-    webPreferences: {
-      nodeIntegration: false, contextIsolation: true,
-      preload: path.join(app.getAppPath(), 'src', 'custom', 'preload.js'),
-    },
+// ── Sponsor-only: Canvas IPC + Region Marker + Skin Import ─────
+if (__IS_SPONSOR__) {
+  // IPC: custom window requests to open fullscreen canvas
+  ipcMain.on('open-canvas-window', (event, gridData) => {
+    openCanvasWindow(gridData);
   });
-  regionWindow.webContents.setZoomFactor(1);
-  regionWindow.loadFile(path.join(app.getAppPath(), 'src', 'custom', 'canvas-region.html'));
-  regionWindow.on('closed', () => { regionWindow = null; pendingRegionImage = null; });
+
+  // IPC: fullscreen canvas requests grid data
+  ipcMain.handle('canvas-request-grid', () => {
+    return pendingGridData || { size: 64, grid: null };
+  });
+
+  // IPC: fullscreen canvas saves grid data back
+  ipcMain.on('canvas-save-grid', (event, grid) => {
+    const payload = pendingGridData?.expressionId
+      ? { grid, expressionId: pendingGridData.expressionId }
+      : { grid };
+    if (customWindow && !customWindow.isDestroyed()) {
+      customWindow.webContents.send('canvas-grid-updated', payload);
+    }
+  });
+
+  // ── Region Marker Window ──────────────────────────────────
+  function openRegionMarker(imageData) {
+    if (regionWindow && !regionWindow.isDestroyed()) {
+      regionWindow.focus();
+      return;
+    }
+    pendingRegionImage = imageData;
+    const { screen } = require('electron');
+    const primaryDisplay = screen.getPrimaryDisplay();
+    const { width, height } = primaryDisplay.workAreaSize;
+    regionWindow = new BrowserWindow({
+      width, height, frame: false, backgroundColor: '#0e1018',
+      title: '标记区域 — 全屏模式',
+      webPreferences: {
+        nodeIntegration: false, contextIsolation: true,
+        preload: path.join(app.getAppPath(), 'src', 'custom', 'preload.js'),
+      },
+    });
+    regionWindow.webContents.setZoomFactor(1);
+    regionWindow.loadFile(path.join(app.getAppPath(), 'src', 'custom', 'canvas-region.html'));
+    regionWindow.on('closed', () => { regionWindow = null; pendingRegionImage = null; });
+  }
+
+  ipcMain.on('open-region-marker', (event, imageData) => openRegionMarker(imageData));
+  ipcMain.handle('region-request-image', () => pendingRegionImage || { dataUrl: null });
+  ipcMain.on('region-mark-done', (event, regions) => {
+    if (customWindow && !customWindow.isDestroyed()) {
+      customWindow.webContents.send('region-result', regions);
+    }
+  });
+
+  // ── Skin Import IPC ─────────────────────────────────────────────
+  const SKINS_BASE_PATH = path.join(app.getAppPath(), '.vite', 'renderer', 'main_window', 'assets', 'skins');
+  const SKINS_JSON_PATH = path.join(SKINS_BASE_PATH, 'skins.json');
+
+  // Open folder selection dialog
+  ipcMain.handle('skin-import-select-folder', async () => {
+    const result = await dialog.showOpenDialog(customWindow, {
+      properties: ['openDirectory'],
+      title: '选择皮肤文件夹',
+    });
+    if (result.canceled || !result.filePaths.length) return null;
+    return result.filePaths[0];
+  });
+
+  // Read files from a directory
+  ipcMain.handle('skin-import-read-files', async (event, dirPath) => {
+    try {
+      const files = fs.readdirSync(dirPath);
+      return files;
+    } catch (err) {
+      console.error('[SkinImport] Failed to read directory:', err.message);
+      return [];
+    }
+  });
+
+  // Copy skin files to the skins directory
+  ipcMain.handle('skin-import-copy', async (event, { srcDir, skinId, files }) => {
+    try {
+      const destDir = path.join(SKINS_BASE_PATH, skinId);
+      if (!fs.existsSync(destDir)) {
+        fs.mkdirSync(destDir, { recursive: true });
+      }
+      for (const file of files) {
+        const srcPath = path.join(srcDir, file);
+        const destPath = path.join(destDir, file);
+        fs.copyFileSync(srcPath, destPath);
+      }
+      return { success: true, destDir };
+    } catch (err) {
+      console.error('[SkinImport] Failed to copy files:', err.message);
+      return { success: false, error: err.message };
+    }
+  });
+
+  // Read skins.json
+  ipcMain.handle('skin-import-read-json', async () => {
+    try {
+      const data = fs.readFileSync(SKINS_JSON_PATH, 'utf-8');
+      return JSON.parse(data);
+    } catch (err) {
+      console.error('[SkinImport] Failed to read skins.json:', err.message);
+      return { skins: [], defaultSkin: 'turtle' };
+    }
+  });
+
+  // Write skins.json
+  ipcMain.handle('skin-import-write-json', async (event, config) => {
+    try {
+      // Backup first
+      if (fs.existsSync(SKINS_JSON_PATH)) {
+        const backupPath = SKINS_JSON_PATH + '.bak';
+        fs.copyFileSync(SKINS_JSON_PATH, backupPath);
+      }
+      fs.writeFileSync(SKINS_JSON_PATH, JSON.stringify(config, null, 2), 'utf-8');
+      // Notify main window to reload skins
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('skins-reloaded');
+      }
+      return { success: true };
+    } catch (err) {
+      console.error('[SkinImport] Failed to write skins.json:', err.message);
+      return { success: false, error: err.message };
+    }
+  });
+
+  // Delete skin folder
+  ipcMain.handle('skin-import-delete', async (event, skinId) => {
+    try {
+      const skinDir = path.join(SKINS_BASE_PATH, skinId);
+      if (!fs.existsSync(skinDir)) {
+        return { success: true }; // already gone
+      }
+      // Recursively delete the folder
+      fs.rmSync(skinDir, { recursive: true, force: true });
+      console.log('[SkinImport] Deleted skin folder:', skinDir);
+      // Notify main window to reload skins
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('skins-reloaded');
+      }
+      return { success: true };
+    } catch (err) {
+      console.error('[SkinImport] Failed to delete skin folder:', err.message);
+      return { success: false, error: err.message };
+    }
+  });
+
+  // Get current skin info (frames paths) for the expression editor
+  ipcMain.handle('skin-get-current', async () => {
+    try {
+      const data = fs.readFileSync(SKINS_JSON_PATH, 'utf-8');
+      const config = JSON.parse(data);
+      const currentId = config.defaultSkin || 'turtle';
+      const skin = config.skins.find(s => s.id === currentId);
+      if (!skin) return { success: false, error: 'skin not found' };
+      // Resolve frame paths to absolute file:// paths
+      const frames = {};
+      for (const [state, relPath] of Object.entries(skin.frames || {})) {
+        const fullPath = path.join(SKINS_BASE_PATH, relPath.replace('assets/skins/', ''));
+        frames[state] = `file://${fullPath.replace(/\\\\/g, '/')}`;
+      }
+      return { success: true, skinId: currentId, frames, baseSize: skin.baseSize || 24 };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  // Save a PNG file into the skins folder
+  ipcMain.handle('skin-save-png', async (event, { skinId, exprId, pngBase64 }) => {
+    try {
+      const destDir = path.join(SKINS_BASE_PATH, skinId);
+      if (!fs.existsSync(destDir)) {
+        fs.mkdirSync(destDir, { recursive: true });
+      }
+      const buffer = Buffer.from(pngBase64, 'base64');
+      const fileName = exprId + '.png';
+      fs.writeFileSync(path.join(destDir, fileName), buffer);
+      return { success: true, path: `assets/skins/${skinId}/${fileName}` };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
 }
-
-ipcMain.on('open-region-marker', (event, imageData) => openRegionMarker(imageData));
-ipcMain.handle('region-request-image', () => pendingRegionImage || { dataUrl: null });
-ipcMain.on('region-mark-done', (event, regions) => {
-  if (customWindow && !customWindow.isDestroyed()) {
-    customWindow.webContents.send('region-result', regions);
-  }
-});
-
-// ── Skin Import IPC ─────────────────────────────────────────────
-const SKINS_BASE_PATH = path.join(app.getAppPath(), 'public', 'assets', 'skins');
-const SKINS_JSON_PATH = path.join(SKINS_BASE_PATH, 'skins.json');
-
-// Open folder selection dialog
-ipcMain.handle('skin-import-select-folder', async () => {
-  const result = await dialog.showOpenDialog(customWindow, {
-    properties: ['openDirectory'],
-    title: '选择皮肤文件夹',
-  });
-  if (result.canceled || !result.filePaths.length) return null;
-  return result.filePaths[0];
-});
-
-// Read files from a directory
-ipcMain.handle('skin-import-read-files', async (event, dirPath) => {
-  try {
-    const files = fs.readdirSync(dirPath);
-    return files;
-  } catch (err) {
-    console.error('[SkinImport] Failed to read directory:', err.message);
-    return [];
-  }
-});
-
-// Copy skin files to the skins directory
-ipcMain.handle('skin-import-copy', async (event, { srcDir, skinId, files }) => {
-  try {
-    const destDir = path.join(SKINS_BASE_PATH, skinId);
-    if (!fs.existsSync(destDir)) {
-      fs.mkdirSync(destDir, { recursive: true });
-    }
-    for (const file of files) {
-      const srcPath = path.join(srcDir, file);
-      const destPath = path.join(destDir, file);
-      fs.copyFileSync(srcPath, destPath);
-    }
-    return { success: true, destDir };
-  } catch (err) {
-    console.error('[SkinImport] Failed to copy files:', err.message);
-    return { success: false, error: err.message };
-  }
-});
-
-// Read skins.json
-ipcMain.handle('skin-import-read-json', async () => {
-  try {
-    const data = fs.readFileSync(SKINS_JSON_PATH, 'utf-8');
-    return JSON.parse(data);
-  } catch (err) {
-    console.error('[SkinImport] Failed to read skins.json:', err.message);
-    return { skins: [], defaultSkin: 'turtle' };
-  }
-});
-
-// Write skins.json
-ipcMain.handle('skin-import-write-json', async (event, config) => {
-  try {
-    // Backup first
-    if (fs.existsSync(SKINS_JSON_PATH)) {
-      const backupPath = SKINS_JSON_PATH + '.bak';
-      fs.copyFileSync(SKINS_JSON_PATH, backupPath);
-    }
-    fs.writeFileSync(SKINS_JSON_PATH, JSON.stringify(config, null, 2), 'utf-8');
-    // Notify main window to reload skins
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('skins-reloaded');
-    }
-    return { success: true };
-  } catch (err) {
-    console.error('[SkinImport] Failed to write skins.json:', err.message);
-    return { success: false, error: err.message };
-  }
-});
-
-// Delete skin folder
-ipcMain.handle('skin-import-delete', async (event, skinId) => {
-  try {
-    const skinDir = path.join(SKINS_BASE_PATH, skinId);
-    if (!fs.existsSync(skinDir)) {
-      return { success: true }; // already gone
-    }
-    // Recursively delete the folder
-    fs.rmSync(skinDir, { recursive: true, force: true });
-    console.log('[SkinImport] Deleted skin folder:', skinDir);
-    return { success: true };
-  } catch (err) {
-    console.error('[SkinImport] Failed to delete skin folder:', err.message);
-    return { success: false, error: err.message };
-  }
-});
-
-// Get current skin info (frames paths) for the expression editor
-ipcMain.handle('skin-get-current', async () => {
-  try {
-    const data = fs.readFileSync(SKINS_JSON_PATH, 'utf-8');
-    const config = JSON.parse(data);
-    const currentId = config.defaultSkin || 'turtle';
-    const skin = config.skins.find(s => s.id === currentId);
-    if (!skin) return { success: false, error: 'skin not found' };
-    // Resolve frame paths to absolute file:// paths
-    const frames = {};
-    for (const [state, relPath] of Object.entries(skin.frames || {})) {
-      const fullPath = path.join(SKINS_BASE_PATH, relPath.replace('assets/skins/', ''));
-      frames[state] = `file://${fullPath.replace(/\\/g, '/')}`;
-    }
-    return { success: true, skinId: currentId, frames, baseSize: skin.baseSize || 24 };
-  } catch (err) {
-    return { success: false, error: err.message };
-  }
-});
-
-// Save a PNG file into the skins folder
-ipcMain.handle('skin-save-png', async (event, { skinId, exprId, pngBase64 }) => {
-  try {
-    const destDir = path.join(SKINS_BASE_PATH, skinId);
-    if (!fs.existsSync(destDir)) {
-      fs.mkdirSync(destDir, { recursive: true });
-    }
-    const buffer = Buffer.from(pngBase64, 'base64');
-    const fileName = exprId + '.png';
-    fs.writeFileSync(path.join(destDir, fileName), buffer);
-    return { success: true, path: `assets/skins/${skinId}/${fileName}` };
-  } catch (err) {
-    return { success: false, error: err.message };
-  }
-});
-
-app.whenReady().then(createWindow);
 
 // ── Global exception handler ──────────────────────────────────────────
 // Suppress EPIPE errors when stdout/stderr pipe is broken (terminal closed).
@@ -517,17 +538,19 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', () => {
-  if (canvasWindow && !canvasWindow.isDestroyed()) {
-    canvasWindow.destroy();
-    canvasWindow = null;
-  }
-  if (customWindow && !customWindow.isDestroyed()) {
-    customWindow.destroy();
-    customWindow = null;
-  }
-  if (regionWindow && !regionWindow.isDestroyed()) {
-    regionWindow.destroy();
-    regionWindow = null;
+  if (__IS_SPONSOR__) {
+    if (canvasWindow && !canvasWindow.isDestroyed()) {
+      canvasWindow.destroy();
+      canvasWindow = null;
+    }
+    if (customWindow && !customWindow.isDestroyed()) {
+      customWindow.destroy();
+      customWindow = null;
+    }
+    if (regionWindow && !regionWindow.isDestroyed()) {
+      regionWindow.destroy();
+      regionWindow = null;
+    }
   }
 });
 

@@ -88,10 +88,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   /**
    * Subscribe to skins-reloaded event (after skin import in custom mode).
+   * Sponsor-only feature — no-op in free edition.
    * @param {() => void} callback
    * @returns {() => void} unsubscribe function
    */
   onSkinsReloaded: (callback) => {
+    if (!__IS_SPONSOR__) {
+      console.warn('[Edition] Skin import is a sponsor-only feature');
+      return () => {};
+    }
     const listener = () => callback();
     ipcRenderer.on('skins-reloaded', listener);
     return () => ipcRenderer.removeListener('skins-reloaded', listener);

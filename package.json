@@ -7,7 +7,11 @@
   "scripts": {
     "start": "electron-forge start",
     "package": "electron-forge package",
-    "make": "electron-forge make"
+    "package:free": "cross-env VITE_EDITION=free electron-forge package",
+    "package:sponsor": "cross-env VITE_EDITION=sponsor electron-forge package",
+    "make": "cross-env VITE_EDITION=free electron-forge make",
+    "make:free": "cross-env VITE_EDITION=free electron-forge make",
+    "make:sponsor": "cross-env VITE_EDITION=sponsor electron-forge make"
   },
   "author": "Turtle Monitor",
   "license": "MIT",
@@ -15,6 +19,7 @@
     "@electron-forge/cli": "^7.8.0",
     "@electron-forge/maker-squirrel": "^7.8.0",
     "@electron-forge/plugin-vite": "^7.8.0",
+    "cross-env": "^10.1.0",
     "electron": "^35.0.0",
     "vite": "^6.0.0"
   },
