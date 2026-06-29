@@ -13,11 +13,11 @@ const config = {
     buildResources: 'assets',
   },
 
-  files: [
-    '.vite/**/*',
-    '!node_modules/**/*',
-    '!src/**/*',
-  ],
+  // Free: 排除 src/（不含自定义模式代码）
+  // Sponsor: 包含 src/custom/（自定义模式）
+  files: edition === 'sponsor'
+    ? ['.vite/**/*', '!node_modules/**/*', 'src/custom/**/*']
+    : ['.vite/**/*', '!node_modules/**/*', '!src/**/*'],
 
   win: {
     icon: 'assets/icon.png',
