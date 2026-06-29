@@ -1,7 +1,6 @@
 import { app, BrowserWindow, ipcMain, Menu, dialog } from 'electron';
 import path from 'path';
 import fs from 'fs';
-import os from 'os';
 import { GPUMonitor } from './gpu-monitor.js';
 
 let mainWindow;
@@ -16,7 +15,8 @@ let pendingRegionImage = null; // temp storage for region marker image data
 app.commandLine.appendSwitch('enable-transparent-visuals');
 
 // ── Settings persistence ────────────────────────────────────────────
-const SETTINGS_PATH = path.join(os.homedir(), '.hermes', 'profiles', 'coordinator', 'turtle-settings.json');
+// Use Electron's userData directory for reliable cross-platform persistence
+const SETTINGS_PATH = path.join(app.getPath('userData'), 'turtle-settings.json');
 
 const DEFAULT_SETTINGS = {
   turtleSize:       64,
@@ -28,7 +28,9 @@ const DEFAULT_SETTINGS = {
   ropeDamping:      15,
   bounceRestitution: 0.6,
   airDamping:       0.98,
-  ropeElasticity:   0.02,
+  ropeElasticity:   5,      // 档位 1-12（与渲染进程一致）
+  selectedSkin:     'turtle',
+  panelMoveStable:  true,
 };
 
 let currentSettings = { ...DEFAULT_SETTINGS };
@@ -80,6 +82,17 @@ ipcMain.on('settings-set', (event, key, value) => {
 // IPC: settings.save — persist to file
 ipcMain.on('settings-save', () => {
   saveSettings();
+});
+
+// IPC: skin.set — set selected skin and persist
+ipcMain.on('skin-set', (event, skinId) => {
+  currentSettings.selectedSkin = skinId;
+  saveSettings();
+});
+
+// IPC: skin.get — returns the saved skin ID
+ipcMain.handle('skin-get', () => {
+  return currentSettings.selectedSkin || 'turtle';
 });
 
 // IPC: settings.reset — reset to defaults

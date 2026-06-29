@@ -5,6 +5,7 @@ const fs = require('fs');
 // Edition-aware naming: output directories won't clash
 const edition = process.env.VITE_EDITION || 'free';
 const appName = edition === 'sponsor' ? 'turtle-monitor-sponsor' : 'turtle-monitor-free';
+const setupExe = edition === 'sponsor' ? 'TurtleMonitor_Setup.exe' : 'TurtleMonitor_Free_Setup.exe';
 
 module.exports = {
   packagerConfig: {
@@ -17,6 +18,8 @@ module.exports = {
       name: '@electron-forge/maker-squirrel',
       config: {
         name: appName,
+        setupExe: setupExe,
+        setupIcon: path.join(__dirname, 'assets', 'icon.ico'),
       },
     },
   ],

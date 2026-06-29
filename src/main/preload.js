@@ -122,4 +122,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
     /** Reset all settings to defaults. Returns the new settings object. */
     reset: () => ipcRenderer.invoke('settings-reset'),
   },
+
+  /**
+   * Skin persistence API — save/load selected skin across sessions.
+   */
+  skin: {
+    /** Set the active skin and persist to file. */
+    set: (skinId) => {
+      ipcRenderer.send('skin-set', skinId);
+    },
+
+    /** Get the saved skin ID. */
+    get: () => ipcRenderer.invoke('skin-get'),
+  },
 });

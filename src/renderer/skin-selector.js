@@ -100,12 +100,26 @@ export class SkinSelector {
         this.skins = config.skins;
       }
 
-      this.currentSkin = config.defaultSkin || 'turtle';
-
-      // 恢复上次选择
-      const saved = localStorage.getItem('selectedSkin');
-      if (saved && this.skins.some(s => s.id === saved)) {
-        this.currentSkin = saved;
+      // 从主进程持久化存储加载上次选择的皮肤
+      try {
+        if (window.electronAPI?.skin?.get) {
+          const saved = await window.electronAPI.skin.get();
+          if (saved && this.skins.some(s => s.id === saved)) {
+            this.currentSkin = saved;
+            console.log('[SkinSelector] Loaded saved skin from IPC:', saved);
+          } else {
+            this.currentSkin = config.defaultSkin || 'turtle';
+          }
+        } else {
+          // Fallback to localStorage for backward compatibility
+          const saved = localStorage.getItem('selectedSkin');
+          if (saved && this.skins.some(s => s.id === saved)) {
+            this.currentSkin = saved;
+          }
+        }
+      } catch (err) {
+        console.warn('[SkinSelector] Failed to load saved skin:', err.message);
+        this.currentSkin = config.defaultSkin || 'turtle';
       }
 
       this._renderSkinGrid();
@@ -229,6 +243,11 @@ export class SkinSelector {
     this.currentSkin = skinId;
     this._renderSkinGrid();
 
+    // 通过 IPC 持久化到文件（可靠，支持 file:// 协议）
+    if (window.electronAPI?.skin?.set) {
+      window.electronAPI.skin.set(skinId);
+    }
+    // Fallback: 也写 localStorage 做兼容
     localStorage.setItem('selectedSkin', skinId);
 
     const skinData = this.skins.find(s => s.id === skinId);

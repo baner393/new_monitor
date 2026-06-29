@@ -227,19 +227,14 @@ window.electronAPI.onOpenSkinSelector(() => {
 
 /**
  * Load saved settings from main process and apply them.
- * Called at the end of init(), after all modules are ready.
+ * Called once at startup.
  */
 async function loadAndApplySettings() {
   try {
     const saved = await window.electronAPI.settings.get();
     if (saved) {
       console.log('[Settings] Loaded saved settings:', saved);
-      // Use the known-working path: set each value then save,
-      // which triggers settings-changed IPC → applySettings() reliably
-      for (const [key, val] of Object.entries(saved)) {
-        window.electronAPI.settings.set(key, val);
-      }
-      window.electronAPI.settings.save();
+      applySettings(saved);
     }
   } catch (err) {
     console.warn('[Settings] Failed to load settings on startup:', err);
