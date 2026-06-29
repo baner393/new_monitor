@@ -10,7 +10,6 @@ const config = {
 
   directories: {
     output: 'out',
-    buildResources: 'assets',
   },
 
   // Free: 排除 src/（不含自定义模式代码）
@@ -20,7 +19,6 @@ const config = {
     : ['.vite/**/*', '!node_modules/**/*', '!src/**/*', 'assets/*.png', 'assets/*.ico'],
 
   win: {
-    icon: 'assets/icon.png',
     target: [
       {
         target: 'nsis',
