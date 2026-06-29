@@ -1,4 +1,6 @@
 const edition = process.env.VITE_EDITION || 'free';
+const path = require('path');
+const __root = __dirname;
 
 /**
  * @type {import('electron-builder').Configuration}
@@ -19,6 +21,7 @@ const config = {
     : ['.vite/**/*', '!node_modules/**/*', '!src/**/*', 'assets/*.png', 'assets/*.ico'],
 
   win: {
+    icon: path.join(__root, 'icon.ico'),
     target: [
       {
         target: 'nsis',
@@ -34,9 +37,9 @@ const config = {
     oneClick: false,
     allowToChangeInstallationDirectory: true,
     perMachine: false,
-    installerIcon: 'assets/icon.ico',
-    uninstallerIcon: 'assets/uninstaller-icon.ico',
-    installerHeaderIcon: 'assets/icon.ico',
+    installerIcon: path.join(__root, 'assets', 'icon.ico'),
+    uninstallerIcon: path.join(__root, 'assets', 'uninstaller-icon.ico'),
+    installerHeaderIcon: path.join(__root, 'assets', 'icon.ico'),
     createDesktopShortcut: true,
     createStartMenuShortcut: true,
     shortcutName: 'Turtle Monitor',
