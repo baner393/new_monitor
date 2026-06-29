@@ -27,11 +27,14 @@ const config = {
         arch: ['x64'],
       },
     ],
+    sign: false,
+    signAndEditExecutable: false,
+    certificateFile: null,
   },
 
   nsis: {
     oneClick: false,
-    allowToDir: true,
+    allowToChangeInstallationDirectory: true,
     perMachine: false,
     installerIcon: 'assets/icon.ico',
     uninstallerIcon: 'assets/icon.ico',
