@@ -1719,7 +1719,8 @@
       let saved = 0;
       for (const exp of EXPRESSIONS) {
         const data = exprData[exp.id];
-        if (!data || !data.loaded) continue;
+        // 只要数据存在就保存（无论是从文件加载还是手动绘制）
+        if (!data) continue;
 
         // Determine output size
         let outSize = data.size;
