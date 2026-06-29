@@ -125,6 +125,7 @@ function createWindow() {
     fullscreenable: false,
     titleBarStyle: 'hidden',
     title: ' ',
+    icon: path.join(__dirname, '..', '..', 'assets', 'icon.png'),
     // titleBarOverlay 会绘制渐变白线，桌面宠物不需要原生窗口按钮，完全删除
     backgroundThrottling: false,
     webPreferences: {

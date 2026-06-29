@@ -6,6 +6,8 @@ const __EDITION__ = (process.env.VITE_EDITION || 'free');
 export default defineConfig({
   define: {
     __IS_SPONSOR__: __EDITION__ === 'sponsor',
+    MAIN_WINDOW_VITE_DEV_SERVER_URL: JSON.stringify(''),
+    MAIN_WINDOW_VITE_NAME: JSON.stringify('main_window'),
   },
   resolve: {
     browserField: false,

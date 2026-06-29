@@ -16,8 +16,8 @@ const config = {
   // Free: 排除 src/（不含自定义模式代码）
   // Sponsor: 包含 src/custom/（自定义模式）
   files: edition === 'sponsor'
-    ? ['.vite/**/*', '!node_modules/**/*', 'src/custom/**/*']
-    : ['.vite/**/*', '!node_modules/**/*', '!src/**/*'],
+    ? ['.vite/**/*', '!node_modules/**/*', 'src/custom/**/*', 'assets/*.png', 'assets/*.ico']
+    : ['.vite/**/*', '!node_modules/**/*', '!src/**/*', 'assets/*.png', 'assets/*.ico'],
 
   win: {
     icon: 'assets/icon.png',
