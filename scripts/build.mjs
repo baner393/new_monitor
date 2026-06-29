@@ -65,6 +65,10 @@ async function run() {
       fs.cpSync(customDir, customDest, { recursive: true });
       console.log('[Build] Copied custom mode to', customDest);
     }
+    // Also copy to root-level for easy access by main process
+    const customRootDest = path.join(root, '.vite', 'renderer', 'main_window', 'src', 'custom');
+    fs.cpSync(customDir, customRootDest, { recursive: true });
+    console.log('[Build] Copied custom mode to renderer output:', customRootDest);
   }
 
   console.log(`[Build] ✅ ${edition} edition build complete`);

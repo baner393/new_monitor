@@ -32,7 +32,12 @@ try {
   console.log(`[IconHelper] Rebuilding NSIS installer with patched icon...`);
   const configPath = path.join(root, '..', 'electron-builder.config.js');
   const rebuildCmd = `npx electron-builder build --win --x64 --prepackaged "${path.join(root, '..', 'out', 'win-unpacked')}" --config "${configPath}"`;
-  execSync(rebuildCmd, { stdio: 'inherit', timeout: 300000, cwd: path.join(root, '..') });
+  execSync(rebuildCmd, {
+    stdio: 'inherit',
+    timeout: 300000,
+    cwd: path.join(root, '..'),
+    env: { ...process.env, VITE_EDITION: edition },
+  });
   console.log(`[IconHelper] ✅ NSIS installer rebuilt with turtle icon`);
 } catch (err) {
   console.error(`[IconHelper] ❌ Failed: ${err.message}`);

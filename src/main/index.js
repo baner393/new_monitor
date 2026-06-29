@@ -288,7 +288,7 @@ function openCustomMode() {
       nodeIntegration: false,
       contextIsolation: true,
       webSecurity: false,
-      preload: path.join(app.getAppPath(), 'src', 'custom', 'preload.js'),
+      preload: path.join(app.getAppPath(), '.vite', 'build', 'src', 'custom', 'preload.js'),
     },
   });
 
@@ -297,7 +297,7 @@ function openCustomMode() {
   // Load the custom mode HTML directly via file://
   // In dev: app.getAppPath() = project root; in prod: not available (excluded from build)
   const appPath = app.getAppPath();
-  const customHtmlPath = path.join(appPath, 'src', 'custom', 'index.html');
+  const customHtmlPath = path.join(appPath, '.vite', 'build', 'src', 'custom', 'index.html');
   customWindow.loadFile(customHtmlPath);
 
   customWindow.on('closed', () => {
@@ -331,13 +331,13 @@ function openCanvasWindow(gridData) {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
-      preload: path.join(app.getAppPath(), 'src', 'custom', 'preload.js'),
+      preload: path.join(app.getAppPath(), '.vite', 'build', 'src', 'custom', 'preload.js'),
     },
   });
 
   canvasWindow.webContents.setZoomFactor(1);
 
-  const canvasHtmlPath = path.join(app.getAppPath(), 'src', 'custom', 'canvas-fullscreen.html');
+  const canvasHtmlPath = path.join(app.getAppPath(), '.vite', 'build', 'src', 'custom', 'canvas-fullscreen.html');
   canvasWindow.loadFile(canvasHtmlPath);
 
   canvasWindow.on('closed', () => {
@@ -383,11 +383,11 @@ if (__IS_SPONSOR__) {
       title: '标记区域 — 全屏模式',
       webPreferences: {
         nodeIntegration: false, contextIsolation: true,
-        preload: path.join(app.getAppPath(), 'src', 'custom', 'preload.js'),
+        preload: path.join(app.getAppPath(), '.vite', 'build', 'src', 'custom', 'preload.js'),
       },
     });
     regionWindow.webContents.setZoomFactor(1);
-    regionWindow.loadFile(path.join(app.getAppPath(), 'src', 'custom', 'canvas-region.html'));
+    regionWindow.loadFile(path.join(app.getAppPath(), '.vite', 'build', 'src', 'custom', 'canvas-region.html'));
     regionWindow.on('closed', () => { regionWindow = null; pendingRegionImage = null; });
   }
 

@@ -15,9 +15,9 @@ const config = {
   },
 
   // Free: 排除 src/（不含自定义模式代码）
-  // Sponsor: 包含 src/custom/（自定义模式）
+  // Sponsor: 包含 .vite/build/src/custom/（由 build.mjs 复制）
   files: edition === 'sponsor'
-    ? ['.vite/**/*', '!node_modules/**/*', 'src/custom/**/*', 'assets/*.png', 'assets/*.ico']
+    ? ['.vite/**/*', '!node_modules/**/*', 'assets/*.png', 'assets/*.ico']
     : ['.vite/**/*', '!node_modules/**/*', '!src/**/*', 'assets/*.png', 'assets/*.ico'],
 
   win: {
