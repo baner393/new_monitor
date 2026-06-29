@@ -6,6 +6,11 @@
   "main": ".vite/build/index.js",
   "scripts": {
     "start": "electron-forge start",
+    "build": "node scripts/build.mjs",
+    "build:free": "cross-env VITE_EDITION=free node scripts/build.mjs",
+    "build:sponsor": "cross-env VITE_EDITION=sponsor node scripts/build.mjs",
+    "dist:free": "cross-env VITE_EDITION=free node scripts/build.mjs && electron-builder build --win --x64 --config electron-builder.config.js",
+    "dist:sponsor": "cross-env VITE_EDITION=sponsor node scripts/build.mjs && electron-builder build --win --x64 --config electron-builder.config.js",
     "package": "electron-forge package",
     "package:free": "cross-env VITE_EDITION=free electron-forge package",
     "package:sponsor": "cross-env VITE_EDITION=sponsor electron-forge package",
@@ -21,6 +26,7 @@
     "@electron-forge/plugin-vite": "^7.8.0",
     "cross-env": "^10.1.0",
     "electron": "^35.0.0",
+    "electron-builder": "^25.1.8",
     "vite": "^6.0.0"
   },
   "dependencies": {

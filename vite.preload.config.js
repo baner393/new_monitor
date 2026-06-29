@@ -8,7 +8,14 @@ export default defineConfig({
     __IS_SPONSOR__: __EDITION__ === 'sponsor',
   },
   build: {
+    outDir: '.vite/build',
+    ssr: 'src/main/preload.js',
+    emptyOutDir: false,
     rollupOptions: {
+      output: {
+        format: 'cjs',
+        entryFileNames: 'preload.js',
+      },
       external: ['electron'],
     },
   },

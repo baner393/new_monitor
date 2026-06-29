@@ -12,7 +12,14 @@ export default defineConfig({
     mainFields: ['module', 'jsnext:main', 'jsnext'],
   },
   build: {
+    outDir: '.vite/build',
+    ssr: 'src/main/index.js',
+    emptyOutDir: true,
     rollupOptions: {
+      output: {
+        format: 'cjs',
+        entryFileNames: 'index.js',
+      },
       external: ['electron', 'child_process', 'path', 'fs', 'os'],
     },
   },
