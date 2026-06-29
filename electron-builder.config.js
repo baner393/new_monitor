@@ -37,7 +37,7 @@ const config = {
     allowToChangeInstallationDirectory: true,
     perMachine: false,
     installerIcon: 'assets/icon.ico',
-    uninstallerIcon: 'assets/icon.ico',
+    uninstallerIcon: 'assets/uninstaller-icon.ico',
     installerHeaderIcon: 'assets/icon.ico',
     createDesktopShortcut: true,
     createStartMenuShortcut: true,
