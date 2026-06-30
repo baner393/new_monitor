@@ -400,39 +400,8 @@ if (__IS_SPONSOR__) {
   });
 
   // ── Skin Import IPC ─────────────────────────────────────────────
-  // Primary skin path: writable userData folder
-  const SKINS_BASE_PATH = path.join(app.getPath('userData'), 'skins');
+  const SKINS_BASE_PATH = path.join(app.getAppPath(), '.vite', 'renderer', 'main_window', 'assets', 'skins');
   const SKINS_JSON_PATH = path.join(SKINS_BASE_PATH, 'skins.json');
-  // Read-only built-in skin source (in ASAR in production)
-  const SKINS_APP_PATH = path.join(app.getAppPath(), '.vite', 'renderer', 'main_window', 'assets', 'skins');
-
-  // On init, ensure writable folder exists and copy built-in skins from ASAR
-  (function ensureWritableSkins() {
-    try {
-      // 写路径
-      if (!fs.existsSync(SKINS_BASE_PATH)) {
-        fs.mkdirSync(SKINS_BASE_PATH, { recursive: true });
-        console.log('[Skin] Created writable skins folder:', SKINS_BASE_PATH);
-      }
-      // 从 ASAR 复制内置皮肤（仅首次）
-      if (fs.existsSync(SKINS_APP_PATH)) {
-        const items = fs.readdirSync(SKINS_APP_PATH, { withFileTypes: true });
-        for (const item of items) {
-          const dest = path.join(SKINS_BASE_PATH, item.name);
-          if (fs.existsSync(dest)) continue; // 已有不覆盖
-          if (item.isDirectory()) {
-            fs.cpSync(path.join(SKINS_APP_PATH, item.name), dest, { recursive: true });
-            console.log('[Skin] Copied built-in skin:', item.name);
-          } else if (item.name === 'skins.json') {
-            fs.copyFileSync(path.join(SKINS_APP_PATH, 'skins.json'), dest);
-            console.log('[Skin] Copied built-in skins.json');
-          }
-        }
-      }
-    } catch (err) {
-      console.warn('[Skin] Failed to ensure writable skins:', err.message);
-    }
-  })();
 
   // Open folder selection dialog
   ipcMain.handle('skin-import-select-folder', async () => {
@@ -561,36 +530,7 @@ if (__IS_SPONSOR__) {
       return { success: false, error: err.message };
     }
   });
-} // ← end __IS_SPONSOR__ block
-
-// ── Shared skin config reader (all editions, reads from userData) ─
-// Resolves all skin frame paths to absolute file:// URLs for the renderer.
-ipcMain.handle('skin-get-config', async () => {
-  try {
-    const cfgPath = path.join(app.getPath('userData'), 'skins', 'skins.json');
-    if (!fs.existsSync(cfgPath)) return { skins: [], defaultSkin: 'turtle' };
-    const raw = fs.readFileSync(cfgPath, 'utf-8');
-    const cfg = JSON.parse(raw);
-    if (!Array.isArray(cfg.skins)) cfg.skins = [];
-    for (const skin of cfg.skins) {
-      if (!skin.frames) continue;
-      const resolved = {};
-      for (const [state, relPath] of Object.entries(skin.frames)) {
-        const absPath = path.join(app.getPath('userData'), 'skins', relPath.replace(/^assets\/skins\//, ''));
-        resolved[state] = `file://${absPath.replace(/\\/g, '/')}`;
-      }
-      skin.frames = resolved;
-      if (skin.preview) {
-        const absPrev = path.join(app.getPath('userData'), 'skins', skin.preview.replace(/^assets\/skins\//, ''));
-        skin.preview = `file://${absPrev.replace(/\\/g, '/')}`;
-      }
-    }
-    return cfg;
-  } catch (err) {
-    console.warn('[Skin] Failed to read skin config:', err.message);
-    return { skins: [], defaultSkin: 'turtle' };
-  }
-});
+}
 
 // ── Global exception handler ──────────────────────────────────────────
 // Suppress EPIPE errors when stdout/stderr pipe is broken (terminal closed).

@@ -87,95 +87,65 @@ export class SkinSelector {
 
   /**
    * 加载皮肤配置
-   * 优先 IPC（读取 userData 可写路径，返回 file:// 绝对路径）
-   * 回退 fetch（读取 ASAR 内置皮肤）
-   * @param {string} [configPath] - 可选的回退 URL
+   * @param {string} configPath - skins.json 的路径
    */
   async loadSkins(configPath) {
     this._configPath = configPath;
-
-    // Try IPC first (reads from writable userData, frame paths are file://)
-    if (window.electronAPI?.getSkinConfig) {
-      try {
-        const config = await window.electronAPI.getSkinConfig();
-        if (config && Array.isArray(config.skins) && config.skins.length > 0) {
-          this._applyConfig(config);
-          return;
-        }
-      } catch (err) {
-        console.warn('[SkinSelector] IPC load failed, falling back:', err.message);
-      }
-    }
-
-    // Fallback: fetch from URL (ASAR, built-in skins only)
-    if (!configPath) {
-      console.error('[SkinSelector] No configPath and IPC unavailable');
-      this._applyConfig({ skins: [], defaultSkin: 'turtle' });
-      return;
-    }
     try {
-      const response = await fetch(configPath + '?t=' + Date.now());
+      const response = await fetch(configPath + '?t=' + Date.now()); // cache bust
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const config = await response.json();
-      this._applyConfig(config);
+
+      if (Array.isArray(config.skins)) {
+        this.skins = config.skins;
+      }
+
+      // 从主进程持久化存储加载上次选择的皮肤
+      try {
+        if (window.electronAPI?.skin?.get) {
+          const saved = await window.electronAPI.skin.get();
+          if (saved && this.skins.some(s => s.id === saved)) {
+            this.currentSkin = saved;
+            console.log('[SkinSelector] Loaded saved skin from IPC:', saved);
+          } else {
+            this.currentSkin = config.defaultSkin || 'turtle';
+          }
+        } else {
+          // Fallback to localStorage for backward compatibility
+          const saved = localStorage.getItem('selectedSkin');
+          if (saved && this.skins.some(s => s.id === saved)) {
+            this.currentSkin = saved;
+          }
+        }
+      } catch (err) {
+        console.warn('[SkinSelector] Failed to load saved skin:', err.message);
+        this.currentSkin = config.defaultSkin || 'turtle';
+      }
+
+      this._renderSkinGrid();
+
+      // 触发皮肤切换回调，确保纹理实际加载
+      const activeSkin = this.skins.find(s => s.id === this.currentSkin);
+      if (activeSkin && this.onSkinChange) {
+        this.onSkinChange(this.currentSkin, {
+          ...activeSkin,
+          sprites: activeSkin.frames,
+        });
+      }
+
+      console.log('[SkinSelector] Skins loaded:', this.skins.map(s => s.id));
     } catch (err) {
       console.error('[SkinSelector] Failed to load skins:', err.message);
     }
   }
 
   /**
-   * Apply parsed skin config to state, trigger texture loading.
-   * @param {{ skins: Array, defaultSkin: string }} config
-   */
-  async _applyConfig(config) {
-    if (Array.isArray(config.skins)) {
-      this.skins = config.skins;
-    }
-
-    // 等待 IPC 获取上次选择的皮肤
-    await this._resolveSavedSkin(config);
-
-    this._renderSkinGrid();
-
-    // 触发皮肤切换回调，纹理从 file:// 路径加载
-    const activeSkin = this.skins.find(s => s.id === this.currentSkin);
-    if (activeSkin && this.onSkinChange) {
-      this.onSkinChange(this.currentSkin, {
-        ...activeSkin,
-        sprites: activeSkin.frames,
-      });
-    }
-
-    console.log('[SkinSelector] Skins loaded:', this.skins.map(s => s.id));
-  }
-
-  async _resolveSavedSkin(config) {
-    try {
-      if (window.electronAPI?.skin?.get) {
-        const saved = await window.electronAPI.skin.get();
-        if (saved && this.skins.some(s => s.id === saved)) {
-          this.currentSkin = saved;
-          console.log('[SkinSelector] Loaded saved skin from IPC:', saved);
-          return;
-        }
-      }
-      // Fallback
-      const saved = localStorage.getItem('selectedSkin');
-      if (saved && this.skins.some(s => s.id === saved)) {
-        this.currentSkin = saved;
-        return;
-      }
-    } catch (err) {
-      console.warn('[SkinSelector] Failed to load saved skin:', err.message);
-    }
-    this.currentSkin = config.defaultSkin || 'turtle';
-  }
-
-  /**
    * 重新加载皮肤配置（导入新皮肤后调用）
    */
   async reload() {
-    await this.loadSkins(this._configPath);
+    if (this._configPath) {
+      await this.loadSkins(this._configPath);
+    }
   }
 
   _renderSkinGrid() {
