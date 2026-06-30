@@ -409,24 +409,26 @@ if (__IS_SPONSOR__) {
   // On init, ensure writable folder exists and copy built-in skins from ASAR
   (function ensureWritableSkins() {
     try {
-      // 写路径
       if (!fs.existsSync(SKINS_BASE_PATH)) {
         fs.mkdirSync(SKINS_BASE_PATH, { recursive: true });
         console.log('[Skin] Created writable skins folder:', SKINS_BASE_PATH);
       }
-      // 从 ASAR 复制内置皮肤（仅首次）
+      // Copy built-in skins from ASAR — always overwrite skins.json (canonical built-in list)
       if (fs.existsSync(SKINS_APP_PATH)) {
+        // Always copy skins.json (authoritative built-in list)
+        const appJson = path.join(SKINS_APP_PATH, 'skins.json');
+        if (fs.existsSync(appJson)) {
+          fs.copyFileSync(appJson, path.join(SKINS_BASE_PATH, 'skins.json'));
+          console.log('[Skin] Synced built-in skins.json');
+        }
+        // Copy skin directories only if not already present
         const items = fs.readdirSync(SKINS_APP_PATH, { withFileTypes: true });
         for (const item of items) {
+          if (!item.isDirectory()) continue;
           const dest = path.join(SKINS_BASE_PATH, item.name);
-          if (fs.existsSync(dest)) continue; // 已有不覆盖
-          if (item.isDirectory()) {
-            fs.cpSync(path.join(SKINS_APP_PATH, item.name), dest, { recursive: true });
-            console.log('[Skin] Copied built-in skin:', item.name);
-          } else if (item.name === 'skins.json') {
-            fs.copyFileSync(path.join(SKINS_APP_PATH, 'skins.json'), dest);
-            console.log('[Skin] Copied built-in skins.json');
-          }
+          if (fs.existsSync(dest)) continue;
+          fs.cpSync(path.join(SKINS_APP_PATH, item.name), dest, { recursive: true });
+          console.log('[Skin] Copied built-in skin:', item.name);
         }
       }
     } catch (err) {
