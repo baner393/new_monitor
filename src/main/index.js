@@ -400,8 +400,12 @@ if (__IS_SPONSOR__) {
   });
 
   // ── Skin Import IPC ─────────────────────────────────────────────
+  // Read path: ASAR (built-in skins, read-only)
   const SKINS_BASE_PATH = path.join(app.getAppPath(), '.vite', 'renderer', 'main_window', 'assets', 'skins');
   const SKINS_JSON_PATH = path.join(SKINS_BASE_PATH, 'skins.json');
+  // Write path: userData (for custom skins, writable)
+  const SKINS_USER_PATH = path.join(app.getPath('userData'), 'skins');
+  const SKINS_USER_JSON = path.join(SKINS_USER_PATH, 'skins.json');
 
   // Open folder selection dialog
   ipcMain.handle('skin-import-select-folder', async () => {
@@ -424,10 +428,10 @@ if (__IS_SPONSOR__) {
     }
   });
 
-  // Copy skin files to the skins directory
+  // Copy skin files to the skins directory (write to userData)
   ipcMain.handle('skin-import-copy', async (event, { srcDir, skinId, files }) => {
     try {
-      const destDir = path.join(SKINS_BASE_PATH, skinId);
+      const destDir = path.join(SKINS_USER_PATH, skinId);
       if (!fs.existsSync(destDir)) {
         fs.mkdirSync(destDir, { recursive: true });
       }
@@ -443,26 +447,60 @@ if (__IS_SPONSOR__) {
     }
   });
 
-  // Read skins.json
+  // Read skins.json (try userData first, fall back to ASAR)
   ipcMain.handle('skin-import-read-json', async () => {
+    try {
+      // Try userData (includes both built-in + custom skins)
+      if (fs.existsSync(SKINS_USER_JSON)) {
+        const data = fs.readFileSync(SKINS_USER_JSON, 'utf-8');
+        return JSON.parse(data);
+      }
+    } catch (err) {
+      console.warn('[SkinImport] Failed to read userData skins.json:', err.message);
+    }
+    // Fall back to ASAR (built-in skins only)
     try {
       const data = fs.readFileSync(SKINS_JSON_PATH, 'utf-8');
       return JSON.parse(data);
     } catch (err) {
-      console.error('[SkinImport] Failed to read skins.json:', err.message);
+      console.error('[SkinImport] Failed to read ASAR skins.json:', err.message);
       return { skins: [], defaultSkin: 'turtle' };
     }
   });
 
-  // Write skins.json
+  // Write skins.json (to userData)
   ipcMain.handle('skin-import-write-json', async (event, config) => {
     try {
-      // Backup first
-      if (fs.existsSync(SKINS_JSON_PATH)) {
-        const backupPath = SKINS_JSON_PATH + '.bak';
-        fs.copyFileSync(SKINS_JSON_PATH, backupPath);
+      // Ensure userData skins folder exists
+      if (!fs.existsSync(SKINS_USER_PATH)) {
+        fs.mkdirSync(SKINS_USER_PATH, { recursive: true });
       }
-      fs.writeFileSync(SKINS_JSON_PATH, JSON.stringify(config, null, 2), 'utf-8');
+      // Write merged config: keep built-ins from ASAR + add user's custom skins
+      let merged;
+      try {
+        // Read current ASAR config to get authoritative built-in list
+        const asarRaw = fs.readFileSync(SKINS_JSON_PATH, 'utf-8');
+        const asarCfg = JSON.parse(asarRaw);
+        const builtInIds = new Set((asarCfg.skins || []).map(s => s.id));
+        // Keep built-in skins from ASAR, add user's custom skins
+        merged = {
+          ...config,
+          skins: [
+            ...(asarCfg.skins || []),
+            ...(config.skins || []).filter(s => !builtInIds.has(s.id)),
+          ],
+          defaultSkin: config.defaultSkin || asarCfg.defaultSkin || 'turtle',
+        };
+      } catch (_) {
+        // If ASAR read fails, just use the provided config
+        merged = config;
+      }
+      // Backup
+      if (fs.existsSync(SKINS_USER_JSON)) {
+        const backupPath = SKINS_USER_JSON + '.bak';
+        fs.copyFileSync(SKINS_USER_JSON, backupPath);
+      }
+      fs.writeFileSync(SKINS_USER_JSON, JSON.stringify(merged, null, 2), 'utf-8');
       // Notify main window to reload skins
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('skins-reloaded');
@@ -474,10 +512,10 @@ if (__IS_SPONSOR__) {
     }
   });
 
-  // Delete skin folder
+  // Delete skin folder (from userData only, built-in skins are protected)
   ipcMain.handle('skin-import-delete', async (event, skinId) => {
     try {
-      const skinDir = path.join(SKINS_BASE_PATH, skinId);
+      const skinDir = path.join(SKINS_USER_PATH, skinId);
       if (!fs.existsSync(skinDir)) {
         return { success: true }; // already gone
       }
@@ -515,10 +553,10 @@ if (__IS_SPONSOR__) {
     }
   });
 
-  // Save a PNG file into the skins folder
+  // Save a PNG file into the skins folder (write to userData)
   ipcMain.handle('skin-save-png', async (event, { skinId, exprId, pngBase64 }) => {
     try {
-      const destDir = path.join(SKINS_BASE_PATH, skinId);
+      const destDir = path.join(SKINS_USER_PATH, skinId);
       if (!fs.existsSync(destDir)) {
         fs.mkdirSync(destDir, { recursive: true });
       }
