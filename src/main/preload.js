@@ -135,4 +135,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     /** Get the saved skin ID. */
     get: () => ipcRenderer.invoke('skin-get'),
   },
+
+  /**
+   * Get merged skin list (built-in ASAR + custom userData).
+   * Returns { skins: [...], defaultSkin: '...' }
+   */
+  skinListGet: () => ipcRenderer.invoke('skin-list-get'),
 });

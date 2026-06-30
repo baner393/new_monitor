@@ -92,9 +92,18 @@ export class SkinSelector {
   async loadSkins(configPath) {
     this._configPath = configPath;
     try {
-      const response = await fetch(configPath + '?t=' + Date.now()); // cache bust
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const config = await response.json();
+      let config;
+
+      // Prefer IPC (dynamic merge of built-in + custom skins)
+      if (window.electronAPI?.skinListGet) {
+        config = await window.electronAPI.skinListGet();
+        console.log('[SkinSelector] Loaded via IPC:', config.skins.map(s => s.id));
+      } else {
+        // Fallback: fetch from static config file (dev without full backend)
+        const response = await fetch(configPath + '?t=' + Date.now()); // cache bust
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        config = await response.json();
+      }
 
       if (Array.isArray(config.skins)) {
         this.skins = config.skins;

@@ -102,6 +102,77 @@ ipcMain.handle('settings-reset', () => {
   return { ...currentSettings };
 });
 
+// ── Skin path constants (outside __IS_SPONSOR__ — needed by skin-list-get) ──
+// Read path: ASAR (built-in skins, read-only)
+const SKINS_BASE_PATH = path.join(app.getAppPath(), '.vite', 'renderer', 'main_window', 'assets', 'skins');
+const SKINS_JSON_PATH = path.join(SKINS_BASE_PATH, 'skins.json');
+// Write path: userData (for custom skins, writable)
+const SKINS_USER_PATH = path.join(app.getPath('userData'), 'skins');
+const SKINS_USER_JSON = path.join(SKINS_USER_PATH, 'skins.json');
+
+// IPC: skin-list-get — return merged skin list (built-in ASAR + custom userData)
+// Custom skin frame/preview paths are transformed to absolute file:// paths
+// since they live in userData, not in the app's ASAR bundle.
+ipcMain.handle('skin-list-get', async () => {
+  // Helper: resolve a custom skin's relative path (e.g. "assets/skins/myskin/idle.png")
+  // to an absolute file:// path in userData.
+  function resolveSkinPath(skinId, relPath) {
+    if (!relPath) return relPath;
+    // Extract filename from relative path (e.g. "assets/skins/myskin/idle.png" → "idle.png")
+    const fileName = path.basename(relPath);
+    const fullPath = path.join(SKINS_USER_PATH, skinId, fileName);
+    return 'file://' + fullPath.replace(/\\/g, '/');
+  }
+  // Transform a custom skin entry's frame and preview paths to absolute file://
+  function transformCustomSkin(skin) {
+    const out = { ...skin };
+    if (out.frames) {
+      const newFrames = {};
+      for (const [key, val] of Object.entries(out.frames)) {
+        newFrames[key] = resolveSkinPath(skin.id, val);
+      }
+      out.frames = newFrames;
+    }
+    if (out.preview) {
+      out.preview = resolveSkinPath(skin.id, out.preview);
+    }
+    return out;
+  }
+
+  // 1. Read built-in skins from ASAR
+  let builtInSkins = [];
+  let defaultSkin = 'turtle';
+  try {
+    const asarRaw = fs.readFileSync(SKINS_JSON_PATH, 'utf-8');
+    const asarCfg = JSON.parse(asarRaw);
+    builtInSkins = asarCfg.skins || [];
+    defaultSkin = asarCfg.defaultSkin || 'turtle';
+  } catch (err) {
+    console.error('[Skins] Failed to read built-in skins:', err.message);
+  }
+
+  // 2. Read custom skins from userData
+  let customSkins = [];
+  try {
+    if (fs.existsSync(SKINS_USER_JSON)) {
+      const userRaw = fs.readFileSync(SKINS_USER_JSON, 'utf-8');
+      const userCfg = JSON.parse(userRaw);
+      customSkins = (userCfg.customSkins || userCfg.skins || []).filter(s => {
+        // Only custom skins (not built-in duplicates)
+        return !builtInSkins.some(b => b.id === s.id);
+      }).map(transformCustomSkin);
+    }
+  } catch (err) {
+    console.warn('[Skins] Failed to read custom skins:', err.message);
+  }
+
+  // 3. Merge (built-in first, then custom — custom wins by not duplicating ids)
+  return {
+    skins: [...builtInSkins, ...customSkins],
+    defaultSkin,
+  };
+});
+
 function createWindow() {
   // Get screen dimensions for full-screen transparent window
   const { screen } = require('electron');
@@ -400,12 +471,8 @@ if (__IS_SPONSOR__) {
   });
 
   // ── Skin Import IPC ─────────────────────────────────────────────
-  // Read path: ASAR (built-in skins, read-only)
-  const SKINS_BASE_PATH = path.join(app.getAppPath(), '.vite', 'renderer', 'main_window', 'assets', 'skins');
-  const SKINS_JSON_PATH = path.join(SKINS_BASE_PATH, 'skins.json');
-  // Write path: userData (for custom skins, writable)
-  const SKINS_USER_PATH = path.join(app.getPath('userData'), 'skins');
-  const SKINS_USER_JSON = path.join(SKINS_USER_PATH, 'skins.json');
+  // SKINS_BASE_PATH, SKINS_JSON_PATH, SKINS_USER_PATH, SKINS_USER_JSON
+  // are defined above (outside __IS_SPONSOR__) for skin-list-get.
 
   // Open folder selection dialog
   ipcMain.handle('skin-import-select-folder', async () => {
@@ -447,60 +514,68 @@ if (__IS_SPONSOR__) {
     }
   });
 
-  // Read skins.json (try userData first, fall back to ASAR)
+  // Read skins.json (merge ASAR built-in + userData custom)
   ipcMain.handle('skin-import-read-json', async () => {
+    // 1. Read built-in from ASAR
+    let builtInSkins = [];
+    let defaultSkin = 'turtle';
     try {
-      // Try userData (includes both built-in + custom skins)
+      const asarRaw = fs.readFileSync(SKINS_JSON_PATH, 'utf-8');
+      const asarCfg = JSON.parse(asarRaw);
+      builtInSkins = asarCfg.skins || [];
+      defaultSkin = asarCfg.defaultSkin || 'turtle';
+    } catch (err) {
+      console.warn('[SkinImport] Failed to read ASAR skins:', err.message);
+    }
+    // 2. Read custom from userData
+    let customSkins = [];
+    try {
       if (fs.existsSync(SKINS_USER_JSON)) {
-        const data = fs.readFileSync(SKINS_USER_JSON, 'utf-8');
-        return JSON.parse(data);
+        const userRaw = fs.readFileSync(SKINS_USER_JSON, 'utf-8');
+        const userCfg = JSON.parse(userRaw);
+        customSkins = userCfg.customSkins || [];
+        if (userCfg.defaultSkin) defaultSkin = userCfg.defaultSkin;
       }
     } catch (err) {
-      console.warn('[SkinImport] Failed to read userData skins.json:', err.message);
+      console.warn('[SkinImport] Failed to read userData skins:', err.message);
     }
-    // Fall back to ASAR (built-in skins only)
-    try {
-      const data = fs.readFileSync(SKINS_JSON_PATH, 'utf-8');
-      return JSON.parse(data);
-    } catch (err) {
-      console.error('[SkinImport] Failed to read ASAR skins.json:', err.message);
-      return { skins: [], defaultSkin: 'turtle' };
-    }
+    // 3. Merge (built-in + non-duplicate custom)
+    const builtInIds = new Set(builtInSkins.map(s => s.id));
+    return {
+      skins: [...builtInSkins, ...customSkins.filter(s => !builtInIds.has(s.id))],
+      defaultSkin,
+    };
   });
 
-  // Write skins.json (to userData)
+  // Write skins.json (to userData — only custom skins, no ASAR duplication)
   ipcMain.handle('skin-import-write-json', async (event, config) => {
     try {
       // Ensure userData skins folder exists
       if (!fs.existsSync(SKINS_USER_PATH)) {
         fs.mkdirSync(SKINS_USER_PATH, { recursive: true });
       }
-      // Write merged config: keep built-ins from ASAR + add user's custom skins
-      let merged;
+      // Extract only custom skins (filter out built-in duplicates)
+      let customSkins = [];
       try {
-        // Read current ASAR config to get authoritative built-in list
         const asarRaw = fs.readFileSync(SKINS_JSON_PATH, 'utf-8');
         const asarCfg = JSON.parse(asarRaw);
         const builtInIds = new Set((asarCfg.skins || []).map(s => s.id));
-        // Keep built-in skins from ASAR, add user's custom skins
-        merged = {
-          ...config,
-          skins: [
-            ...(asarCfg.skins || []),
-            ...(config.skins || []).filter(s => !builtInIds.has(s.id)),
-          ],
-          defaultSkin: config.defaultSkin || asarCfg.defaultSkin || 'turtle',
-        };
+        customSkins = (config.skins || config.customSkins || []).filter(s => !builtInIds.has(s.id));
       } catch (_) {
-        // If ASAR read fails, just use the provided config
-        merged = config;
+        // If ASAR read fails, store all as custom
+        customSkins = config.skins || config.customSkins || [];
       }
-      // Backup
+      // Backup existing
       if (fs.existsSync(SKINS_USER_JSON)) {
         const backupPath = SKINS_USER_JSON + '.bak';
         fs.copyFileSync(SKINS_USER_JSON, backupPath);
       }
-      fs.writeFileSync(SKINS_USER_JSON, JSON.stringify(merged, null, 2), 'utf-8');
+      // Write only custom skins
+      const toWrite = {
+        customSkins,
+        defaultSkin: config.defaultSkin || 'turtle',
+      };
+      fs.writeFileSync(SKINS_USER_JSON, JSON.stringify(toWrite, null, 2), 'utf-8');
       // Notify main window to reload skins
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('skins-reloaded');
@@ -534,23 +609,57 @@ if (__IS_SPONSOR__) {
   });
 
   // Get current skin info (frames paths) for the expression editor
+  // Merges ASAR built-in + userData custom skins for correct lookup
   ipcMain.handle('skin-get-current', async () => {
+    let config = { skins: [], defaultSkin: 'turtle' };
+    let currentId = 'turtle';
+    let skin = null;
+
+    // 1. Read built-in from ASAR
     try {
       const data = fs.readFileSync(SKINS_JSON_PATH, 'utf-8');
-      const config = JSON.parse(data);
-      const currentId = config.defaultSkin || 'turtle';
-      const skin = config.skins.find(s => s.id === currentId);
-      if (!skin) return { success: false, error: 'skin not found' };
-      // Resolve frame paths to absolute file:// paths
-      const frames = {};
-      for (const [state, relPath] of Object.entries(skin.frames || {})) {
-        const fullPath = path.join(SKINS_BASE_PATH, relPath.replace('assets/skins/', ''));
-        frames[state] = `file://${fullPath.replace(/\\\\/g, '/')}`;
-      }
-      return { success: true, skinId: currentId, frames, baseSize: skin.baseSize || 24 };
+      config = JSON.parse(data);
+      currentId = config.defaultSkin || 'turtle';
+      skin = config.skins.find(s => s.id === currentId);
     } catch (err) {
-      return { success: false, error: err.message };
+      console.warn('[Skins] Failed to read ASAR skins:', err.message);
     }
+
+    // 2. Check custom skins from userData (may override defaultSkin)
+    try {
+      if (fs.existsSync(SKINS_USER_JSON)) {
+        const userData = JSON.parse(fs.readFileSync(SKINS_USER_JSON, 'utf-8'));
+        if (userData.defaultSkin) currentId = userData.defaultSkin;
+        const userSkins = userData.customSkins || [];
+        const userSkin = userSkins.find(s => s.id === currentId);
+        if (userSkin) skin = userSkin;
+      }
+    } catch (err) {
+      console.warn('[Skins] Failed to read userData skins:', err.message);
+    }
+
+    if (!skin) {
+      return { success: false, error: 'skin not found: ' + currentId };
+    }
+
+    // Determine if this is a built-in or custom skin for path resolution
+    const isBuiltIn = config.skins?.some(s => s.id === currentId);
+
+    // Resolve frame paths to absolute file:// paths
+    const frames = {};
+    for (const [state, relPath] of Object.entries(skin.frames || {})) {
+      let fullPath;
+      if (isBuiltIn) {
+        // Built-in: resolve relative to ASAR skins base
+        fullPath = path.join(SKINS_BASE_PATH, relPath.replace('assets/skins/', ''));
+      } else {
+        // Custom: resolve relative to userData skins folder
+        const fileName = path.basename(relPath);
+        fullPath = path.join(SKINS_USER_PATH, currentId, fileName);
+      }
+      frames[state] = 'file://' + fullPath.replace(/\\/g, '/');
+    }
+    return { success: true, skinId: currentId, frames, baseSize: skin.baseSize || 24 };
   });
 
   // Save a PNG file into the skins folder (write to userData)

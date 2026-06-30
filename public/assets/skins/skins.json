@@ -25,7 +25,7 @@
       "author": "Unknown",
       "description": "",
       "frames": {
-        "blink_closed": "assets/skins/cat/blink.png",
+        "blink_closed": "assets/skins/cat/blink_closed.png",
         "happy": "assets/skins/cat/happy.png",
         "hover": "assets/skins/cat/hover.png",
         "idle": "assets/skins/cat/idle.png",
@@ -35,42 +35,6 @@
       "preview": "assets/skins/cat/idle.png",
       "scale": 0.9375,
       "baseSize": 64
-    },
-    {
-      "id": "ca",
-      "name": "ca",
-      "displayName": "ca",
-      "author": "Unknown",
-      "description": "",
-      "frames": {
-        "blink_closed": "assets/skins/ca/blink.png",
-        "happy": "assets/skins/ca/happy.png",
-        "hover": "assets/skins/ca/hover.png",
-        "idle": "assets/skins/ca/idle.png",
-        "pain": "assets/skins/ca/pain.png",
-        "pull": "assets/skins/ca/pull.png"
-      },
-      "preview": "assets/skins/ca/idle.png",
-      "scale": 0.9375,
-      "baseSize": 64
-    },
-    {
-      "id": "turtl",
-      "name": "turtl",
-      "displayName": "turtl",
-      "author": "Unknown",
-      "description": "",
-      "frames": {
-        "blink_closed": "assets/skins/turtl/blink.png",
-        "happy": "assets/skins/turtl/happy.png",
-        "hover": "assets/skins/turtl/hover.png",
-        "idle": "assets/skins/turtl/idle.png",
-        "pain": "assets/skins/turtl/pain.png",
-        "pull": "assets/skins/turtl/pull.png"
-      },
-      "preview": "assets/skins/turtl/idle.png",
-      "scale": 1.3333333333333333,
-      "baseSize": 48
     }
   ],
   "defaultSkin": "turtle"

@@ -10,8 +10,8 @@
     "build:free": "cross-env VITE_EDITION=free node scripts/build.mjs",
     "build:sponsor": "cross-env VITE_EDITION=sponsor node scripts/build.mjs",
     "dist:free": "cross-env VITE_EDITION=free node scripts/build.mjs && cross-env VITE_EDITION=free electron-builder build --win --x64 --config electron-builder.config.js && node scripts/set-icon-helper.js free",
-        "dist:sponsor": "cross-env VITE_EDITION=sponsor node scripts/build.mjs && cross-env VITE_EDITION=sponsor electron-builder build --win --x64 --config electron-builder.config.js && node scripts/set-icon-helper.js sponsor",
-        "package": "electron-forge package",
+    "dist:sponsor": "cross-env VITE_EDITION=sponsor node scripts/build.mjs && cross-env VITE_EDITION=sponsor electron-builder build --win --x64 --config electron-builder.config.js && node scripts/set-icon-helper.js sponsor",
+    "package": "electron-forge package",
     "package:free": "cross-env VITE_EDITION=free electron-forge package",
     "package:sponsor": "cross-env VITE_EDITION=sponsor electron-forge package",
     "make": "cross-env VITE_EDITION=free electron-forge make",
@@ -30,6 +30,7 @@
     "vite": "^6.0.0"
   },
   "dependencies": {
+    "@rollup/rollup-linux-x64-gnu": "^4.62.2",
     "pixi.js": "^7.3.0"
   }
 }

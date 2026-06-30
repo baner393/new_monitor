@@ -2044,8 +2044,7 @@
     if (!config.skins) config.skins = [];
 
     // Protect built-in skins from being overwritten
-    const BUILT_IN_SKINS = ['turtle', 'cat'];
-    if (BUILT_IN_SKINS.includes(skinId)) {
+    if (['turtle', 'cat'].includes(skinId)) {
       skinImportStatus.textContent = `⚠ "${skinId}" 是内置皮肤，不能覆盖。请使用其他 ID`;
       skinImportBtn.disabled = false;
       return;
@@ -2059,7 +2058,9 @@
         await new Promise((resolve, reject) => {
           img.onload = resolve;
           img.onerror = reject;
-          img.src = `file://${skinImportData.folderPath}/${skinImportData.files.idle}`;
+          // Fix: convert Windows backslashes to forward slashes for valid file:// URL
+          const normPath = skinImportData.folderPath.replace(/\\/g, '/');
+          img.src = 'file:///' + normPath + '/' + skinImportData.files.idle;
         });
         detectedBaseSize = Math.max(img.width, img.height);
       } catch (e) {
