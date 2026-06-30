@@ -103,6 +103,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 
   /**
+   * Read full skin config (skins.json) from writable userData path.
+   * Frame paths are resolved to absolute file:// URLs for texture loading.
+   * @returns {Promise<{skins: Array, defaultSkin: string}>}
+   */
+  getSkinConfig: () => ipcRenderer.invoke('skin-get-config'),
+
+  /**
    * Settings API — persistent configuration via IPC.
    */
   settings: {
