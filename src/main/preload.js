@@ -103,6 +103,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 
   /**
+   * Read the full skins config (skins.json) from the writable userData path.
+   * Includes built-in + custom skins.
+   * @returns {Promise<{skins: Array, defaultSkin: string}>}
+   */
+  getSkinConfig: () => ipcRenderer.invoke('skin-get-config'),
+
+  /**
    * Settings API — persistent configuration via IPC.
    */
   settings: {
