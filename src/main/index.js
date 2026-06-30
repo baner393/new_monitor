@@ -400,45 +400,8 @@ if (__IS_SPONSOR__) {
   });
 
   // ── Skin Import IPC ─────────────────────────────────────────────
-  // Writable skin path: use userData so custom skins can be saved
-  const SKINS_USER_PATH = path.join(app.getPath('userData'), 'skins');
-  // Read-only built-in skin path (in ASAR in production)
-  const SKINS_APP_PATH = path.join(app.getAppPath(), '.vite', 'renderer', 'main_window', 'assets', 'skins');
-  // Primary path: writable userData skin folder
-  const SKINS_BASE_PATH = SKINS_USER_PATH;
+  const SKINS_BASE_PATH = path.join(app.getAppPath(), '.vite', 'renderer', 'main_window', 'assets', 'skins');
   const SKINS_JSON_PATH = path.join(SKINS_BASE_PATH, 'skins.json');
-
-  // On init, ensure writable folder exists and copy built-in skins from ASAR
-  (function ensureWritableSkins() {
-    try {
-      if (!fs.existsSync(SKINS_BASE_PATH)) {
-        fs.mkdirSync(SKINS_BASE_PATH, { recursive: true });
-        console.log('[Skin] Created writable skins folder:', SKINS_BASE_PATH);
-      }
-      // Copy built-in skins from app path (ASAR) if not already present
-      if (fs.existsSync(SKINS_APP_PATH)) {
-        const builtInDirs = fs.readdirSync(SKINS_APP_PATH, { withFileTypes: true });
-        for (const dirent of builtInDirs) {
-          if (dirent.isDirectory()) {
-            const dest = path.join(SKINS_BASE_PATH, dirent.name);
-            if (!fs.existsSync(dest)) {
-              const src = path.join(SKINS_APP_PATH, dirent.name);
-              fs.cpSync(src, dest, { recursive: true });
-              console.log('[Skin] Copied built-in skin to writable folder:', dirent.name);
-            }
-          } else if (dirent.name === 'skins.json') {
-            const dest = path.join(SKINS_BASE_PATH, 'skins.json');
-            if (!fs.existsSync(dest)) {
-              fs.copyFileSync(path.join(SKINS_APP_PATH, 'skins.json'), dest);
-              console.log('[Skin] Copied built-in skins.json to writable folder');
-            }
-          }
-        }
-      }
-    } catch (err) {
-      console.warn('[Skin] Failed to ensure writable skins folder:', err.message);
-    }
-  })();
 
   // Open folder selection dialog
   ipcMain.handle('skin-import-select-folder', async () => {
