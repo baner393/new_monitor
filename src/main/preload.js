@@ -78,6 +78,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener('dpi-changed', listener);
   },
 
+  /** Re-evaluate transparent-window hit testing after a secondary window closes. */
+  onResyncMousePassthrough: (callback) => {
+    const listener = () => callback();
+    ipcRenderer.on('resync-mouse-passthrough', listener);
+    return () => ipcRenderer.removeListener('resync-mouse-passthrough', listener);
+  },
+
   /**
    * Subscribe to settings-changed event from main process.
    * @param {(settings: object) => void} callback

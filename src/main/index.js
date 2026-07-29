@@ -2,6 +2,7 @@ import { app, BrowserWindow, ipcMain, Menu, dialog, screen } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import { GPUMonitor } from './gpu-monitor.js';
+import { applyMousePassthrough, resolveCustomResourcePath } from './window-lifecycle.js';
 
 let mainWindow;
 let customWindow;
@@ -10,6 +11,24 @@ let regionWindow;
 let gpuMonitor;
 let pendingGridData = null;
 let pendingRegionImage = null; // temp storage for region marker image data
+
+function setMainWindowMousePassthrough(ignore) {
+  applyMousePassthrough(mainWindow, ignore);
+}
+
+function resolveCustomResource(fileName) {
+  return resolveCustomResourcePath({
+    appPath: app.getAppPath(),
+    fileName,
+    isDevelopment: Boolean(MAIN_WINDOW_VITE_DEV_SERVER_URL),
+  });
+}
+
+function reloadMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  setMainWindowMousePassthrough(true);
+  mainWindow.webContents.reload();
+}
 
 // ── Chromium flags (must be before app.whenReady) ────────────
 app.commandLine.appendSwitch('enable-transparent-visuals');
@@ -213,12 +232,10 @@ function createWindow() {
   // Remove menu bar to prevent Alt-triggered black text
   mainWindow.setMenu(null);
 
-  // A reloading renderer cannot maintain the transparent-window hit-test
-  // state. Capture events until the new renderer synchronizes its cursor.
+  // Keep the desktop usable while the transparent renderer reloads. The new
+  // renderer opts back into mouse events only over an interactive surface.
   mainWindow.webContents.on('did-start-loading', () => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.setIgnoreMouseEvents(false);
-    }
+    setMainWindowMousePassthrough(true);
   });
 
   mainWindow.webContents.on('did-finish-load', () => {
@@ -274,9 +291,7 @@ app.whenReady().then(() => {
 
 // IPC: renderer can toggle click-through
 ipcMain.on('set-ignore-mouse', (event, ignore) => {
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.setIgnoreMouseEvents(ignore, { forward: true });
-  }
+  setMainWindowMousePassthrough(ignore);
 });
 
 ipcMain.handle('cursor-position-get', (event) => {
@@ -313,10 +328,7 @@ ipcMain.on('show-context-menu', (event) => {
     {
       label: '刷新',
       click: () => {
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.setIgnoreMouseEvents(false);
-          mainWindow.webContents.reload();
-        }
+        reloadMainWindow();
       },
     },
     {
@@ -363,9 +375,20 @@ function openCustomMode() {
     return;
   }
   if (customWindow && !customWindow.isDestroyed()) {
+    customWindow.show();
     customWindow.focus();
     return;
   }
+
+  // The pet window is a full-work-area always-on-top surface. Make it
+  // click-through before showing the editor so the editor cannot be trapped
+  // underneath transparent pixels.
+  setMainWindowMousePassthrough(true);
+
+  const customPreloadPath = resolveCustomResource('preload.js');
+  const customHtmlPath = resolveCustomResource('index.html');
+  console.log(`[CustomMode] Opening HTML: ${customHtmlPath}`);
+  console.log(`[CustomMode] Using preload: ${customPreloadPath}`);
 
   customWindow = new BrowserWindow({
     width: 900,
@@ -373,26 +396,45 @@ function openCustomMode() {
     minWidth: 700,
     minHeight: 500,
     frame: false,
+    show: false,
+    alwaysOnTop: true,
     backgroundColor: '#1a1a2e',
     title: 'Turtle Monitor — 自定义模式',
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
       webSecurity: false,
-      preload: path.join(app.getAppPath(), '.vite', 'build', 'src', 'custom', 'preload.js'),
+      preload: customPreloadPath,
     },
   });
 
   customWindow.webContents.setZoomFactor(1);
 
-  // Load the custom mode HTML directly via file://
-  // In dev: app.getAppPath() = project root; in prod: not available (excluded from build)
-  const appPath = app.getAppPath();
-  const customHtmlPath = path.join(appPath, '.vite', 'build', 'src', 'custom', 'index.html');
-  customWindow.loadFile(customHtmlPath);
+  customWindow.once('ready-to-show', () => {
+    if (customWindow && !customWindow.isDestroyed()) {
+      console.log('[CustomMode] Ready and visible');
+      customWindow.show();
+      customWindow.focus();
+    }
+  });
+
+  customWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription) => {
+    console.error(`[CustomMode] Failed to load (${errorCode}): ${errorDescription}`);
+  });
+  customWindow.webContents.on('preload-error', (_event, preloadPath, error) => {
+    console.error(`[CustomMode] Preload failed: ${preloadPath}`, error);
+  });
+
+  customWindow.loadFile(customHtmlPath).catch((error) => {
+    console.error(`[CustomMode] Unable to open ${customHtmlPath}:`, error);
+    if (customWindow && !customWindow.isDestroyed()) customWindow.destroy();
+  });
 
   customWindow.on('closed', () => {
     customWindow = null;
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('resync-mouse-passthrough');
+    }
   });
 }
 
@@ -416,18 +458,19 @@ function openCanvasWindow(gridData) {
     width: width,
     height: height,
     frame: false,
+    alwaysOnTop: true,
     backgroundColor: '#0e1018',
     title: '像素画布 — 全屏模式',
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
-      preload: path.join(app.getAppPath(), '.vite', 'build', 'src', 'custom', 'preload.js'),
+      preload: resolveCustomResource('preload.js'),
     },
   });
 
   canvasWindow.webContents.setZoomFactor(1);
 
-  const canvasHtmlPath = path.join(app.getAppPath(), '.vite', 'build', 'src', 'custom', 'canvas-fullscreen.html');
+  const canvasHtmlPath = resolveCustomResource('canvas-fullscreen.html');
   canvasWindow.loadFile(canvasHtmlPath);
 
   canvasWindow.on('closed', () => {
@@ -469,14 +512,15 @@ if (__IS_SPONSOR__) {
     const { width, height } = primaryDisplay.workAreaSize;
     regionWindow = new BrowserWindow({
       width, height, frame: false, backgroundColor: '#0e1018',
+      alwaysOnTop: true,
       title: '标记区域 — 全屏模式',
       webPreferences: {
         nodeIntegration: false, contextIsolation: true,
-        preload: path.join(app.getAppPath(), '.vite', 'build', 'src', 'custom', 'preload.js'),
+        preload: resolveCustomResource('preload.js'),
       },
     });
     regionWindow.webContents.setZoomFactor(1);
-    regionWindow.loadFile(path.join(app.getAppPath(), '.vite', 'build', 'src', 'custom', 'canvas-region.html'));
+    regionWindow.loadFile(resolveCustomResource('canvas-region.html'));
     regionWindow.on('closed', () => { regionWindow = null; pendingRegionImage = null; });
   }
 

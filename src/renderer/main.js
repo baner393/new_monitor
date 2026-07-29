@@ -240,6 +240,10 @@ skinSelector.onSkinChange = async (skinId, skinConfig) => {
     const skinScale = savedTurtleSize / baseSize;
     bodySprite.scale.set(skinScale);
     console.log(`[Skin] Scale: ${skinScale.toFixed(2)} (baseSize: ${baseSize}, turtleSize: ${savedTurtleSize})`);
+
+    // Texture dimensions can become valid after the first startup frames. Re-run
+    // the transparent-window hit test now that the visible bounds are final.
+    synchronizeMousePassthroughFromSystem(true);
   }
 };
 
@@ -371,17 +375,25 @@ function synchronizeMousePassthrough(x, y, force = false) {
     y >= bounds.y &&
     y <= bounds.y + bounds.height;
 
-  if (over && (!isOverSprite || force)) {
-    isOverSprite = true;
-    window.electronAPI.setIgnoreMouseEvents(false);
-    sprite.emit('pointerover');
-  } else if (!over && (isOverSprite || force)) {
-    isOverSprite = false;
-    window.electronAPI.setIgnoreMouseEvents(true);
-    sprite.emit('pointerout');
+  const changed = over !== isOverSprite;
+  if (changed || force) {
+    isOverSprite = over;
+    window.electronAPI.setIgnoreMouseEvents(!over);
+    if (changed) sprite.emit(over ? 'pointerover' : 'pointerout');
   }
   if (force) {
     console.log(`[Input] Cursor synchronized after load: ${over ? 'interactive' : 'passthrough'}`);
+  }
+}
+
+async function synchronizeMousePassthroughFromSystem(force = false) {
+  try {
+    const cursor = await window.electronAPI.getCursorPosition();
+    if (cursor) synchronizeMousePassthrough(cursor.x, cursor.y, force);
+    else window.electronAPI.setIgnoreMouseEvents(true);
+  } catch (error) {
+    console.warn('[Input] Failed to synchronize cursor after load:', error);
+    window.electronAPI.setIgnoreMouseEvents(true);
   }
 }
 
@@ -389,19 +401,18 @@ document.addEventListener('mousemove', (event) => {
   synchronizeMousePassthrough(event.clientX, event.clientY);
 });
 
-// A reload can happen while the cursor is stationary over the turtle, so no
-// mousemove event will arrive to restore clickability. Query the real cursor
-// after two frames, when Pixi has laid out the sprite, and synchronize once.
-requestAnimationFrame(() => requestAnimationFrame(async () => {
-  try {
-    const cursor = await window.electronAPI.getCursorPosition();
-    if (cursor) synchronizeMousePassthrough(cursor.x, cursor.y, true);
-    else window.electronAPI.setIgnoreMouseEvents(true);
-  } catch (error) {
-    console.warn('[Input] Failed to synchronize cursor after load:', error);
-    window.electronAPI.setIgnoreMouseEvents(true);
-  }
-}));
+// A reload can happen while the cursor is stationary over the turtle. Texture
+// dimensions may also settle after the first frame, so retry the real-cursor
+// hit test on a short bounded schedule instead of relying on one early frame.
+for (const delay of [0, 100, 300, 750, 1500, 3000, 5500]) {
+  setTimeout(() => synchronizeMousePassthroughFromSystem(true), delay);
+}
+
+if (window.electronAPI?.onResyncMousePassthrough) {
+  window.electronAPI.onResyncMousePassthrough(() => {
+    synchronizeMousePassthroughFromSystem(true);
+  });
+}
 
 // ── GPU data receiver ──────────────────────────────────────────────────
 window.electronAPI.onGPUData((data) => {
