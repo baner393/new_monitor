@@ -1,12 +1,18 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { parseNvidiaOutput, parseWindowsGpuOutput } from '../src/main/gpu-monitor.js';
+import {
+  parseNvidiaOutput,
+  parseNvidiaOutputAll,
+  parseWindowsGpuOutput,
+  selectPrimaryGpu,
+} from '../src/main/gpu-monitor.js';
 
 test('parses nvidia-smi metrics', () => {
   assert.deepEqual(
-    parseNvidiaOutput('NVIDIA GeForce RTX 4070, 55, 20, 10, 1024, 12282, 75.5\r\n'),
+    parseNvidiaOutput('NVIDIA GeForce RTX 4070, 555.42, 55, 20, 10, 1024, 12282, 75.5\r\n'),
     {
       name: 'NVIDIA GeForce RTX 4070',
+      driverVersion: '555.42',
       temperature: 55,
       gpuUtilization: 20,
       memoryUtilization: 10,
@@ -16,6 +22,16 @@ test('parses nvidia-smi metrics', () => {
       provider: 'nvidia-smi',
     },
   );
+});
+
+test('parses and selects from multiple NVIDIA adapters', () => {
+  const adapters = parseNvidiaOutputAll([
+    'NVIDIA RTX A2000, 555.42, 42, 10, 5, 512, 6144, 30',
+    'NVIDIA GeForce RTX 4090, 555.42, 62, 75, 20, 4096, 24564, 320',
+  ].join('\n'));
+  assert.equal(adapters.length, 2);
+  assert.equal(selectPrimaryGpu(adapters).name, 'NVIDIA GeForce RTX 4090');
+  assert.equal(adapters[1].memoryTotalBytes, 24564 * 1024 * 1024);
 });
 
 test('keeps unavailable metrics as null instead of fake zeroes', () => {

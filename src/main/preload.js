@@ -12,22 +12,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
   /** Return the current cursor position relative to this window. */
   getCursorPosition: () => ipcRenderer.invoke('cursor-position-get'),
 
-  /**
-   * Subscribe to GPU data pushed from the main process.
-   * @param {(data: object) => void} callback
-   * @returns {() => void} unsubscribe function
-   */
-  onGPUData: (callback) => {
+  /** Subscribe to unified CPU / memory / disk / network / GPU snapshots. */
+  onSystemData: (callback) => {
     const listener = (_event, data) => callback(data);
-    ipcRenderer.on('gpu-data', listener);
-    return () => ipcRenderer.removeListener('gpu-data', listener);
+    ipcRenderer.on('system-data', listener);
+    return () => ipcRenderer.removeListener('system-data', listener);
   },
 
-  /**
-   * Manually request a fresh GPU data poll.
-   */
-  requestGPUData: () => {
-    ipcRenderer.send('request-gpu-data');
+  /** Manually request a fresh system snapshot. */
+  requestSystemData: () => {
+    ipcRenderer.send('request-system-data');
   },
 
   /**

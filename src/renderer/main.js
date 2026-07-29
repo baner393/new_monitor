@@ -146,7 +146,7 @@ Object.defineProperty(sprite, 'texture', {
   get() { return bodySprite.texture; }
 });
 
-// ── GPU Panel ──────────────────────────────────────────────────────────
+// ── System Monitor Panel ───────────────────────────────────────────────
 const panel = new Panel();
 pixiApp.stage.addChild(panel.container);
 
@@ -401,12 +401,12 @@ document.addEventListener('mousemove', (event) => {
   synchronizeMousePassthrough(event.clientX, event.clientY);
 });
 
-// A reload can happen while the cursor is stationary over the turtle. Texture
-// dimensions may also settle after the first frame, so retry the real-cursor
-// hit test on a short bounded schedule instead of relying on one early frame.
-for (const delay of [0, 100, 300, 750, 1500, 3000, 5500]) {
-  setTimeout(() => synchronizeMousePassthroughFromSystem(true), delay);
-}
+// A reload can happen while the cursor is stationary over the turtle. Wait for
+// two rendered frames, then hand hit testing back to this renderer exactly
+// once. Skin texture completion performs a second deterministic sync above.
+requestAnimationFrame(() => requestAnimationFrame(() => {
+  synchronizeMousePassthroughFromSystem(true);
+}));
 
 if (window.electronAPI?.onResyncMousePassthrough) {
   window.electronAPI.onResyncMousePassthrough(() => {
@@ -414,12 +414,12 @@ if (window.electronAPI?.onResyncMousePassthrough) {
   });
 }
 
-// ── GPU data receiver ──────────────────────────────────────────────────
-window.electronAPI.onGPUData((data) => {
-  console.log('[GPU Data]', data);
+// ── System snapshot receiver ───────────────────────────────────────────
+window.electronAPI.onSystemData((data) => {
+  console.log('[System Data]', data);
   panel.update(data);
 });
-window.electronAPI.requestGPUData();
+window.electronAPI.requestSystemData();
 
 // ── Click-outside detection for closing the panel ──────────────────────
 document.addEventListener('mousedown', (e) => {
@@ -429,7 +429,7 @@ document.addEventListener('mousedown', (e) => {
   // Safety: ensure window captures mouse events so click-outside works
   window.electronAPI.setIgnoreMouseEvents(false);
 
-  // Don't close GPU panel if settings panel is open
+  // Don't close the system panel if settings panel is open
   if (settingsPanel.isOpen || settingsPanel.isAnimating) return;
 
   // Check if click is inside the panel bounds
@@ -482,7 +482,7 @@ function updateRopeReturn(dt) {
   }
 }
 
-// ── Panel drag state (step 6: right-drag while GPU panel is open) ────
+// ── Panel drag state (step 6: right-drag while system panel is open) ─
 let _panelDragActive = false;     // panel was open when right-drag started
 let _savedRopeStiffness = 500;    // restore after panel drag
 let _savedAirDamping = 0.98;      // restore after panel drag

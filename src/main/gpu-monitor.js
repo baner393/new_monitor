@@ -1,170 +1,122 @@
 import { execFile } from 'child_process';
-import path from 'path';
 
-const NVIDIA_ARGS = [
-  '--query-gpu=name,temperature.gpu,utilization.gpu,utilization.memory,memory.used,memory.total,power.draw',
+export const NVIDIA_ARGS = [
+  '--query-gpu=name,driver_version,temperature.gpu,utilization.gpu,utilization.memory,memory.used,memory.total,power.draw',
   '--format=csv,noheader,nounits',
 ];
-
-const WINDOWS_GPU_SCRIPT = String.raw`
-$ErrorActionPreference = 'Stop'
-[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-$allAdapters = @(Get-CimInstance Win32_VideoController)
-$physical = @($allAdapters | Where-Object {
-  $_.PNPDeviceID -like 'PCI*' -and
-  $_.Name -notmatch 'Virtual|Remote|Oray|Todesk|IDD|Basic Display'
-})
-$gpu = @($physical + $allAdapters) | Where-Object { $_ } | Select-Object -First 1
-if (-not $gpu) { throw 'No display adapter found' }
-$util = $null
-$memoryUsed = $null
-try {
-  $samples = @(Get-Counter @(
-    '\GPU Engine(*engtype_3D)\Utilization Percentage',
-    '\GPU Adapter Memory(*)\Dedicated Usage'
-  ) -ErrorAction Stop).CounterSamples
-  $engineSamples = @($samples | Where-Object { $_.Path -like '*GPU Engine*' })
-  if ($engineSamples.Count -gt 0) {
-    $util = [Math]::Min(100, [Math]::Max(0, ($engineSamples | Measure-Object CookedValue -Sum).Sum))
-  }
-  $memorySamples = @($samples | Where-Object { $_.Path -like '*GPU Adapter Memory*' })
-  if ($memorySamples.Count -gt 0) {
-    $memoryUsed = ($memorySamples | Measure-Object CookedValue -Sum).Sum / 1MB
-  }
-} catch {}
-$memoryTotal = if ($gpu.AdapterRAM) { [double]$gpu.AdapterRAM / 1MB } else { $null }
-[pscustomobject]@{
-  name = [string]$gpu.Name
-  driverVersion = [string]$gpu.DriverVersion
-  gpuUtilization = $util
-  memoryUsed = $memoryUsed
-  memoryTotal = $memoryTotal
-  memoryUtilization = $(if ($memoryUsed -ne $null -and $memoryTotal) { [Math]::Min(100, 100 * $memoryUsed / $memoryTotal) } else { $null })
-  temperature = $null
-  powerDraw = $null
-  provider = 'windows'
-} | ConvertTo-Json -Compress
-`;
 
 function toNumber(value) {
   const number = Number.parseFloat(value);
   return Number.isFinite(number) ? number : null;
 }
 
-export function parseNvidiaOutput(stdout) {
-  const firstLine = String(stdout || '').trim().split(/\r?\n/)[0];
-  const parts = firstLine.split(/,\s*/);
-  if (parts.length < 7) throw new Error('Unexpected nvidia-smi output');
+function mibToBytes(value) {
+  const number = toNumber(value);
+  return number === null ? null : number * 1024 * 1024;
+}
+
+function parseNvidiaLine(line) {
+  const parts = line.split(/,\s*/);
+  if (parts.length < 8) throw new Error('Unexpected nvidia-smi output');
+
+  const memoryUsedBytes = mibToBytes(parts[5]);
+  const memoryTotalBytes = mibToBytes(parts[6]);
+  const reportedMemoryUsage = toNumber(parts[4]);
+
   return {
     name: parts[0],
-    temperature: toNumber(parts[1]),
-    gpuUtilization: toNumber(parts[2]),
-    memoryUtilization: toNumber(parts[3]),
-    memoryUsed: toNumber(parts[4]),
-    memoryTotal: toNumber(parts[5]),
-    powerDraw: toNumber(parts[6]),
+    driverVersion: parts[1] || null,
+    temperatureC: toNumber(parts[2]),
+    usage: toNumber(parts[3]),
+    memoryUsage: reportedMemoryUsage ?? (
+      memoryUsedBytes !== null && memoryTotalBytes > 0
+        ? 100 * memoryUsedBytes / memoryTotalBytes
+        : null
+    ),
+    memoryUsedBytes,
+    memoryTotalBytes,
+    powerWatts: toNumber(parts[7]),
     provider: 'nvidia-smi',
   };
 }
 
+/** Parse every adapter returned by nvidia-smi, including mixed/multi-GPU PCs. */
+export function parseNvidiaOutputAll(stdout) {
+  const lines = String(stdout || '')
+    .trim()
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  if (lines.length === 0) throw new Error('Empty nvidia-smi output');
+  return lines.map(parseNvidiaLine);
+}
+
+/**
+ * Backward-compatible single-adapter parser used by earlier tests and callers.
+ * Legacy aliases remain so old renderer payloads do not silently break.
+ */
+export function parseNvidiaOutput(stdout) {
+  const gpu = parseNvidiaOutputAll(stdout)[0];
+  return {
+    name: gpu.name,
+    driverVersion: gpu.driverVersion,
+    temperature: gpu.temperatureC,
+    gpuUtilization: gpu.usage,
+    memoryUtilization: gpu.memoryUsage,
+    memoryUsed: gpu.memoryUsedBytes === null ? null : gpu.memoryUsedBytes / 1024 / 1024,
+    memoryTotal: gpu.memoryTotalBytes === null ? null : gpu.memoryTotalBytes / 1024 / 1024,
+    powerDraw: gpu.powerWatts,
+    provider: gpu.provider,
+  };
+}
+
+/** Normalize a generic Windows adapter payload while accepting the old schema. */
 export function parseWindowsGpuOutput(stdout) {
-  const data = JSON.parse(String(stdout || '').replace(/^\uFEFF/, '').trim());
+  const raw = String(stdout || '').replace(/^\uFEFF/, '').trim();
+  const data = JSON.parse(raw);
   if (!data?.name) throw new Error('Windows GPU query returned no adapter');
-  for (const key of ['temperature', 'gpuUtilization', 'memoryUtilization', 'memoryUsed', 'memoryTotal', 'powerDraw']) {
-    data[key] = toNumber(data[key]);
+
+  for (const key of [
+    'temperature', 'temperatureC', 'gpuUtilization', 'usage',
+    'memoryUtilization', 'memoryUsage', 'memoryUsed', 'memoryTotal',
+    'memoryUsedBytes', 'memoryTotalBytes', 'powerDraw', 'powerWatts',
+  ]) {
+    if (key in data) data[key] = toNumber(data[key]);
   }
   return data;
 }
 
-export class GPUMonitor {
-  constructor(win, intervalMs = 2000) {
-    this.win = win;
-    this.intervalMs = intervalMs;
-    this.timer = null;
-    this.provider = 'auto';
-    this.inFlight = false;
-    this.lastData = null;
-    this.reportedProvider = null;
-  }
+export function selectPrimaryGpu(adapters) {
+  const candidates = Array.isArray(adapters) ? adapters.filter(Boolean) : [];
+  if (candidates.length === 0) return null;
 
-  start() {
-    this._poll();
-    this.timer = setInterval(() => this._poll(), this.intervalMs);
-  }
+  return [...candidates].sort((a, b) => {
+    const aHardware = /virtual|remote|basic display|idd/i.test(a.name || '') ? 0 : 1;
+    const bHardware = /virtual|remote|basic display|idd/i.test(b.name || '') ? 0 : 1;
+    if (aHardware !== bHardware) return bHardware - aHardware;
+    return (b.usage ?? -1) - (a.usage ?? -1);
+  })[0];
+}
 
-  stop() {
-    if (this.timer) clearInterval(this.timer);
-    this.timer = null;
-  }
-
-  requestSnapshot() {
-    if (this.lastData) this._send(this.lastData);
-    this._poll();
-  }
-
-  _poll() {
-    if (this.inFlight) return;
-    this.inFlight = true;
-    if (this.provider === 'windows') this._pollWindows();
-    else this._pollNvidia();
-  }
-
-  _pollNvidia() {
-    execFile('nvidia-smi.exe', NVIDIA_ARGS, { timeout: 5000, windowsHide: true }, (error, stdout) => {
-      if (error) {
-        this.provider = 'windows';
-        this._pollWindows();
-        return;
-      }
-      try {
-        this.provider = 'nvidia';
-        this._publish(parseNvidiaOutput(stdout));
-      } catch (parseError) {
-        this.provider = 'windows';
-        this._pollWindows(parseError);
-      }
-    });
-  }
-
-  _pollWindows(nvidiaError = null) {
-    const powershell = process.platform === 'win32'
-      ? path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
-      : 'powershell';
-    execFile(
-      powershell,
-      ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', WINDOWS_GPU_SCRIPT],
-      { timeout: 8000, windowsHide: true, maxBuffer: 1024 * 1024 },
+export function queryNvidiaGpus({ execFileImpl = execFile, timeoutMs = 5000 } = {}) {
+  return new Promise((resolve, reject) => {
+    execFileImpl(
+      'nvidia-smi.exe',
+      NVIDIA_ARGS,
+      { timeout: timeoutMs, windowsHide: true, maxBuffer: 1024 * 1024 },
       (error, stdout, stderr) => {
         if (error) {
-          const detail = String(stderr || '').trim() || error.message;
-          this._publish({
-            error: `GPU information unavailable: ${detail}`,
-            nvidiaError: nvidiaError?.message,
-          });
+          const detail = String(stderr || '').trim();
+          reject(new Error(detail || error.message));
           return;
         }
         try {
-          this._publish(parseWindowsGpuOutput(stdout));
+          resolve(parseNvidiaOutputAll(stdout));
         } catch (parseError) {
-          this._publish({ error: `GPU information parse failed: ${parseError.message}` });
+          reject(parseError);
         }
       },
     );
-  }
-
-  _publish(data) {
-    this.inFlight = false;
-    this.lastData = data;
-    if (data.provider && data.provider !== this.reportedProvider) {
-      this.reportedProvider = data.provider;
-      console.log(`[GPU] Provider: ${data.provider}; adapter: ${data.name}`);
-    }
-    this._send(data);
-  }
-
-  _send(data) {
-    if (this.win && !this.win.isDestroyed() && !this.win.webContents.isDestroyed()) {
-      this.win.webContents.send('gpu-data', data);
-    }
-  }
+  });
 }

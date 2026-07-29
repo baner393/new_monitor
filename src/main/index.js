@@ -1,14 +1,14 @@
 import { app, BrowserWindow, ipcMain, Menu, dialog, screen } from 'electron';
 import path from 'path';
 import fs from 'fs';
-import { GPUMonitor } from './gpu-monitor.js';
-import { applyMousePassthrough, resolveCustomResourcePath } from './window-lifecycle.js';
+import { SystemMonitor } from './system-monitor.js';
+import { applyMousePassthrough, reloadWindowSafely, resolveCustomResourcePath } from './window-lifecycle.js';
 
 let mainWindow;
 let customWindow;
 let canvasWindow;
 let regionWindow;
-let gpuMonitor;
+let systemMonitor;
 let pendingGridData = null;
 let pendingRegionImage = null; // temp storage for region marker image data
 
@@ -25,9 +25,7 @@ function resolveCustomResource(fileName) {
 }
 
 function reloadMainWindow() {
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-  setMainWindowMousePassthrough(true);
-  mainWindow.webContents.reload();
+  reloadWindowSafely(mainWindow);
 }
 
 // ── Chromium flags (must be before app.whenReady) ────────────
@@ -232,13 +230,18 @@ function createWindow() {
   // Remove menu bar to prevent Alt-triggered black text
   mainWindow.setMenu(null);
 
-  // Keep the desktop usable while the transparent renderer reloads. The new
-  // renderer opts back into mouse events only over an interactive surface.
+  // The renderer owns transparent hit testing. Capture input while it is being
+  // replaced, then let the new renderer restore passthrough from the real
+  // cursor position. This remains stable across repeated reloads on Windows.
+  let rendererLoadGeneration = 0;
   mainWindow.webContents.on('did-start-loading', () => {
-    setMainWindowMousePassthrough(true);
+    rendererLoadGeneration += 1;
+    console.log(`[Window] Renderer load ${rendererLoadGeneration} started; mouse captured`);
+    setMainWindowMousePassthrough(false);
   });
 
   mainWindow.webContents.on('did-finish-load', () => {
+    console.log(`[Window] Renderer load ${rendererLoadGeneration} finished`);
     mainWindow.setTitle(' ');
   });
 
@@ -272,16 +275,16 @@ function createWindow() {
   });
 
   mainWindow.on('closed', () => {
-    if (gpuMonitor) {
-      gpuMonitor.stop();
-      gpuMonitor = null;
+    if (systemMonitor) {
+      systemMonitor.stop();
+      systemMonitor = null;
     }
     mainWindow = null;
   });
 
-  // Start GPU monitoring
-  gpuMonitor = new GPUMonitor(mainWindow, 2000);
-  gpuMonitor.start();
+  // Start the unified CPU / memory / disk / network / GPU monitor.
+  systemMonitor = new SystemMonitor(mainWindow, 2000);
+  systemMonitor.start();
 }
 
 // ── Launch on Windows ──────────────────────────────────────────────
@@ -302,10 +305,10 @@ ipcMain.handle('cursor-position-get', (event) => {
   return { x: cursor.x - bounds.x, y: cursor.y - bounds.y };
 });
 
-// IPC: renderer can manually request GPU data
-ipcMain.on('request-gpu-data', () => {
-  if (gpuMonitor) {
-    gpuMonitor.requestSnapshot();
+// IPC: renderer can manually request a fresh system snapshot.
+ipcMain.on('request-system-data', () => {
+  if (systemMonitor) {
+    systemMonitor.requestSnapshot();
   }
 });
 
@@ -754,7 +757,7 @@ process.on('uncaughtException', (err) => {
 });
 
 app.on('window-all-closed', () => {
-  if (gpuMonitor) gpuMonitor.stop();
+  if (systemMonitor) systemMonitor.stop();
   if (process.platform !== 'darwin') {
     app.quit();
   }
