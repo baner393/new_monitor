@@ -1,12 +1,13 @@
 // Import blink state constants and modules at the top
 import * as PIXI from 'pixi.js';
 import { BaseTexture, SCALE_MODES } from 'pixi.js';
-import idleSpriteUrl from '../../assets/sprites/idle.png';
-import hoverSpriteUrl from '../../assets/sprites/hover.png';
-import pullSpriteUrl from '../../assets/sprites/pull.png';
-import happySpriteUrl from '../../assets/sprites/happy.png';
-import painSpriteUrl from '../../assets/sprites/pain.png';
-import blinkSpriteUrl from '../../assets/sprites/blink.png';
+const publicAssetUrl = (relativePath) => new URL(relativePath, window.location.href).href;
+const idleSpriteUrl = publicAssetUrl('./assets/sprites/idle.png');
+const hoverSpriteUrl = publicAssetUrl('./assets/sprites/hover.png');
+const pullSpriteUrl = publicAssetUrl('./assets/sprites/pull.png');
+const happySpriteUrl = publicAssetUrl('./assets/sprites/happy.png');
+const painSpriteUrl = publicAssetUrl('./assets/sprites/pain.png');
+const blinkSpriteUrl = publicAssetUrl('./assets/sprites/blink.png');
 import { PhysicsEngine } from './physics.js';
 import { RopeRenderer } from './rope.js';
 import { StateMachine } from './state-machine.js';
@@ -186,19 +187,47 @@ if (window.electronAPI?.onSkinsReloaded) {
 
 // Track current skin's baseSize for settings panel scaling
 let currentSkinBaseSize = 24; // default turtle baseSize (matches PNG dimensions)
+let skinLoadRevision = 0;
+
+function loadTexture(url) {
+  const texture = PIXI.Texture.from(url);
+  if (texture.baseTexture.valid) return Promise.resolve(texture);
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error('Texture load timed out')), 5000);
+    texture.baseTexture.once('loaded', () => {
+      clearTimeout(timeout);
+      resolve(texture);
+    });
+    texture.baseTexture.once('error', (error) => {
+      clearTimeout(timeout);
+      reject(error instanceof Error ? error : new Error('Texture load failed'));
+    });
+  });
+}
 
 // Handle skin change
-skinSelector.onSkinChange = (skinId, skinConfig) => {
+skinSelector.onSkinChange = async (skinId, skinConfig) => {
   console.log(`[Skin] Switching to: ${skinId}`, skinConfig);
   const frames = skinConfig.frames || skinConfig.sprites;
   if (frames) {
-    // Reload textures from new skin paths
-    idleTexture  = PIXI.Texture.from(frames.idle);
-    hoverTexture = PIXI.Texture.from(frames.hover);
-    pullTexture  = PIXI.Texture.from(frames.pull);
-    happyTexture = PIXI.Texture.from(frames.happy);
-    painTexture  = PIXI.Texture.from(frames.pain);
-    blinkTexture = PIXI.Texture.from(frames.blink_closed || frames.blink);
+    const revision = ++skinLoadRevision;
+    let textures;
+    try {
+      textures = await Promise.all([
+        loadTexture(frames.idle),
+        loadTexture(frames.hover || frames.idle),
+        loadTexture(frames.pull || frames.idle),
+        loadTexture(frames.happy || frames.idle),
+        loadTexture(frames.pain || frames.idle),
+        loadTexture(frames.blink_closed || frames.blink || frames.idle),
+      ]);
+    } catch (error) {
+      console.error(`[Skin] Failed to load ${skinId}; keeping current texture:`, error);
+      return;
+    }
+    if (revision !== skinLoadRevision) return;
+
+    [idleTexture, hoverTexture, pullTexture, happyTexture, painTexture, blinkTexture] = textures;
     // Apply idle texture immediately
     bodySprite.texture = idleTexture;
 
@@ -310,44 +339,76 @@ inputManager.enable();
 // ── Transparent click-through ──────────────────────────────────────────
 let isOverSprite = false;
 
-document.addEventListener('mousemove', (e) => {
+function synchronizeMousePassthrough(x, y, force = false) {
   const state = stateMachine.getState();
-  if (state === 'PULLING' || state === 'PULLEY_DRAG') return;
+  if (state === 'PULLING' || state === 'PULLEY_DRAG') {
+    window.electronAPI.setIgnoreMouseEvents(false);
+    return;
+  }
 
   // Also keep mouse events when panel is open
-  if (state === 'PANEL_OPEN' || state === 'EXPANDING' || state === 'COLLAPSING' || state === 'HAPPY') return;
+  if (state === 'PANEL_OPEN' || state === 'EXPANDING' || state === 'COLLAPSING' || state === 'HAPPY') {
+    window.electronAPI.setIgnoreMouseEvents(false);
+    return;
+  }
 
   // Keep mouse events when settings panel is open
-  if (settingsPanel.isOpen || settingsPanel.isAnimating) return;
+  if (settingsPanel.isOpen || settingsPanel.isAnimating) {
+    window.electronAPI.setIgnoreMouseEvents(false);
+    return;
+  }
 
   // Keep mouse events when skin selector is open
-  if (skinSelector.isOpen) return;
+  if (skinSelector.isOpen) {
+    window.electronAPI.setIgnoreMouseEvents(false);
+    return;
+  }
   
   const bounds = sprite.getBounds();
   const over =
-    e.clientX >= bounds.x &&
-    e.clientX <= bounds.x + bounds.width &&
-    e.clientY >= bounds.y &&
-    e.clientY <= bounds.y + bounds.height;
+    x >= bounds.x &&
+    x <= bounds.x + bounds.width &&
+    y >= bounds.y &&
+    y <= bounds.y + bounds.height;
 
-  if (over && !isOverSprite) {
+  if (over && (!isOverSprite || force)) {
     isOverSprite = true;
     window.electronAPI.setIgnoreMouseEvents(false);
     sprite.emit('pointerover');
-  } else if (!over && isOverSprite) {
+  } else if (!over && (isOverSprite || force)) {
     isOverSprite = false;
     window.electronAPI.setIgnoreMouseEvents(true);
     sprite.emit('pointerout');
   }
+  if (force) {
+    console.log(`[Input] Cursor synchronized after load: ${over ? 'interactive' : 'passthrough'}`);
+  }
+}
+
+document.addEventListener('mousemove', (event) => {
+  synchronizeMousePassthrough(event.clientX, event.clientY);
 });
 
-window.electronAPI.setIgnoreMouseEvents(true);
+// A reload can happen while the cursor is stationary over the turtle, so no
+// mousemove event will arrive to restore clickability. Query the real cursor
+// after two frames, when Pixi has laid out the sprite, and synchronize once.
+requestAnimationFrame(() => requestAnimationFrame(async () => {
+  try {
+    const cursor = await window.electronAPI.getCursorPosition();
+    if (cursor) synchronizeMousePassthrough(cursor.x, cursor.y, true);
+    else window.electronAPI.setIgnoreMouseEvents(true);
+  } catch (error) {
+    console.warn('[Input] Failed to synchronize cursor after load:', error);
+    window.electronAPI.setIgnoreMouseEvents(true);
+  }
+}));
 
 // ── GPU data receiver ──────────────────────────────────────────────────
 window.electronAPI.onGPUData((data) => {
   console.log('[GPU Data]', data);
   panel.update(data);
 });
+window.electronAPI.requestGPUData();
 
 // ── Click-outside detection for closing the panel ──────────────────────
 document.addEventListener('mousedown', (e) => {

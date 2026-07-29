@@ -4,33 +4,34 @@
   "version": "1.0.0",
   "description": "Turtle Monitor - Electron + PixiJS",
   "main": ".vite/build/index.js",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
-    "start": "electron-forge start",
+    "start": "npm run start:free",
+    "start:free": "cross-env VITE_EDITION=free electron-forge start",
+    "start:sponsor": "cross-env VITE_EDITION=sponsor electron-forge start",
     "build": "node scripts/build.mjs",
     "build:free": "cross-env VITE_EDITION=free node scripts/build.mjs",
     "build:sponsor": "cross-env VITE_EDITION=sponsor node scripts/build.mjs",
-    "dist:free": "cross-env VITE_EDITION=free node scripts/build.mjs && cross-env VITE_EDITION=free electron-builder build --win --x64 --config electron-builder.config.js && node scripts/set-icon-helper.js free",
-    "dist:sponsor": "cross-env VITE_EDITION=sponsor node scripts/build.mjs && cross-env VITE_EDITION=sponsor electron-builder build --win --x64 --config electron-builder.config.js && node scripts/set-icon-helper.js sponsor",
-    "package": "electron-forge package",
-    "package:free": "cross-env VITE_EDITION=free electron-forge package",
-    "package:sponsor": "cross-env VITE_EDITION=sponsor electron-forge package",
-    "make": "cross-env VITE_EDITION=free electron-forge make",
-    "make:free": "cross-env VITE_EDITION=free electron-forge make",
-    "make:sponsor": "cross-env VITE_EDITION=sponsor electron-forge make"
+    "dist": "node scripts/build-all.mjs",
+    "dist:free": "node scripts/package.mjs free",
+    "dist:sponsor": "node scripts/package.mjs sponsor",
+    "clean": "node scripts/clean.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "verify": "node scripts/verify-project.mjs",
+    "verify:artifacts": "node scripts/verify-artifacts.mjs"
   },
   "author": "Turtle Monitor",
   "license": "MIT",
   "devDependencies": {
-    "@electron-forge/cli": "^7.8.0",
-    "@electron-forge/maker-squirrel": "^7.8.0",
-    "@electron-forge/plugin-vite": "^7.8.0",
-    "cross-env": "^10.1.0",
-    "electron": "^35.0.0",
-    "electron-builder": "^25.1.8",
-    "vite": "^6.0.0"
-  },
-  "dependencies": {
-    "@rollup/rollup-linux-x64-gnu": "^4.62.2",
-    "pixi.js": "^7.3.0"
+    "@electron/asar": "3.4.1",
+    "@electron-forge/cli": "7.11.2",
+    "@electron-forge/plugin-vite": "7.11.2",
+    "cross-env": "10.1.0",
+    "electron": "43.2.0",
+    "electron-builder": "26.15.3",
+    "pixi.js": "7.4.3",
+    "vite": "6.4.3"
   }
 }

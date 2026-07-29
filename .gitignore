@@ -5,6 +5,5 @@ out/
 .codegraph/
 *.bak
 tmp_screenshot.*
-*.ps1
-assets/blink_closed.png
 keys/
+.build-edition

@@ -532,7 +532,12 @@ export class Panel {
 
   update(data) {
     if (!data || data.error) {
-      this._gpuName.text = data?.error ? 'ERROR' : 'N/A';
+      this._gpuName.text = data?.error ? 'GPU INFO ERROR' : 'N/A';
+      this._tempValue.text = '-- °C';
+      this._gpuUtilValue.text = '-- %';
+      this._memValue.text = '-- / -- MB';
+      this._powerValue.text = '-- W';
+      this._redrawBars(0, 0, 0, TEMP_GREEN);
       return;
     }
 
@@ -543,27 +548,33 @@ export class Panel {
     this._gpuName.text = name.length > 30 ? name.substring(0, 27) + '...' : name;
 
     // Temperature
-    const temp = data.temperature ?? 0;
-    const tColor = tempColor(temp);
-    this._tempValue.text = `${temp} °C`;
+    const temp = Number.isFinite(data.temperature) ? data.temperature : null;
+    const tempForBar = temp ?? 0;
+    const tColor = tempColor(tempForBar);
+    this._tempValue.text = temp === null ? '-- °C' : `${Math.round(temp)} °C`;
     this._tempValue.style.fill = tColor;
 
     // GPU Utilization
-    const gpuUtil = data.gpuUtilization ?? 0;
-    this._gpuUtilValue.text = `${gpuUtil} %`;
+    const gpuUtil = Number.isFinite(data.gpuUtilization) ? data.gpuUtilization : null;
+    const gpuUtilForBar = gpuUtil ?? 0;
+    this._gpuUtilValue.text = gpuUtil === null ? '-- %' : `${Math.round(gpuUtil)} %`;
 
     // Memory
-    const memUsed = data.memoryUsed ?? 0;
-    const memTotal = data.memoryTotal ?? 1;
-    const memPct = memTotal > 0 ? memUsed / memTotal : 0;
-    this._memValue.text = `${Math.round(memUsed)} / ${Math.round(memTotal)} MB`;
+    const memUsed = Number.isFinite(data.memoryUsed) ? data.memoryUsed : null;
+    const memTotal = Number.isFinite(data.memoryTotal) ? data.memoryTotal : null;
+    const memPct = Number.isFinite(data.memoryUtilization)
+      ? data.memoryUtilization / 100
+      : (memUsed !== null && memTotal > 0 ? memUsed / memTotal : 0);
+    this._memValue.text = memTotal === null
+      ? '-- / -- MB'
+      : `${memUsed === null ? '--' : Math.round(memUsed)} / ${Math.round(memTotal)} MB`;
 
     // Power
-    const power = data.powerDraw ?? 0;
-    this._powerValue.text = `${power} W`;
+    const power = Number.isFinite(data.powerDraw) ? data.powerDraw : null;
+    this._powerValue.text = power === null ? '-- W' : `${power.toFixed(1)} W`;
 
     // Redraw progress bars
-    this._redrawBars(temp, gpuUtil, memPct, tColor);
+    this._redrawBars(tempForBar, gpuUtilForBar, memPct, tColor);
   }
 
   _redrawBars(temp, gpuUtil, memPct, tColor) {

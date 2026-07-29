@@ -1,49 +1,49 @@
-# Turtle Monitor - Electron 版
+# Turtle Monitor
 
-> 🐢 像素风乌龟 GPU 监控桌面宠物（Electron + PixiJS）
+Windows 桌面 GPU 监控宠物，使用 Electron、PixiJS 和 Vite 构建。
 
----
+## 版本边界
 
-## 快速开始（给下一个 Agent）
+- 免费版：完整的桌宠、GPU 面板、设置和内置皮肤切换；不包含自定义模式页面和专属 IPC。
+- 赞助版：包含免费版全部功能，并增加自定义模式、像素画布、区域标记和皮肤导入/编辑。
 
-```
-1. 读 HANDOVER.md 了解完整背景和架构
-2. 读 TECH_SPEC.md 了解技术细节
-3. 读 MIGRATION_PLAN.md 了解执行步骤
-4. 读 DECISIONS.md 了解决策理由
-5. 从阶段 0 开始执行
-```
+版本由构建期变量 `VITE_EDITION=free|sponsor` 决定。发布包必须通过包内检查，不能仅凭菜单是否显示来判断版本。
 
-## 项目结构
+## 本地开发
 
-```
-new_monitor/
-├── HANDOVER.md          # 总交接文档（必读）
-├── TECH_SPEC.md         # 技术规格（参数、代码片段）
-├── MIGRATION_PLAN.md    # 分阶段迁移计划
-├── DECISIONS.md         # 决策记录
-└── README.md            # 本文件
+要求 Node.js 22 或更高版本。
+
+```powershell
+npm ci
+npm run start:free
+npm run start:sponsor
 ```
 
-## 技术栈
+`run.bat` 是免费版的便携启动入口，它会先切换到脚本所在目录，因此项目放在任意磁盘和目录都能运行。
 
-- **Electron** - 桌面应用框架
-- **PixiJS v7** - 2D 渲染引擎
-- **Vite** - 构建工具
-- **nvidia-smi** - GPU 数据采集
+## 构建
 
-## 核心特性
+```powershell
+npm run verify
+npm run build:free
+npm run build:sponsor
+npm run dist
+```
 
-- ✅ 透明无边框窗口 + 置顶
-- ✅ 像素风乌龟精灵 + 物理模拟（钟摆、绳子）
-- ✅ 左键拖拽 + 弹簧回弹 + 面板展开
-- ✅ 右键拖拽 + 滑轮惯性
-- ✅ GPU 实时监控面板
-- ✅ MC 风格设置面板
-- ✅ 基础音效
+`npm run dist` 会依次清理、打包免费版和赞助版，并检查 ASAR 内的版本标记、赞助功能边界、字体、皮肤、精灵和安装包。产物分别写入 `out/free` 与 `out/sponsor`，不会互相覆盖。
 
-## 旧项目参考
+详细说明见 [BUILDING.md](BUILDING.md)。授权代码目前只是未接入运行流程的预留模块，实际状态见 [DEPLOY-SECURITY.md](DEPLOY-SECURITY.md)。
 
-- 代码：`D:\all\lightframe\Monitor\turtle_monitor\main.py`（~2000 行）
-- 精灵：`D:\all\lightframe\Monitor\turtle_monitor\sprite_data.py`
-- 字体：`C:\Users\ban\AppData\Local\Microsoft\Windows\Fonts\Mojang-Regular.ttf`
+## 数据路径
+
+- 内置只读资源：随 ASAR 发布，通过 `app.getAppPath()` 定位。
+- 设置和用户皮肤：Electron 的 `app.getPath('userData')`。
+- 构建路径：全部从脚本文件或仓库根目录动态计算，不依赖盘符、用户名或固定工作区。
+
+## 远端与基线
+
+维护基线为远端分支 `stable-81e7580`。仓库 URL 必须保留账号前缀：
+
+```text
+https://baner393@github.com/baner393/new_monitor.git
+```

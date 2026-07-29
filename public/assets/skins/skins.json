@@ -25,7 +25,7 @@
       "author": "Unknown",
       "description": "",
       "frames": {
-        "blink_closed": "assets/skins/cat/blink_closed.png",
+        "blink_closed": "assets/skins/cat/blink.png",
         "happy": "assets/skins/cat/happy.png",
         "hover": "assets/skins/cat/hover.png",
         "idle": "assets/skins/cat/idle.png",

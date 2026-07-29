@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Menu, dialog } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu, dialog, screen } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import { GPUMonitor } from './gpu-monitor.js';
@@ -104,38 +104,43 @@ ipcMain.handle('settings-reset', () => {
 
 // ── Skin path constants (outside __IS_SPONSOR__ — needed by skin-list-get) ──
 // Read path: ASAR (built-in skins, read-only)
-const SKINS_BASE_PATH = path.join(app.getAppPath(), '.vite', 'renderer', 'main_window', 'assets', 'skins');
+const SKINS_BASE_PATH = MAIN_WINDOW_VITE_DEV_SERVER_URL
+  ? path.join(app.getAppPath(), 'public', 'assets', 'skins')
+  : path.join(app.getAppPath(), '.vite', 'renderer', 'main_window', 'assets', 'skins');
 const SKINS_JSON_PATH = path.join(SKINS_BASE_PATH, 'skins.json');
 // Write path: userData (for custom skins, writable)
 const SKINS_USER_PATH = path.join(app.getPath('userData'), 'skins');
 const SKINS_USER_JSON = path.join(SKINS_USER_PATH, 'skins.json');
 
 // IPC: skin-list-get — return merged skin list (built-in ASAR + custom userData)
-// Custom skin frame/preview paths are transformed to absolute file:// paths
-// since they live in userData, not in the app's ASAR bundle.
+// Custom images are returned as data URLs. This works from both the Vite HTTP
+// dev server and the packaged file:// renderer without weakening webSecurity.
 ipcMain.handle('skin-list-get', async () => {
-  // Helper: resolve a custom skin's relative path (e.g. "assets/skins/myskin/idle.png")
-  // to an absolute file:// path in userData.
   function resolveSkinPath(skinId, relPath) {
-    if (!relPath) return relPath;
-    // Extract filename from relative path (e.g. "assets/skins/myskin/idle.png" → "idle.png")
+    if (!relPath) return null;
+    const safeSkinId = path.basename(String(skinId));
+    if (safeSkinId !== skinId) return null;
     const fileName = path.basename(relPath);
-    const fullPath = path.join(SKINS_USER_PATH, skinId, fileName);
-    return 'file://' + fullPath.replace(/\\/g, '/');
+    const skinRoot = path.resolve(SKINS_USER_PATH, safeSkinId);
+    const fullPath = path.resolve(skinRoot, fileName);
+    if (!fullPath.startsWith(skinRoot + path.sep) || !fs.existsSync(fullPath)) return null;
+    const image = fs.readFileSync(fullPath);
+    return `data:image/png;base64,${image.toString('base64')}`;
   }
-  // Transform a custom skin entry's frame and preview paths to absolute file://
+
   function transformCustomSkin(skin) {
     const out = { ...skin };
-    if (out.frames) {
-      const newFrames = {};
-      for (const [key, val] of Object.entries(out.frames)) {
-        newFrames[key] = resolveSkinPath(skin.id, val);
-      }
-      out.frames = newFrames;
+    const idle = resolveSkinPath(skin.id, out.frames?.idle);
+    if (!idle) {
+      console.warn(`[Skins] Ignoring custom skin without a readable idle frame: ${skin.id}`);
+      return null;
     }
-    if (out.preview) {
-      out.preview = resolveSkinPath(skin.id, out.preview);
+    const newFrames = {};
+    for (const [key, val] of Object.entries(out.frames || {})) {
+      newFrames[key] = resolveSkinPath(skin.id, val) || idle;
     }
+    out.frames = newFrames;
+    out.preview = resolveSkinPath(skin.id, out.preview) || idle;
     return out;
   }
 
@@ -160,7 +165,7 @@ ipcMain.handle('skin-list-get', async () => {
       customSkins = (userCfg.customSkins || userCfg.skins || []).filter(s => {
         // Only custom skins (not built-in duplicates)
         return !builtInSkins.some(b => b.id === s.id);
-      }).map(transformCustomSkin);
+      }).map(transformCustomSkin).filter(Boolean);
     }
   } catch (err) {
     console.warn('[Skins] Failed to read custom skins:', err.message);
@@ -175,7 +180,6 @@ ipcMain.handle('skin-list-get', async () => {
 
 function createWindow() {
   // Get screen dimensions for full-screen transparent window
-  const { screen } = require('electron');
   const primaryDisplay = screen.getPrimaryDisplay();
   const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
   const { x: screenX, y: screenY } = primaryDisplay.workArea;
@@ -209,10 +213,17 @@ function createWindow() {
   // Remove menu bar to prevent Alt-triggered black text
   mainWindow.setMenu(null);
 
-  // Push current settings to renderer after page fully loads (fallback)
-mainWindow.webContents.on('did-finish-load', () => {
-  mainWindow.setTitle(' ');
-});
+  // A reloading renderer cannot maintain the transparent-window hit-test
+  // state. Capture events until the new renderer synchronizes its cursor.
+  mainWindow.webContents.on('did-start-loading', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.setIgnoreMouseEvents(false);
+    }
+  });
+
+  mainWindow.webContents.on('did-finish-load', () => {
+    mainWindow.setTitle(' ');
+  });
 
   // Fix DPI scaling - prevent Windows from auto-scaling
   mainWindow.webContents.setZoomFactor(1);
@@ -268,10 +279,18 @@ ipcMain.on('set-ignore-mouse', (event, ignore) => {
   }
 });
 
+ipcMain.handle('cursor-position-get', (event) => {
+  const window = BrowserWindow.fromWebContents(event.sender);
+  if (!window || window.isDestroyed()) return null;
+  const cursor = screen.getCursorScreenPoint();
+  const bounds = window.getBounds();
+  return { x: cursor.x - bounds.x, y: cursor.y - bounds.y };
+});
+
 // IPC: renderer can manually request GPU data
 ipcMain.on('request-gpu-data', () => {
   if (gpuMonitor) {
-    gpuMonitor._poll();
+    gpuMonitor.requestSnapshot();
   }
 });
 
@@ -295,6 +314,7 @@ ipcMain.on('show-context-menu', (event) => {
       label: '刷新',
       click: () => {
         if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.setIgnoreMouseEvents(false);
           mainWindow.webContents.reload();
         }
       },
@@ -389,7 +409,6 @@ function openCanvasWindow(gridData) {
 
   pendingGridData = gridData;
 
-  const { screen } = require('electron');
   const primaryDisplay = screen.getPrimaryDisplay();
   const { width, height } = primaryDisplay.workAreaSize;
 
@@ -446,7 +465,6 @@ if (__IS_SPONSOR__) {
       return;
     }
     pendingRegionImage = imageData;
-    const { screen } = require('electron');
     const primaryDisplay = screen.getPrimaryDisplay();
     const { width, height } = primaryDisplay.workAreaSize;
     regionWindow = new BrowserWindow({

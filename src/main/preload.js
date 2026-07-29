@@ -9,6 +9,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.send('set-ignore-mouse', ignore);
   },
 
+  /** Return the current cursor position relative to this window. */
+  getCursorPosition: () => ipcRenderer.invoke('cursor-position-get'),
+
   /**
    * Subscribe to GPU data pushed from the main process.
    * @param {(data: object) => void} callback
