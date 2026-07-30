@@ -5,9 +5,11 @@
  */
 
 import * as PIXI from 'pixi.js';
+import { calculateOverviewHeight, layoutOverviewCards } from './panel-layout.js';
 
 const PANEL_WIDTH = 700;
 const PANEL_HEIGHT = 590;
+const MIN_OVERVIEW_HEIGHT = 170;
 const PADDING = 20;
 const COLUMN_GAP = 16;
 const COLUMN_WIDTH = (PANEL_WIDTH - PADDING * 2 - COLUMN_GAP) / 2;
@@ -266,6 +268,8 @@ export class Panel {
     this._onRequestElevation = onRequestElevation;
     this._page = 'overview';
     this._hardwarePage = 0;
+    this._overviewSections = [];
+    this._overviewHeight = PANEL_HEIGHT;
     this.container = new PIXI.Container();
     this.container.visible = false;
     this.container.alpha = 0;
@@ -303,6 +307,14 @@ export class Panel {
     this._status.anchor.set(1, 0);
     this._status.position.set(PANEL_WIDTH - PADDING, 43);
     this.container.addChild(this._status);
+
+    this._emptyOverviewText = makeText('未选择监控数据 · 请到“监控管理”开启', 14, COLORS.muted, {
+      bold: true,
+    });
+    this._emptyOverviewText.anchor.set(0.5, 0);
+    this._emptyOverviewText.position.set(PANEL_WIDTH / 2, 106);
+    this._emptyOverviewText.visible = false;
+    this.container.addChild(this._emptyOverviewText);
 
     this._meters = {
       cpu: this._createMeter(PADDING, 74, 'CPU', COLORS.cpu),
@@ -515,6 +527,11 @@ export class Panel {
     if (this._managementPage) this._managementPage.visible = this._page === 'manage';
     if (this._overviewTab) this._overviewTab.style.fill = this._page === 'overview' ? COLORS.title : COLORS.muted;
     if (this._manageTab) this._manageTab.style.fill = this._page === 'manage' ? COLORS.title : COLORS.muted;
+    if (this._emptyOverviewText) {
+      this._emptyOverviewText.visible = this._page === 'overview' && this._overviewSections.length === 0;
+    }
+    this._drawBackground();
+    this._clampToViewport();
   }
 
   setVisibility(visibility) {
@@ -524,6 +541,74 @@ export class Panel {
     }
     this._applyVisibility();
     this._renderHardwarePage();
+  }
+
+  _layoutOverview() {
+    const showHardware = ['gpu', 'temperature', 'power', 'fan', 'voltage', 'storageHealth', 'battery']
+      .some((key) => this._visibility[key]);
+    const cards = [
+      { key: 'cpu', height: 104, visible: this._visibility.cpu },
+      { key: 'memory', height: 104, visible: this._visibility.memory },
+      { key: 'gpu', height: 104, visible: this._visibility.gpu },
+      { key: 'disk', height: 104, visible: this._visibility.disk },
+      { key: 'network', height: 126, visible: this._visibility.network },
+      { key: 'storage', height: 126, visible: this._visibility.disk },
+      { key: 'system', height: 144, visible: this._visibility.system },
+      { key: 'hardware', height: 144, visible: showHardware },
+    ].filter((card) => card.visible);
+
+    const placements = layoutOverviewCards(cards, {
+      panelWidth: PANEL_WIDTH,
+      padding: PADDING,
+      columnGap: COLUMN_GAP,
+      top: 66,
+      rowGap: 8,
+    });
+
+    for (const placement of placements) {
+      this._positionOverviewCard(placement.key, placement.x, placement.y);
+    }
+    this._overviewSections = placements.map(({ x, y, width, height }) => [x, y, width, height]);
+    this._overviewHeight = calculateOverviewHeight(placements, {
+      minHeight: MIN_OVERVIEW_HEIGHT,
+      maxHeight: PANEL_HEIGHT,
+      padding: PADDING,
+    });
+    this._emptyOverviewText.visible = this._page === 'overview' && placements.length === 0;
+    this._drawBackground();
+    this._clampToViewport();
+  }
+
+  _positionOverviewCard(key, x, y) {
+    const meter = this._meters[key];
+    if (meter) {
+      meter.x = x;
+      meter.y = y + 8;
+      meter.titleText.position.set(x + 12, y + 8);
+      meter.valueText.position.set(x + COLUMN_WIDTH - 12, y + 7);
+      meter.detailText.position.set(x + 12, y + 54);
+      meter.extraText.position.set(x + 12, y + 76);
+      return;
+    }
+
+    if (key === 'network') {
+      this._networkTitle.position.set(x + 12, y + 8);
+      this._networkValue.position.set(x + 12, y + 33);
+      this._networkDetail.position.set(x + 12, y + 61);
+      this._networkExtra.position.set(x + 12, y + 82);
+      return;
+    }
+
+    if (key === 'storage') {
+      this._storageTitle.position.set(x + 12, y + 8);
+      this._storageLines.forEach((line, index) => line.position.set(x + 12, y + 33 + index * 21));
+      return;
+    }
+
+    const title = key === 'system' ? this._systemTitle : this._hardwareTitle;
+    const lines = key === 'system' ? this._systemDetails : this._hardwareDetails;
+    title.position.set(x + 12, y + 8);
+    lines.forEach((line, index) => line.position.set(x + 12, y + 32 + index * 21));
   }
 
   _applyVisibility() {
@@ -538,6 +623,7 @@ export class Panel {
     const showHardware = ['gpu', 'temperature', 'power', 'fan', 'voltage', 'storageHealth', 'battery']
       .some((key) => this._visibility[key]);
     for (const object of this._hardwareObjects || []) object.visible = showHardware;
+    this._layoutOverview();
     if (this._data) this.update(this._data);
   }
 
@@ -567,22 +653,14 @@ export class Panel {
 
   _drawBackground() {
     const g = this._background;
+    const panelHeight = this.height;
     g.clear();
     for (let spread = 14; spread >= 4; spread -= 5) {
-      drawPixelPanel(g, -spread, -spread, PANEL_WIDTH + spread * 2, PANEL_HEIGHT + spread * 2, 0x5588bb, 0x5588bb, 0.018);
+      drawPixelPanel(g, -spread, -spread, PANEL_WIDTH + spread * 2, panelHeight + spread * 2, 0x5588bb, 0x5588bb, 0.018);
     }
-    drawPixelPanel(g, 0, 0, PANEL_WIDTH, PANEL_HEIGHT, COLORS.background, COLORS.border, 0.92);
+    drawPixelPanel(g, 0, 0, PANEL_WIDTH, panelHeight, COLORS.background, COLORS.border, 0.92);
 
-    const sections = [
-      [PADDING, 66, COLUMN_WIDTH, 112],
-      [PADDING + COLUMN_WIDTH + COLUMN_GAP, 66, COLUMN_WIDTH, 112],
-      [PADDING, 170, COLUMN_WIDTH, 112],
-      [PADDING + COLUMN_WIDTH + COLUMN_GAP, 170, COLUMN_WIDTH, 112],
-      [PADDING, 292, COLUMN_WIDTH, 126],
-      [PADDING + COLUMN_WIDTH + COLUMN_GAP, 292, COLUMN_WIDTH, 126],
-      [PADDING, 426, COLUMN_WIDTH, 144],
-      [PADDING + COLUMN_WIDTH + COLUMN_GAP, 426, COLUMN_WIDTH, 144],
-    ];
+    const sections = this._overviewSections || [];
     for (const [x, y, width, height] of sections) {
       drawPixelPanel(g, x, y, width, height, COLORS.section, COLORS.sectionBorder, 0.72);
     }
@@ -615,11 +693,19 @@ export class Panel {
 
   setPosition(cx, cy) {
     const viewportWidth = globalThis.window?.innerWidth || PANEL_WIDTH;
-    const viewportHeight = globalThis.window?.innerHeight || PANEL_HEIGHT;
+    const viewportHeight = globalThis.window?.innerHeight || this.height;
     const maxX = Math.max(8, viewportWidth - PANEL_WIDTH - 8);
-    const maxY = Math.max(8, viewportHeight - PANEL_HEIGHT - 8);
+    const maxY = Math.max(8, viewportHeight - this.height - 8);
     this.container.x = clamp(cx - PANEL_WIDTH / 2, 8, maxX);
     this.container.y = clamp(cy - 190, 8, maxY);
+  }
+
+  _clampToViewport() {
+    if (!this.container) return;
+    const viewportWidth = globalThis.window?.innerWidth || PANEL_WIDTH;
+    const viewportHeight = globalThis.window?.innerHeight || this.height;
+    this.container.x = clamp(this.container.x, 8, Math.max(8, viewportWidth - PANEL_WIDTH - 8));
+    this.container.y = clamp(this.container.y, 8, Math.max(8, viewportHeight - this.height - 8));
   }
 
   update(data) {
@@ -828,5 +914,5 @@ export class Panel {
   get isAnimating() { return this._animating; }
   get isOpen() { return this.container.visible && this.container.alpha >= 1 && !this._animating; }
   get width() { return PANEL_WIDTH; }
-  get height() { return PANEL_HEIGHT; }
+  get height() { return this._page === 'manage' ? PANEL_HEIGHT : this._overviewHeight; }
 }
