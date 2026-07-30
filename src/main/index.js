@@ -3,7 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import { SystemMonitor } from './system-monitor.js';
 import { resolveHardwareSensorHostPath } from './hardware-sensor-monitor.js';
-import { launchElevatedRestart } from './elevation-restart.js';
+import { isWindowsProcessElevated } from './elevation-restart.js';
 import {
   createDefaultMonitorPanelConfig,
   migrateLegacyMonitorVisibility,
@@ -514,19 +514,17 @@ ipcMain.on('request-system-data', () => {
 });
 
 ipcMain.handle('monitor-request-elevation', async () => {
-  if (systemMonitor?.hardwareSensors?.access?.elevated) {
+  if (isWindowsProcessElevated() || systemMonitor?.hardwareClient?.elevated) {
     return { started: false, alreadyElevated: true };
   }
-  const restartOptions = app.isPackaged
-    ? { executable: process.execPath, args: process.argv.slice(1) }
-    : {
-        executable: 'npm.cmd',
-        args: ['run', __IS_SPONSOR__ ? 'start:sponsor' : 'start:free'],
-        workingDirectory: app.getAppPath(),
-      };
-  await launchElevatedRestart(restartOptions);
-  setTimeout(() => app.quit(), 750);
-  return { started: true, alreadyElevated: false };
+  try {
+    const result = await systemMonitor.requestHardwareElevation();
+    systemMonitor.requestSnapshot();
+    return result;
+  } catch (error) {
+    console.warn('[Elevation] Hardware reader elevation did not complete:', error.message);
+    return { started: false, alreadyElevated: false, error: error.message };
+  }
 });
 
 // IPC: renderer can resize the window

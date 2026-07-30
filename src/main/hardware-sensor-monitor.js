@@ -1,6 +1,9 @@
 import { spawn } from 'child_process';
+import { randomUUID } from 'crypto';
 import fs from 'fs';
+import net from 'net';
 import path from 'path';
+import { launchElevatedProcess } from './elevation-restart.js';
 
 function finiteOrNull(value) {
   if (value === null || value === undefined || value === '') return null;
@@ -213,16 +216,48 @@ export function resolveHardwareSensorHostPath({ appPath, resourcesPath, isPackag
 }
 
 export class HardwareSensorClient {
-  constructor(executablePath, { spawnImpl = spawn, timeoutMs = 12000 } = {}) {
-    this.executablePath = executablePath;
+  constructor(executablePath, {
+    spawnImpl = spawn,
+    connectImpl = net.createConnection,
+    launchElevatedImpl = launchElevatedProcess,
+    timeoutMs = 12000,
+    elevationConnectTimeoutMs = 15000,
+  } = {}) {
+    this.executablePath = executablePath ? path.resolve(executablePath) : executablePath;
     this.spawnImpl = spawnImpl;
+    this.connectImpl = connectImpl;
+    this.launchElevatedImpl = launchElevatedImpl;
     this.timeoutMs = timeoutMs;
+    this.elevationConnectTimeoutMs = elevationConnectTimeoutMs;
     this.child = null;
+    this.socket = null;
+    this.elevated = false;
     this.ready = false;
     this.buffer = '';
     this.stderr = '';
     this.pending = null;
+    this.readyWaiter = null;
     this.stopping = false;
+  }
+
+  async requestElevation() {
+    if (this.elevated && this.socket && this.ready) {
+      return { started: false, alreadyElevated: true };
+    }
+    if (!this.executablePath || !fs.existsSync(this.executablePath)) {
+      throw new Error(`Hardware sensor host is missing: ${this.executablePath || 'path not configured'}`);
+    }
+
+    const pipeName = `turtle-monitor-hardware-${randomUUID()}`;
+    await this.launchElevatedImpl({
+      executable: this.executablePath,
+      args: ['--pipe', pipeName],
+      workingDirectory: path.dirname(this.executablePath),
+    });
+    this._stopCurrentTransport();
+    this.stopping = false;
+    await this._connectElevatedPipe(pipeName);
+    return { started: true, alreadyElevated: false };
   }
 
   query() {
@@ -243,7 +278,7 @@ export class HardwareSensorClient {
     }, this.timeoutMs);
     this.pending = { promise, resolve: resolveRequest, reject: rejectRequest, timer };
 
-    if (!this.child) this._start();
+    if (!this.child && !this.socket) this._start();
     if (this.ready) this._requestSnapshot();
     return promise;
   }
@@ -251,6 +286,11 @@ export class HardwareSensorClient {
   stop() {
     this.stopping = true;
     this._rejectPending(new Error('Hardware sensor client stopped'));
+    this._rejectReadyWaiter(new Error('Hardware sensor client stopped'));
+    if (this.socket && !this.socket.destroyed) {
+      try { this.socket.write('quit\n'); } catch {}
+      this.socket.destroy();
+    }
     if (this.child && !this.child.killed) {
       try { this.child.stdin.write('quit\n'); } catch {}
       const child = this.child;
@@ -262,6 +302,7 @@ export class HardwareSensorClient {
 
   _start() {
     this.stopping = false;
+    this.elevated = false;
     const child = this.spawnImpl(this.executablePath, [], {
       cwd: path.dirname(this.executablePath),
       windowsHide: true,
@@ -315,6 +356,14 @@ export class HardwareSensorClient {
 
     if (message.type === 'ready') {
       this.ready = true;
+      this.elevated = Boolean(message.elevated);
+      if (this.readyWaiter) {
+        const waiter = this.readyWaiter;
+        this.readyWaiter = null;
+        clearTimeout(waiter.timer);
+        if (this.elevated) waiter.resolve(true);
+        else waiter.reject(new Error('硬件读取器已启动，但没有获得管理员权限'));
+      }
       if (this.pending) this._requestSnapshot();
       return;
     }
@@ -336,7 +385,8 @@ export class HardwareSensorClient {
 
   _requestSnapshot() {
     try {
-      this.child.stdin.write('snapshot\n');
+      if (this.socket && !this.socket.destroyed) this.socket.write('snapshot\n');
+      else this.child.stdin.write('snapshot\n');
     } catch (error) {
       this._rejectPending(error);
     }
@@ -351,6 +401,7 @@ export class HardwareSensorClient {
   }
 
   _terminate() {
+    if (this.socket && !this.socket.destroyed) this.socket.destroy();
     if (this.child && !this.child.killed) this.child.kill();
   }
 
@@ -358,5 +409,84 @@ export class HardwareSensorClient {
     if (this.child !== child) return;
     this.child = null;
     this.ready = false;
+  }
+
+  _stopCurrentTransport() {
+    this._rejectPending(new Error('Hardware sensor transport is restarting'));
+    this._rejectReadyWaiter(new Error('Hardware sensor transport is restarting'));
+    if (this.socket && !this.socket.destroyed) {
+      try { this.socket.write('quit\n'); } catch {}
+      this.socket.destroy();
+    }
+    if (this.child && !this.child.killed) {
+      try { this.child.stdin.write('quit\n'); } catch {}
+      this.child.kill();
+    }
+    this.socket = null;
+    this.child = null;
+    this.ready = false;
+    this.elevated = false;
+    this.buffer = '';
+    this.stderr = '';
+  }
+
+  _connectElevatedPipe(pipeName) {
+    const pipePath = `\\\\.\\pipe\\${pipeName}`;
+    const deadline = Date.now() + this.elevationConnectTimeoutMs;
+    return new Promise((resolve, reject) => {
+      const attempt = () => {
+        if (Date.now() >= deadline) {
+          reject(new Error('管理员硬件读取器启动超时'));
+          return;
+        }
+        const socket = this.connectImpl(pipePath);
+        let connected = false;
+        const onEarlyError = () => {
+          if (connected) return;
+          socket.destroy();
+          setTimeout(attempt, 100);
+        };
+        socket.once('error', onEarlyError);
+        socket.once('connect', () => {
+          connected = true;
+          socket.removeListener('error', onEarlyError);
+          this.socket = socket;
+          this.ready = false;
+          this.elevated = false;
+          this.buffer = '';
+          this.stderr = '';
+          const remaining = Math.max(1000, deadline - Date.now());
+          const timer = setTimeout(() => {
+            this._rejectReadyWaiter(new Error('管理员硬件读取器没有按时就绪'));
+            socket.destroy();
+          }, remaining);
+          this.readyWaiter = { resolve, reject, timer };
+          socket.setEncoding('utf8');
+          socket.on('data', (chunk) => this._onStdout(chunk));
+          socket.on('error', (error) => {
+            this._rejectReadyWaiter(error);
+            this._rejectPending(error);
+          });
+          socket.on('close', () => {
+            this._rejectReadyWaiter(new Error('管理员硬件读取器连接已关闭'));
+            if (!this.stopping) this._rejectPending(new Error('管理员硬件读取器连接已关闭'));
+            if (this.socket === socket) {
+              this.socket = null;
+              this.ready = false;
+              this.elevated = false;
+            }
+          });
+        });
+      };
+      attempt();
+    });
+  }
+
+  _rejectReadyWaiter(error) {
+    if (!this.readyWaiter) return;
+    const waiter = this.readyWaiter;
+    this.readyWaiter = null;
+    clearTimeout(waiter.timer);
+    waiter.reject(error);
   }
 }

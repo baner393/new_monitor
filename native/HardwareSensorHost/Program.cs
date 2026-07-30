@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.IO.Pipes;
 using System.Linq;
 using System.Security.Principal;
 using System.Text;
@@ -21,6 +22,7 @@ namespace TurtleMonitor.HardwareSensorHost
         {
             Console.InputEncoding = new UTF8Encoding(false);
             Console.OutputEncoding = new UTF8Encoding(false);
+            TextWriter responseWriter = Console.Out;
 
             try
             {
@@ -29,28 +31,40 @@ namespace TurtleMonitor.HardwareSensorHost
                 {
                     computer.Open();
 
-                    if (args.Any(argument => string.Equals(argument, "--once", StringComparison.OrdinalIgnoreCase)))
+                    string pipeName = ReadArgument(args, "--pipe");
+                    if (!string.IsNullOrWhiteSpace(pipeName))
                     {
-                        WriteSnapshot(computer);
+                        ValidatePipeName(pipeName);
+                        using (NamedPipeServerStream pipe = new NamedPipeServerStream(
+                            pipeName,
+                            PipeDirection.InOut,
+                            1,
+                            PipeTransmissionMode.Byte,
+                            PipeOptions.Asynchronous))
+                        {
+                            IAsyncResult connection = pipe.BeginWaitForConnection(null, null);
+                            if (!connection.AsyncWaitHandle.WaitOne(TimeSpan.FromSeconds(20)))
+                                throw new TimeoutException("Hardware sensor pipe connection timed out");
+                            pipe.EndWaitForConnection(connection);
+                            using (StreamReader reader = new StreamReader(
+                                pipe, new UTF8Encoding(false), false, 4096, true))
+                            using (StreamWriter writer = new StreamWriter(
+                                pipe, new UTF8Encoding(false), 4096, true) { AutoFlush = true })
+                            {
+                                responseWriter = writer;
+                                RunCommandLoop(computer, reader, writer);
+                            }
+                        }
                         return 0;
                     }
 
-                    Console.WriteLine(Json.Serialize(new
+                    if (args.Any(argument => string.Equals(argument, "--once", StringComparison.OrdinalIgnoreCase)))
                     {
-                        type = "ready",
-                        protocolVersion = 1,
-                        elevated = IsElevated()
-                    }));
-
-                    string command;
-                    while ((command = Console.ReadLine()) != null)
-                    {
-                        command = command.Trim();
-                        if (string.Equals(command, "quit", StringComparison.OrdinalIgnoreCase))
-                            break;
-                        if (string.Equals(command, "snapshot", StringComparison.OrdinalIgnoreCase))
-                            WriteSnapshot(computer);
+                        WriteSnapshot(computer, Console.Out);
+                        return 0;
                     }
+
+                    RunCommandLoop(computer, Console.In, Console.Out);
                 }
                 finally
                 {
@@ -63,7 +77,7 @@ namespace TurtleMonitor.HardwareSensorHost
                 Console.Error.WriteLine(error);
                 try
                 {
-                    Console.WriteLine(Json.Serialize(new
+                    responseWriter.WriteLine(Json.Serialize(new
                     {
                         type = "fatal",
                         error = error.Message,
@@ -76,6 +90,48 @@ namespace TurtleMonitor.HardwareSensorHost
                 }
                 return 1;
             }
+        }
+
+        private static void RunCommandLoop(Computer computer, TextReader reader, TextWriter writer)
+        {
+            writer.WriteLine(Json.Serialize(new
+            {
+                type = "ready",
+                protocolVersion = 1,
+                elevated = IsElevated()
+            }));
+            writer.Flush();
+
+            string command;
+            while ((command = reader.ReadLine()) != null)
+            {
+                command = command.Trim();
+                if (string.Equals(command, "quit", StringComparison.OrdinalIgnoreCase))
+                    break;
+                if (string.Equals(command, "snapshot", StringComparison.OrdinalIgnoreCase))
+                    WriteSnapshot(computer, writer);
+            }
+        }
+
+        private static string ReadArgument(IEnumerable<string> args, string name)
+        {
+            string prefix = name + "=";
+            string[] values = args.ToArray();
+            for (int index = 0; index < values.Length; index += 1)
+            {
+                string value = values[index] ?? string.Empty;
+                if (value.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                    return value.Substring(prefix.Length);
+                if (string.Equals(value, name, StringComparison.OrdinalIgnoreCase) && index + 1 < values.Length)
+                    return values[index + 1];
+            }
+            return null;
+        }
+
+        private static void ValidatePipeName(string pipeName)
+        {
+            if (pipeName.Length > 160 || pipeName.IndexOfAny(new[] { '\\', '/' }) >= 0)
+                throw new ArgumentException("Invalid hardware sensor pipe name");
         }
 
         private static Computer CreateComputer()
@@ -95,7 +151,7 @@ namespace TurtleMonitor.HardwareSensorHost
             };
         }
 
-        private static void WriteSnapshot(Computer computer)
+        private static void WriteSnapshot(Computer computer, TextWriter writer)
         {
             List<object> sensors = new List<object>();
             List<object> hardware = new List<object>();
@@ -104,7 +160,7 @@ namespace TurtleMonitor.HardwareSensorHost
             foreach (IHardware device in computer.Hardware)
                 CollectHardware(device, sensors, hardware, errors, null);
 
-            Console.WriteLine(Json.Serialize(new
+            writer.WriteLine(Json.Serialize(new
             {
                 type = "snapshot",
                 protocolVersion = 1,
@@ -116,6 +172,7 @@ namespace TurtleMonitor.HardwareSensorHost
                 sensors,
                 errors
             }));
+            writer.Flush();
         }
 
         private static void CollectHardware(

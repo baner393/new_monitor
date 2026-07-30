@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import path from 'node:path';
 import test from 'node:test';
 
 import {
+  HardwareSensorClient,
   parseHardwareSensorSnapshot,
   resolveHardwareSensorHostPath,
 } from '../src/main/hardware-sensor-monitor.js';
@@ -144,4 +146,39 @@ test('maps device update failures and empty sensor values to specific reasons', 
   assert.equal(snapshot.issues[0].code, 'permission_required');
   assert.equal(snapshot.sensors[0].reasonCode, 'permission_required');
   assert.equal(snapshot.access.permissionEvidence, true);
+});
+
+test('elevates only the hardware host and confirms the named-pipe handshake', async () => {
+  const socket = new EventEmitter();
+  socket.destroyed = false;
+  socket.setEncoding = () => {};
+  socket.write = () => true;
+  socket.destroy = () => { socket.destroyed = true; };
+  let launchOptions = null;
+  let connectedPath = null;
+  const client = new HardwareSensorClient(process.execPath, {
+    launchElevatedImpl: async (options) => {
+      launchOptions = options;
+      return { started: true };
+    },
+    connectImpl: (pipePath) => {
+      connectedPath = pipePath;
+      queueMicrotask(() => {
+        socket.emit('connect');
+        queueMicrotask(() => socket.emit('data', '{"type":"ready","protocolVersion":1,"elevated":true}\n'));
+      });
+      return socket;
+    },
+    elevationConnectTimeoutMs: 1000,
+  });
+
+  const result = await client.requestElevation();
+  assert.equal(result.started, true);
+  assert.equal(client.elevated, true);
+  assert.equal(client.ready, true);
+  assert.equal(launchOptions.executable, process.execPath);
+  assert.equal(launchOptions.args[0], '--pipe');
+  assert.match(launchOptions.args[1], /^turtle-monitor-hardware-/);
+  assert.match(connectedPath, /^\\\\\.\\pipe\\turtle-monitor-hardware-/);
+  client.stop();
 });

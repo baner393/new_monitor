@@ -357,6 +357,9 @@ export class Panel {
     this._detailCard = null;
     this._detailPage = 0;
     this._detailIssuesExpanded = false;
+    this._elevationBusy = false;
+    this._elevationMessage = '';
+    this._elevationSucceeded = false;
     this._partitionPage = 0;
     this._thresholdDeviceIndex = 0;
     this._overviewHeight = MIN_OVERVIEW_HEIGHT;
@@ -408,6 +411,41 @@ export class Panel {
     this._emptyText.anchor.set(0.5, 0);
     this._applyCardLayout();
     this._showPage('overview');
+  }
+
+  async _requestElevationWithFeedback() {
+    if (this._elevationBusy || !this._onRequestElevation) return;
+    this._commitDraft();
+    this._elevationBusy = true;
+    this._elevationSucceeded = false;
+    this._elevationMessage = '正在等待 Windows 管理员确认…';
+    this._status.text = '等待管理员确认';
+    if (this._page === 'detail') this._renderDetail();
+    if (this._page === 'manage') this._renderManagement();
+    try {
+      const result = await this._onRequestElevation();
+      if (result?.alreadyElevated) {
+        this._elevationSucceeded = true;
+        this._elevationMessage = '管理员硬件读取已经启用，正在重新读取传感器。';
+        this._status.text = '管理员权限';
+        window.electronAPI?.requestSystemData?.();
+      } else if (result?.started) {
+        this._elevationSucceeded = true;
+        this._elevationMessage = '管理员硬件读取器已连接，正在重新读取传感器。';
+        this._status.text = '管理员读取已启用';
+        window.electronAPI?.requestSystemData?.();
+      } else {
+        this._elevationMessage = result?.error || '管理员确认已取消，当前程序继续运行。';
+        this._status.text = '提权未完成';
+      }
+    } catch (error) {
+      this._elevationMessage = error?.message || String(error);
+      this._status.text = '提权未完成';
+    } finally {
+      this._elevationBusy = false;
+      if (this._page === 'detail') this._renderDetail();
+      if (this._page === 'manage') this._renderManagement();
+    }
   }
 
   _createCard(id) {
@@ -1034,7 +1072,13 @@ export class Panel {
       { size: 10, active: showingIssues, disabled: !issues.length },
     );
     if (issues.some((item) => item.action === 'request_elevation')) {
-      makeButton(this._detailLayer, '请求管理员权限', 446, issueBarY, 214, 28, () => this._onRequestElevation?.(), { size: 10 });
+      makeButton(
+        this._detailLayer,
+        this._elevationBusy ? '等待管理员确认…' : '请求管理员权限',
+        446, issueBarY, 214, 28,
+        () => this._requestElevationWithFeedback(),
+        { size: 10, disabled: this._elevationBusy },
+      );
     }
     makeButton(this._detailLayer, '‹ 上一页', 470, footerY, 90, 28, () => {
       this._detailPage -= 1;
@@ -1298,13 +1342,19 @@ export class Panel {
       const [label, color] = stateLabels[provider.state] || stateLabels.not_detected;
       addText(this._managementLayer, `${provider.label} · ${label}${provider.error ? ` · ${truncate(provider.error, 42)}` : ''}`, 34, 278 + index * 24, 10, color);
     });
-    makeButton(this._managementLayer, elevated ? '已使用管理员权限' : '请求管理员权限', 34, 382, 235, 48, async () => {
+    makeButton(this._managementLayer, elevated
+      ? '已使用管理员权限'
+      : this._elevationBusy ? '等待管理员确认…' : '请求管理员权限', 34, 382, 235, 48, async () => {
       if (elevated) return;
-      this._commitDraft();
-      await this._onRequestElevation?.();
-    }, { active: elevated, disabled: elevated, size: 12, bold: true });
-    addText(this._managementLayer, '提升权限会由 Windows 显示确认窗口，并以相同免费版或赞助版重新启动。', 34, 450, 11, COLORS.dim);
-    addText(this._managementLayer, '设备不存在会保留在布局编辑器中并标注，但不会占用日常概览位置。', 34, 478, 11, COLORS.dim);
+      await this._requestElevationWithFeedback();
+    }, { active: elevated, disabled: elevated || this._elevationBusy, size: 12, bold: true });
+    if (this._elevationMessage) {
+      addText(this._managementLayer, truncate(this._elevationMessage, 54), 286, 395, 10,
+        this._elevationSucceeded ? COLORS.gpu : this._elevationBusy ? COLORS.warning : COLORS.danger,
+        { bold: true });
+    }
+    addText(this._managementLayer, 'Windows 确认后只提升硬件读取器；桌宠和面板会留在原位并重新采样。', 34, 450, 11, COLORS.dim);
+    addText(this._managementLayer, '取消确认不会关闭程序；免费版与赞助版使用相同的读取能力。', 34, 478, 11, COLORS.dim);
     makeButton(this._managementLayer, '返回概览', 520, 556, 140, 34, () => {
       this._commitDraft();
       this._leaveToOverview(false);

@@ -1195,6 +1195,17 @@ export class SystemMonitor {
     this._tick();
   }
 
+  async requestHardwareElevation() {
+    const result = await this.hardwareClient.requestElevation();
+    this.hardwareAvailable = null;
+    this.diagnostics.hardwareSensorError = null;
+    if (!this.hardwareInFlight) await this._pollHardware();
+    return {
+      ...result,
+      elevated: Boolean(this.hardwareClient?.elevated),
+    };
+  }
+
   _tick() {
     this.pollCount += 1;
 
