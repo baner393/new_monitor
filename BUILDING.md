@@ -26,6 +26,13 @@ npm run start:sponsor
 
 Forge 只负责开发启动。正式发布统一由 Electron Builder 负责，避免 Forge/Squirrel 与 Builder/NSIS 产生两套不一致的资源规则。
 
+只验证源码构建、不生成安装包时使用：
+
+```powershell
+npm run build:free
+npm run build:sponsor
+```
+
 ## 发布命令
 
 ```powershell
@@ -59,7 +66,7 @@ out/sponsor/win-unpacked/TurtleMonitorSponsor.exe
 3. `npm run dist` 退出码为 0；任何子进程失败都会终止，不再吞掉错误。
 4. `npm run verify:artifacts` 通过。
 5. `verify:artifacts` 同时确认传感器宿主位于 ASAR 外部、所有 DLL/许可证与清单哈希一致；缺文件或被替换会直接失败。
-6. 分别启动两个 `win-unpacked` EXE，检查桌宠、系统面板、监控管理页、权限状态、设置、皮肤和图标；赞助版额外检查自定义模式，免费版确认没有该入口。
+6. 分别启动两个 `win-unpacked` EXE，检查桌宠、八类系统卡片、卡片明细分页、四种布局预设、拖动/显隐/取消/直接关闭保存、传感器温区、权限状态、减少动态效果、设置、皮肤和图标；赞助版额外检查自定义模式，免费版确认没有该入口。
 7. 对最终安装包计算并保存 SHA-256；正式发行时再做 Windows 代码签名。
 
 运行时审计可使用：

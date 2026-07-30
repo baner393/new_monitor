@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { calculateOverviewHeight, layoutOverviewCards } from '../src/renderer/panel-layout.js';
+import {
+  calculateOverviewHeight,
+  layoutDashboardCards,
+  layoutOverviewCards,
+} from '../src/renderer/panel-layout.js';
 
 test('overview cards refill the grid in reading order without hidden-item gaps', () => {
   const cards = [
@@ -51,4 +55,28 @@ test('overview height follows its visible rows and stays within panel bounds', (
   assert.equal(calculateOverviewHeight([]), 170);
   assert.equal(calculateOverviewHeight(single), 190);
   assert.equal(calculateOverviewHeight(full), 588);
+});
+
+test('dashboard layout gives storage a full row and centers the final half card', () => {
+  const layout = layoutDashboardCards([
+    { key: 'cpu', height: 104 },
+    { key: 'memory', height: 104 },
+    { key: 'storage', height: 132, span: 2 },
+    { key: 'battery', height: 104 },
+  ]);
+  assert.deepEqual(layout.map(({ key, x, y, width }) => ({ key, x, y, width })), [
+    { key: 'cpu', x: 20, y: 66, width: 322 },
+    { key: 'memory', x: 358, y: 66, width: 322 },
+    { key: 'storage', x: 20, y: 178, width: 660 },
+    { key: 'battery', x: 189, y: 318, width: 322 },
+  ]);
+});
+
+test('dashboard layout centers an incomplete half row before a full-width card', () => {
+  const placements = layoutDashboardCards([
+    { key: 'network', height: 100 },
+    { key: 'storage', height: 140, span: 2 },
+  ]);
+  assert.equal(placements[0].x, (700 - placements[0].width) / 2);
+  assert.equal(placements[1].width, 660);
 });

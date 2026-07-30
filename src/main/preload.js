@@ -39,6 +39,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   /** Persistent monitor field visibility and optional elevated restart. */
   monitor: {
+    getConfiguration: () => ipcRenderer.invoke('monitor-panel-config-get'),
+    saveConfiguration: (config) => ipcRenderer.send('monitor-panel-config-set', config),
     getVisibility: () => ipcRenderer.invoke('monitor-settings-get'),
     setVisibility: (visibility) => ipcRenderer.send('monitor-settings-set', visibility),
     requestElevation: () => ipcRenderer.invoke('monitor-request-elevation'),

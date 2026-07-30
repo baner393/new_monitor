@@ -5,6 +5,12 @@ import { SystemMonitor } from './system-monitor.js';
 import { resolveHardwareSensorHostPath } from './hardware-sensor-monitor.js';
 import { launchElevatedRestart } from './elevation-restart.js';
 import {
+  createDefaultMonitorPanelConfig,
+  migrateLegacyMonitorVisibility,
+  normalizeMonitorPanelConfig,
+  toLegacyMonitorVisibility,
+} from '../shared/monitor-panel-config.js';
+import {
   ReloadInputGuard,
   reloadWindowSafely,
   resolveCustomResourcePath,
@@ -38,6 +44,7 @@ app.commandLine.appendSwitch('enable-transparent-visuals');
 // Use Electron's userData directory for reliable cross-platform persistence
 const SETTINGS_PATH = path.join(app.getPath('userData'), 'turtle-settings.json');
 
+const DEFAULT_MONITOR_PANEL = createDefaultMonitorPanelConfig();
 const DEFAULT_SETTINGS = {
   turtleSize:       64,
   ropeLength:       150,
@@ -51,20 +58,8 @@ const DEFAULT_SETTINGS = {
   ropeElasticity:   5,      // 档位 1-12（与渲染进程一致）
   selectedSkin:     'turtle',
   panelMoveStable:  true,
-  monitorVisibility: {
-    cpu: true,
-    memory: true,
-    gpu: true,
-    disk: true,
-    network: true,
-    system: true,
-    temperature: true,
-    power: true,
-    fan: true,
-    voltage: true,
-    storageHealth: true,
-    battery: true,
-  },
+  monitorVisibility: toLegacyMonitorVisibility(DEFAULT_MONITOR_PANEL),
+  monitorPanel: DEFAULT_MONITOR_PANEL,
 };
 
 let currentSettings = { ...DEFAULT_SETTINGS };
@@ -74,6 +69,10 @@ function loadSettings() {
     if (fs.existsSync(SETTINGS_PATH)) {
       const data = JSON.parse(fs.readFileSync(SETTINGS_PATH, 'utf-8'));
       currentSettings = { ...DEFAULT_SETTINGS, ...data };
+      currentSettings.monitorPanel = data.monitorPanel
+        ? normalizeMonitorPanelConfig(data.monitorPanel)
+        : migrateLegacyMonitorVisibility(data.monitorVisibility, DEFAULT_MONITOR_PANEL);
+      currentSettings.monitorVisibility = toLegacyMonitorVisibility(currentSettings.monitorPanel);
       console.log('[Settings] Loaded from', SETTINGS_PATH);
     }
   } catch (err) {
@@ -111,12 +110,21 @@ ipcMain.handle('monitor-settings-get', () => ({
   ...(currentSettings.monitorVisibility || {}),
 }));
 
+ipcMain.handle('monitor-panel-config-get', () => normalizeMonitorPanelConfig(currentSettings.monitorPanel));
+
+ipcMain.on('monitor-panel-config-set', (_event, config) => {
+  currentSettings.monitorPanel = normalizeMonitorPanelConfig(config);
+  currentSettings.monitorVisibility = toLegacyMonitorVisibility(currentSettings.monitorPanel);
+  saveSettings();
+});
+
 ipcMain.on('monitor-settings-set', (_event, visibility) => {
   const next = {};
   for (const key of Object.keys(DEFAULT_SETTINGS.monitorVisibility)) {
     next[key] = visibility?.[key] !== false;
   }
   currentSettings.monitorVisibility = next;
+  currentSettings.monitorPanel = migrateLegacyMonitorVisibility(next, currentSettings.monitorPanel);
   saveSettings();
 });
 
@@ -145,7 +153,12 @@ ipcMain.handle('skin-get', () => {
 
 // IPC: settings.reset — reset to defaults
 ipcMain.handle('settings-reset', () => {
-  currentSettings = { ...DEFAULT_SETTINGS };
+  const monitorPanel = createDefaultMonitorPanelConfig();
+  currentSettings = {
+    ...DEFAULT_SETTINGS,
+    monitorPanel,
+    monitorVisibility: toLegacyMonitorVisibility(monitorPanel),
+  };
   saveSettings();
   return { ...currentSettings };
 });

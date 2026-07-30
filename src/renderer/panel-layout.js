@@ -46,3 +46,49 @@ export function calculateOverviewHeight(placements, {
   const contentBottom = Math.max(...placements.map(({ y, height }) => y + height)) + padding;
   return Math.max(minHeight, Math.min(maxHeight, contentBottom));
 }
+
+export function layoutDashboardCards(cards, {
+  panelWidth = 700,
+  padding = 20,
+  columnGap = 16,
+  top = 66,
+  rowGap = 8,
+} = {}) {
+  if (!Array.isArray(cards) || cards.length === 0) return [];
+  const columnWidth = (panelWidth - padding * 2 - columnGap) / 2;
+  const placements = [];
+  let pending = null;
+  let y = top;
+
+  const flushPending = (center = false) => {
+    if (!pending) return;
+    placements.push({
+      ...pending,
+      x: center ? (panelWidth - columnWidth) / 2 : padding,
+      y,
+      width: columnWidth,
+    });
+    y += pending.height + rowGap;
+    pending = null;
+  };
+
+  for (const card of cards) {
+    if (card.span === 2) {
+      flushPending(true);
+      placements.push({ ...card, x: padding, y, width: panelWidth - padding * 2 });
+      y += card.height + rowGap;
+      continue;
+    }
+    if (!pending) {
+      pending = card;
+      continue;
+    }
+    const rowHeight = Math.max(pending.height, card.height);
+    placements.push({ ...pending, x: padding, y, width: columnWidth });
+    placements.push({ ...card, x: padding + columnWidth + columnGap, y, width: columnWidth });
+    y += rowHeight + rowGap;
+    pending = null;
+  }
+  flushPending(true);
+  return placements;
+}

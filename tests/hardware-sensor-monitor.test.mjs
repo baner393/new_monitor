@@ -49,10 +49,13 @@ test('normalizes and summarizes the complete hardware sensor inventory', () => {
   assert.equal(snapshot.access.sensorCount, 6);
   assert.equal(snapshot.access.permissionRecommended, false);
   assert.equal(snapshot.cpu.temperatureC, 63);
+  assert.equal(snapshot.cpu.hardwareIdentifier, '/cpu/0');
   assert.equal(snapshot.cpu.powerWatts, 82.5);
   assert.equal(snapshot.gpu.temperatureC, 55);
+  assert.equal(snapshot.gpu.hardwareIdentifier, '/gpu/0');
   assert.equal(snapshot.gpu.fanRpm, 1200);
   assert.equal(snapshot.storage[0].temperatureC, 44);
+  assert.equal(snapshot.storage[0].hardwareIdentifier, '/storage/0');
   assert.equal(snapshot.storage[0].lifePercent, 97);
   assert.equal(snapshot.sensors.length, 6);
 });

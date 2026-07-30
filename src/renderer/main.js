@@ -149,16 +149,23 @@ Object.defineProperty(sprite, 'texture', {
 
 // ── System Monitor Panel ───────────────────────────────────────────────
 const panel = new Panel({
-  onVisibilityChange: (visibility) => window.electronAPI.monitor?.setVisibility(visibility),
+  onConfigurationCommit: (config) => window.electronAPI.monitor?.saveConfiguration(config),
   onRequestElevation: () => window.electronAPI.monitor?.requestElevation(),
 });
 pixiApp.stage.addChild(panel.container);
 try {
-  const monitorVisibility = await window.electronAPI.monitor?.getVisibility();
-  if (monitorVisibility) panel.setVisibility(monitorVisibility);
+  const monitorConfiguration = await window.electronAPI.monitor?.getConfiguration();
+  if (monitorConfiguration) panel.setConfiguration(monitorConfiguration);
 } catch (error) {
-  console.warn('[Monitor] Failed to load visibility settings:', error);
+  console.warn('[Monitor] Failed to load panel configuration:', error);
+  try {
+    const monitorVisibility = await window.electronAPI.monitor?.getVisibility();
+    if (monitorVisibility) panel.setVisibility(monitorVisibility);
+  } catch (legacyError) {
+    console.warn('[Monitor] Failed to load legacy visibility settings:', legacyError);
+  }
 }
+window.addEventListener('beforeunload', () => panel.commitPendingConfiguration());
 
 // ── Settings Panel ─────────────────────────────────────────────────────
 const settingsPanel = new SettingsPanel();

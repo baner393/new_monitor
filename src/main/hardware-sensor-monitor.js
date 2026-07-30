@@ -90,6 +90,7 @@ export function parseHardwareSensorSnapshot(value) {
   }
   for (const group of storageGroups.values()) {
     storageSensors.push({
+      hardwareIdentifier: group[0]?.hardwareIdentifier || null,
       name: group[0]?.hardwareName || 'Storage',
       temperatureC: preferredValue(group, 'Temperature', [/temperature|composite/i]),
       lifePercent: preferredValue(group, 'Level', [/remaining life|life/i]),
@@ -100,6 +101,8 @@ export function parseHardwareSensorSnapshot(value) {
 
   const cpu = summarizeDeviceSensors(cpuSensors);
   const gpu = summarizeDeviceSensors(gpuSensors);
+  cpu.hardwareIdentifier = cpuSensors[0]?.hardwareIdentifier || null;
+  gpu.hardwareIdentifier = gpuSensors[0]?.hardwareIdentifier || null;
   const hasCpuHardware = hardware.some((device) => /^Cpu$/i.test(device.hardwareType));
   const protectedCpuDataMissing = hasCpuHardware && cpu.temperatureC === null;
   const cpuPowerValues = valuesOfType(cpuSensors, 'Power').map((sensor) => sensor.value);
