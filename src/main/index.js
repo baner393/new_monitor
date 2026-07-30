@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Menu, dialog, screen } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu, dialog, screen, shell } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import { SystemMonitor } from './system-monitor.js';
@@ -15,12 +15,18 @@ import {
   resolveCustomResourcePath,
   SoftRefreshCoordinator,
 } from './window-lifecycle.js';
+import { CodexMonitor, resolveCodexHome } from './codex-monitor.js';
+import {
+  DEFAULT_CODEX_INTEGRATION_CONFIG,
+  normalizeCodexIntegrationConfig,
+} from '../shared/codex-integration.js';
 
 let mainWindow;
 let customWindow;
 let canvasWindow;
 let regionWindow;
 let systemMonitor;
+let codexMonitor;
 let mainWindowInputGuard;
 let mainWindowRefreshCoordinator;
 let pendingWindowRecovery = null;
@@ -90,6 +96,7 @@ const DEFAULT_SETTINGS = {
   panelMoveStable:  true,
   monitorVisibility: toLegacyMonitorVisibility(DEFAULT_MONITOR_PANEL),
   monitorPanel: DEFAULT_MONITOR_PANEL,
+  codexIntegration: DEFAULT_CODEX_INTEGRATION_CONFIG,
 };
 
 let currentSettings = { ...DEFAULT_SETTINGS };
@@ -103,6 +110,7 @@ function loadSettings() {
         ? normalizeMonitorPanelConfig(data.monitorPanel)
         : migrateLegacyMonitorVisibility(data.monitorVisibility, DEFAULT_MONITOR_PANEL);
       currentSettings.monitorVisibility = toLegacyMonitorVisibility(currentSettings.monitorPanel);
+      currentSettings.codexIntegration = normalizeCodexIntegrationConfig(data.codexIntegration);
       console.log('[Settings] Loaded from', SETTINGS_PATH);
     }
   } catch (err) {
@@ -141,6 +149,39 @@ ipcMain.handle('monitor-settings-get', () => ({
 }));
 
 ipcMain.handle('monitor-panel-config-get', () => normalizeMonitorPanelConfig(currentSettings.monitorPanel));
+
+ipcMain.handle('codex-config-get', () => normalizeCodexIntegrationConfig(currentSettings.codexIntegration));
+
+ipcMain.handle('codex-config-set', (_event, config) => {
+  currentSettings.codexIntegration = codexMonitor
+    ? codexMonitor.updateConfig(config)
+    : normalizeCodexIntegrationConfig(config);
+  if (!codexMonitor) saveSettings();
+  return currentSettings.codexIntegration;
+});
+
+ipcMain.handle('codex-home-select', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: '选择 Codex 数据目录',
+    properties: ['openDirectory'],
+    defaultPath: resolveCodexHome(currentSettings.codexIntegration) || app.getPath('home'),
+  });
+  if (result.canceled || !result.filePaths.length) return null;
+  return result.filePaths[0];
+});
+
+ipcMain.handle('codex-status-get', () => codexMonitor?.getSnapshot() || null);
+ipcMain.handle('codex-refresh', async () => {
+  await codexMonitor?.scan(true);
+  return codexMonitor?.getSnapshot() || null;
+});
+ipcMain.handle('codex-mark-read', (_event, eventId) => codexMonitor?.markRead(eventId) || null);
+ipcMain.handle('codex-reply', (_event, payload) => codexMonitor?.reply(payload?.threadId, payload?.text));
+ipcMain.handle('codex-respond', (_event, payload) => codexMonitor?.respond(payload?.requestId, payload?.response));
+ipcMain.handle('codex-open-app', async () => {
+  await shell.openExternal('codex://');
+  return { opened: true };
+});
 
 ipcMain.on('monitor-panel-config-set', (_event, config) => {
   currentSettings.monitorPanel = normalizeMonitorPanelConfig(config);
@@ -188,7 +229,9 @@ ipcMain.handle('settings-reset', () => {
     ...DEFAULT_SETTINGS,
     monitorPanel,
     monitorVisibility: toLegacyMonitorVisibility(monitorPanel),
+    codexIntegration: normalizeCodexIntegrationConfig(DEFAULT_CODEX_INTEGRATION_CONFIG),
   };
+  codexMonitor?.updateConfig(currentSettings.codexIntegration);
   saveSettings();
   return { ...currentSettings };
 });
@@ -405,11 +448,23 @@ function createWindow({ show = true } = {}) {
     systemMonitor = new SystemMonitor(browserWindow, 2000, { sensorHostPath });
     systemMonitor.start();
   }
+  if (codexMonitor) {
+    codexMonitor.setWindow(browserWindow);
+    codexMonitor.scan(true);
+  }
   return browserWindow;
 }
 
 // ── Launch on Windows ──────────────────────────────────────────────
 app.whenReady().then(() => {
+  codexMonitor = new CodexMonitor({
+    config: currentSettings.codexIntegration,
+    onConfigChange: (config) => {
+      currentSettings.codexIntegration = config;
+      saveSettings();
+    },
+  });
+  codexMonitor.start();
   createWindow();
 });
 
@@ -455,6 +510,7 @@ ipcMain.on('request-system-data', () => {
   if (systemMonitor) {
     systemMonitor.requestSnapshot();
   }
+  codexMonitor?.scan(true);
 });
 
 ipcMain.handle('monitor-request-elevation', async () => {
@@ -920,12 +976,14 @@ process.on('uncaughtException', (err) => {
 
 app.on('window-all-closed', () => {
   if (systemMonitor) systemMonitor.stop();
+  codexMonitor?.stop();
   if (process.platform !== 'darwin') {
     app.quit();
   }
 });
 
 app.on('before-quit', () => {
+  codexMonitor?.stop();
   if (__IS_SPONSOR__) {
     if (canvasWindow && !canvasWindow.isDestroyed()) {
       canvasWindow.destroy();

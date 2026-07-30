@@ -39,6 +39,9 @@ export const COLLAPSING      = 'COLLAPSING';
 export const PULLEY_MOMENTUM = 'PULLEY_MOMENTUM';
 export const PULLEY_DRAG     = 'PULLEY_DRAG';
 export const PULLEY_PHYSICS  = 'PULLEY_PHYSICS';
+export const CODEX_CONFIG_OPENING = 'CODEX_CONFIG_OPENING';
+export const CODEX_CONFIG_OPEN = 'CODEX_CONFIG_OPEN';
+export const CODEX_CONFIG_CLOSING = 'CODEX_CONFIG_CLOSING';
 
 /** All valid states as an array (handy for iteration / validation). */
 export const ALL_STATES = [
@@ -53,6 +56,9 @@ export const ALL_STATES = [
   PULLEY_MOMENTUM,
   PULLEY_DRAG,
   PULLEY_PHYSICS,
+  CODEX_CONFIG_OPENING,
+  CODEX_CONFIG_OPEN,
+  CODEX_CONFIG_CLOSING,
 ];
 
 // ─── Transition Table ───────────────────────────────────────────────
@@ -80,7 +86,19 @@ const TRANSITIONS = {
   },
 
   [BOUNCING]: {
-    BOUNCE_COMPLETE: (ctx) => (ctx && ctx.pullExceeded) ? EXPANDING : IDLE,
+    BOUNCE_COMPLETE: (ctx) => (ctx && ctx.pullExceeded) ? EXPANDING : CODEX_CONFIG_OPENING,
+  },
+
+  [CODEX_CONFIG_OPENING]: {
+    CODEX_CONFIG_OPENED: CODEX_CONFIG_OPEN,
+  },
+
+  [CODEX_CONFIG_OPEN]: {
+    CLICK_OUTSIDE: CODEX_CONFIG_CLOSING,
+  },
+
+  [CODEX_CONFIG_CLOSING]: {
+    CODEX_CONFIG_CLOSED: IDLE,
   },
 
   [EXPANDING]: {

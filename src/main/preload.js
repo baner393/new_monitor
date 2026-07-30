@@ -57,6 +57,24 @@ contextBridge.exposeInMainWorld('electronAPI', {
     requestElevation: () => ipcRenderer.invoke('monitor-request-elevation'),
   },
 
+  /** Local Codex conversation sync and optional app-server managed replies. */
+  codex: {
+    getConfig: () => ipcRenderer.invoke('codex-config-get'),
+    saveConfig: (config) => ipcRenderer.invoke('codex-config-set', config),
+    selectHome: () => ipcRenderer.invoke('codex-home-select'),
+    getStatus: () => ipcRenderer.invoke('codex-status-get'),
+    refresh: () => ipcRenderer.invoke('codex-refresh'),
+    markRead: (eventId) => ipcRenderer.invoke('codex-mark-read', eventId),
+    reply: (threadId, text) => ipcRenderer.invoke('codex-reply', { threadId, text }),
+    respond: (requestId, response) => ipcRenderer.invoke('codex-respond', { requestId, response }),
+    openApp: () => ipcRenderer.invoke('codex-open-app'),
+    onStatus: (callback) => {
+      const listener = (_event, snapshot) => callback(snapshot);
+      ipcRenderer.on('codex-status', listener);
+      return () => ipcRenderer.removeListener('codex-status', listener);
+    },
+  },
+
   /**
    * Resize the BrowserWindow.
    * @param {{ width: number, height: number }} bounds

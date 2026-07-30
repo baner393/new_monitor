@@ -1,6 +1,7 @@
 // Import blink state constants and modules at the top
 import * as PIXI from 'pixi.js';
 import { BaseTexture, SCALE_MODES } from 'pixi.js';
+import './index.css';
 const publicAssetUrl = (relativePath) => new URL(relativePath, window.location.href).href;
 const idleSpriteUrl = publicAssetUrl('./assets/sprites/idle.png');
 const hoverSpriteUrl = publicAssetUrl('./assets/sprites/hover.png');
@@ -16,6 +17,7 @@ import { Panel } from './panel.js';
 import { SettingsPanel } from './settings.js';
 import { ROPE_ELASTICITY_STEPS } from './settings.js';
 import { SkinSelector } from './skin-selector.js';
+import { CodexCompanion } from './codex-companion.js';
 
 // ── Font loading gate ─────────────────────────────────────────────────
 async function waitForFonts() {
@@ -79,6 +81,7 @@ let pullTexture  = PIXI.Texture.from(pullSpriteUrl);
 let happyTexture = PIXI.Texture.from(happySpriteUrl);
 let painTexture  = PIXI.Texture.from(painSpriteUrl);
 let blinkTexture = PIXI.Texture.from(blinkSpriteUrl);
+let codexMood = 'idle';
 
 // ── State Machine Presets ──────────────────────────────────────────────
 //
@@ -98,9 +101,17 @@ let blinkTexture = PIXI.Texture.from(blinkSpriteUrl);
 function setSpriteTextureForState(state) {
   switch (state) {
     case 'IDLE':
-      bodySprite.texture = idleTexture;
+      bodySprite.texture = codexMood === 'happy' ? happyTexture
+        : codexMood === 'pain' ? painTexture
+          : (codexMood === 'working' || codexMood === 'attention') ? hoverTexture : idleTexture;
       break;
     case 'HOVER':
+      bodySprite.texture = codexMood === 'happy' ? happyTexture
+        : codexMood === 'pain' ? painTexture : hoverTexture;
+      break;
+    case 'CODEX_CONFIG_OPENING':
+    case 'CODEX_CONFIG_OPEN':
+    case 'CODEX_CONFIG_CLOSING':
       bodySprite.texture = hoverTexture;
       break;
     case 'PULLING':
@@ -166,6 +177,25 @@ try {
   }
 }
 window.addEventListener('beforeunload', () => panel.commitPendingConfiguration());
+
+// Codex uses a DOM overlay for selectable long messages, text input and
+// approvals. It shares the transparent window, but only its visible bounds
+// participate in hit testing.
+const codexCompanion = new CodexCompanion({
+  onInteractionChange: () => requestAnimationFrame(() => synchronizeMousePassthroughFromSystem(true)),
+  onConfigClosed: () => {
+    if (stateMachine.getState() === 'CODEX_CONFIG_OPEN') {
+      stateMachine.transition('CLICK_OUTSIDE');
+    }
+  },
+  onMoodChange: (mood) => {
+    codexMood = mood;
+    const state = stateMachine.getState();
+    if (state === 'IDLE' || state === 'HOVER') setSpriteTextureForState(state);
+  },
+});
+await codexCompanion.initialize();
+window.addEventListener('beforeunload', () => codexCompanion.destroy());
 
 // ── Settings Panel ─────────────────────────────────────────────────────
 const settingsPanel = new SettingsPanel();
@@ -348,6 +378,18 @@ document.addEventListener('mousedown', (e) => {
   }
 }, true);
 
+document.addEventListener('mousedown', (event) => {
+  const insideCodex = codexCompanion.containsPoint(event.clientX, event.clientY);
+  if (stateMachine.getState() === 'CODEX_CONFIG_OPEN' && !insideCodex) {
+    stateMachine.transition('CLICK_OUTSIDE');
+    return;
+  }
+  if (!insideCodex && codexCompanion.capturesOutsideClicks) {
+    document.activeElement?.blur?.();
+    requestAnimationFrame(() => synchronizeMousePassthroughFromSystem(true));
+  }
+}, true);
+
 // ── Input Manager ──────────────────────────────────────────────────────
 const inputManager = new InputManager({
   pixiApp,
@@ -359,49 +401,63 @@ inputManager.enable();
 
 // ── Transparent click-through ──────────────────────────────────────────
 let isOverSprite = false;
+let lastMousePassthrough = true;
 
 function synchronizeMousePassthrough(x, y, force = false) {
   const state = stateMachine.getState();
   if (state === 'PULLING' || state === 'PULLEY_DRAG') {
     window.electronAPI.setIgnoreMouseEvents(false);
+    lastMousePassthrough = false;
     return false;
   }
 
   // Also keep mouse events when panel is open
   if (state === 'PANEL_OPEN' || state === 'EXPANDING' || state === 'COLLAPSING' || state === 'HAPPY') {
     window.electronAPI.setIgnoreMouseEvents(false);
+    lastMousePassthrough = false;
+    return false;
+  }
+
+  if (state === 'CODEX_CONFIG_OPENING' || state === 'CODEX_CONFIG_OPEN' || state === 'CODEX_CONFIG_CLOSING'
+    || codexCompanion.capturesOutsideClicks) {
+    window.electronAPI.setIgnoreMouseEvents(false);
+    lastMousePassthrough = false;
     return false;
   }
 
   // Keep mouse events when settings panel is open
   if (settingsPanel.isOpen || settingsPanel.isAnimating) {
     window.electronAPI.setIgnoreMouseEvents(false);
+    lastMousePassthrough = false;
     return false;
   }
 
   // Keep mouse events when skin selector is open
   if (skinSelector.isOpen) {
     window.electronAPI.setIgnoreMouseEvents(false);
+    lastMousePassthrough = false;
     return false;
   }
   
   const bounds = sprite.getBounds();
-  const over =
+  const overSprite =
     x >= bounds.x &&
     x <= bounds.x + bounds.width &&
     y >= bounds.y &&
     y <= bounds.y + bounds.height;
-
-  const changed = over !== isOverSprite;
-  if (changed || force) {
-    isOverSprite = over;
-    window.electronAPI.setIgnoreMouseEvents(!over);
-    if (changed) sprite.emit(over ? 'pointerover' : 'pointerout');
+  const overCodex = codexCompanion.containsPoint(x, y);
+  const ignore = !(overSprite || overCodex);
+  const changed = overSprite !== isOverSprite;
+  if (changed || force || ignore !== lastMousePassthrough) {
+    isOverSprite = overSprite;
+    lastMousePassthrough = ignore;
+    window.electronAPI.setIgnoreMouseEvents(ignore);
+    if (changed) sprite.emit(overSprite ? 'pointerover' : 'pointerout');
   }
   if (force) {
-    console.log(`[Input] Cursor synchronized after load: ${over ? 'interactive' : 'passthrough'}`);
+    console.log(`[Input] Cursor synchronized after load: ${ignore ? 'passthrough' : 'interactive'}`);
   }
-  return !over;
+  return ignore;
 }
 
 async function synchronizeMousePassthroughFromSystem(force = false, announceReady = false) {
@@ -449,9 +505,11 @@ if (window.electronAPI?.onSoftRefresh) {
       const state = stateMachine.getState();
       const transientState = [
         'PULLING', 'BOUNCING', 'EXPANDING', 'COLLAPSING', 'PULLEY_DRAG',
+        'CODEX_CONFIG_OPENING', 'CODEX_CONFIG_OPEN', 'CODEX_CONFIG_CLOSING',
       ].includes(state);
 
       inputManager.resetInteraction();
+      codexCompanion.settleForRefresh();
       if (transientState) {
         const panelOpen = panel.settleForRefresh();
         settingsPanel.settleForRefresh();
@@ -606,6 +664,7 @@ let prevState = 'IDLE';
 
 function onStateChange() {
   const newState = stateMachine.getState();
+  if (newState === prevState) return;
   setSpriteTextureForState(newState);
 
   // Capture bounce start position on PULLING → BOUNCING transition
@@ -635,6 +694,21 @@ function onStateChange() {
       console.log('[Panel] Fully open → PANEL_OPEN');
       stateMachine.transition('PANEL_FULLY_OPEN');
     });
+  }
+
+  if (prevState === 'BOUNCING' && newState === 'CODEX_CONFIG_OPENING') {
+    window.electronAPI.setIgnoreMouseEvents(false);
+    codexCompanion.openConfig();
+    stateMachine.transition('CODEX_CONFIG_OPENED');
+  }
+
+  if (newState === 'CODEX_CONFIG_CLOSING') {
+    codexCompanion.closeConfig({ notify: false });
+    stateMachine.transition('CODEX_CONFIG_CLOSED');
+  }
+
+  if (prevState === 'CODEX_CONFIG_CLOSING' && newState === 'IDLE') {
+    synchronizeMousePassthroughFromSystem(true);
   }
 
   // PANEL_OPEN → COLLAPSING: close panel
@@ -784,7 +858,7 @@ pixiApp.ticker.add((delta) => {
         isBlinking = false;
         blinkTimer = 0;
         nextBlinkAt = 3 + Math.random() * 2;
-        bodySprite.texture = idleTexture; // eyes open
+        setSpriteTextureForState(state); // eyes open, preserving Codex activity mood
       }
     }
   } else {
@@ -948,6 +1022,18 @@ pixiApp.ticker.add((delta) => {
     const pendulumY = anchorY + Math.cos(physics.pendulumAngle) * physics.ropeLength;
     sprite.x = pendulumX;
     sprite.y = pendulumY;
+  }
+
+  const suppressCodexBubbles = [
+    'EXPANDING', 'HAPPY', 'PANEL_OPEN', 'COLLAPSING',
+    'CODEX_CONFIG_OPENING', 'CODEX_CONFIG_OPEN', 'CODEX_CONFIG_CLOSING',
+  ].includes(state) || settingsPanel.isOpen || settingsPanel.isAnimating || skinSelector.isOpen;
+  codexCompanion.setBubblesSuppressed(suppressCodexBubbles);
+  codexCompanion.setAnchor(sprite.x, sprite.y);
+  codexCompanion.updateFrame();
+  if ((state === 'IDLE' || state === 'HOVER') && codexMood !== codexCompanion.mood) {
+    codexMood = codexCompanion.mood;
+    setSpriteTextureForState(state);
   }
 
   // Draw rope with natural sag (or tension-based for throw physics)

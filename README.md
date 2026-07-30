@@ -23,6 +23,12 @@ Windows 桌面系统监控宠物，使用 Electron、PixiJS 和 Vite 构建。
 
 仓库已经包含可直接运行的 x64 `.NET Framework 4.7.2` 传感器宿主，因此普通使用者拉取后只需 `npm ci` 和启动命令，不需要安装 .NET SDK。维护者需要重建该宿主时运行 `npm run build:sensor-host`；固定依赖、许可证与文件哈希见 `native/HardwareSensorHost`、`third_party/LibreHardwareMonitor` 和 `resources/hardware-sensor/manifest.json`。
 
+## Codex 桌宠接入
+
+短按桌宠左键会打开 Codex 接入配置，向下拉动超过 80 像素仍会打开硬件监控面板。接入默认关闭；启用后会自动定位当前用户的 `.codex`，也可以手动选择其他数据目录。路径只保存在 Electron `userData`，不写入仓库或绑定某台电脑。
+
+程序会安静同步本机任务，只有新回复、等待选择或执行受阻等未读事件才显示透明气泡。完整回复可滚动和翻页；由气泡继续的任务会通过 Codex App Server 支持直接输入、回答问题和处理操作审批。运行中使用 `hover`，等待操作使用注意状态，完成使用 `happy`，受阻使用 `pain`；硬件面板、设置或皮肤窗口打开时会暂时收起气泡，关闭后继续显示未读内容。免费版与赞助版共用这一套接入逻辑。
+
 ## 本地开发
 
 要求 Node.js 22 或更高版本。
