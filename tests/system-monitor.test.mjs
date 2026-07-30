@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   calculateCpuUsage,
+  matchHardwareGpu,
   mergeSnapshots,
   parseWindowsSystemOutput,
 } from '../src/main/system-monitor.js';
@@ -29,10 +30,12 @@ test('normalizes Windows capacities and cumulative network fallback', () => {
   const payload = JSON.stringify({
     provider: 'windows-cim',
     sources: ['Get-NetAdapterStatistics'],
+    probeErrors: [{ probe: 'thermal-zone-cim', code: 'query_failed', message: 'Class not supported' }],
     system: { osName: 'Windows', processCount: 123 },
     cpu: { physicalCores: 8, logicalCores: 16 },
     memory: { totalBytes: 1000, availableBytes: 250 },
     disks: [{ name: 'C:', sizeBytes: 1000, freeBytes: 200 }],
+    physicalDisks: [{ name: 'SSD', mediaType: 'SSD', healthStatus: 'Healthy', sizeBytes: 1000, temperatureC: 41, wearPercent: 3 }],
     diskIo: { mode: 'cumulative', readBytesPerSec: 5000, writeBytesPerSec: 3000, transfersPerSec: 100 },
     networkInterfaces: [{ name: 'Ethernet', mode: 'cumulative', download: 1500, upload: 900 }],
     gpu: {
@@ -57,6 +60,8 @@ test('normalizes Windows capacities and cumulative network fallback', () => {
   assert.equal(parsed.snapshot.memory.usedBytes, 750);
   assert.equal(parsed.snapshot.memory.usage, 75);
   assert.equal(parsed.snapshot.disks[0].usage, 80);
+  assert.equal(parsed.snapshot.physicalDisks[0].temperatureC, 41);
+  assert.equal(parsed.snapshot.probeErrors[0].probe, 'thermal-zone-cim');
   assert.equal(parsed.snapshot.diskIo.readBytesPerSec, 500);
   assert.equal(parsed.snapshot.diskIo.writeBytesPerSec, 500);
   assert.equal(parsed.snapshot.network.downloadBytesPerSec, 250);
@@ -131,4 +136,13 @@ test('hardware sensors enrich OS counters without replacing their fallbacks', ()
   assert.equal(merged.gpu.temperatureC, 52);
   assert.equal(merged.gpu.fanRpm, 1100);
   assert.ok(merged.providers.includes('librehardwaremonitor'));
+});
+
+test('matches hardware readings to the correct GPU without guessing between multiple adapters', () => {
+  const hardware = [
+    { name: 'NVIDIA GeForce RTX 4070', temperatureC: 50 },
+    { name: 'AMD Radeon RX 590', temperatureC: 60 },
+  ];
+  assert.equal(matchHardwareGpu('AMD Radeon RX590 GME', hardware).temperatureC, 60);
+  assert.equal(matchHardwareGpu('Unknown virtual adapter', hardware), null);
 });

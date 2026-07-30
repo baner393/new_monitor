@@ -19,7 +19,7 @@ Windows 桌面系统监控宠物，使用 Electron、PixiJS 和 Vite 构建。
 
 配置以版本化 `MonitorPanelConfigV2` 保存在 Electron `userData` 中，并区分“期望显示”与“当前可显示”：设备暂时缺失时不会丢失用户设置，之后重新检测到会按原顺序自动出现。旧版 `monitorVisibility` 会在首次读取时自动迁移，旧接口仍保留兼容包装。免费版与赞助版共用同一套监控、管理和动效逻辑。
 
-采集采用 Node 原生接口、Windows CIM、本地化性能计数器、累计计数差值、显卡厂商工具和 LibreHardwareMonitor 0.9.6 的多级回退。底层宿主独立运行；整理字段缺失时，概览会从完整原始传感器清单补齐可识别的温度、负载和功耗。单个传感器或宿主异常不会阻塞桌宠和基础占用率，也不会把不存在或未开放的值伪造成 `0`。
+采集采用 Node 原生接口、Windows CIM、性能计数器、系统累计计数、显卡厂商工具和 LibreHardwareMonitor 0.9.6 的多级回退。同一指标只选择当前有效且来源最直接的值，逐核心、逐硬盘、逐网卡和逐传感器数据仍完整保留。详情页底部的“读取说明”会区分设备不存在、首次采样、权限拒绝、查询失败、传感器空值以及驱动或固件接口未公开，不会把不同情况混成笼统占位，也不会用 `0` 伪造读数。
 
 仓库已经包含可直接运行的 x64 `.NET Framework 4.7.2` 传感器宿主，因此普通使用者拉取后只需 `npm ci` 和启动命令，不需要安装 .NET SDK。维护者需要重建该宿主时运行 `npm run build:sensor-host`；固定依赖、许可证与文件哈希见 `native/HardwareSensorHost`、`third_party/LibreHardwareMonitor` 和 `resources/hardware-sensor/manifest.json`。
 

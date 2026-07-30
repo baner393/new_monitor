@@ -52,6 +52,8 @@ test('normalizes and summarizes the complete hardware sensor inventory', () => {
   assert.equal(snapshot.cpu.hardwareIdentifier, '/cpu/0');
   assert.equal(snapshot.cpu.powerWatts, 82.5);
   assert.equal(snapshot.gpu.temperatureC, 55);
+  assert.equal(snapshot.gpus.length, 1);
+  assert.equal(snapshot.gpus[0].name, 'GPU');
   assert.equal(snapshot.gpu.hardwareIdentifier, '/gpu/0');
   assert.equal(snapshot.gpu.fanRpm, 1200);
   assert.equal(snapshot.storage[0].temperatureC, 44);
@@ -90,6 +92,31 @@ test('does not present unsupported all-zero CPU power counters as a real reading
   assert.equal(snapshot.cpu.powerWatts, null);
 });
 
+test('does not present an all-zero GPU fan placeholder as measured RPM', () => {
+  const snapshot = parseHardwareSensorSnapshot({
+    type: 'snapshot',
+    protocolVersion: 1,
+    elevated: false,
+    hardware: [{ identifier: '/gpu/0', name: 'GPU', hardwareType: 'GpuAmd' }],
+    sensors: [
+      sensor({
+        identifier: '/gpu/0/fan/0', hardwareIdentifier: '/gpu/0', hardwareName: 'GPU', hardwareType: 'GpuAmd',
+        sensorType: 'Fan', name: 'GPU Fan', value: 0, min: 0, max: 0,
+      }),
+      sensor({
+        identifier: '/gpu/0/control/0', hardwareIdentifier: '/gpu/0', hardwareName: 'GPU', hardwareType: 'GpuAmd',
+        sensorType: 'Control', name: 'GPU Fan', value: 0, min: 0, max: 0,
+      }),
+    ],
+  });
+
+  assert.equal(snapshot.gpu.fanRpm, null);
+  assert.equal(snapshot.gpu.fanPercent, null);
+  assert.equal(snapshot.fans.length, 0);
+  assert.equal(snapshot.sensors[0].reasonCode, 'zero_fan_unconfirmed');
+  assert.match(snapshot.sensors[0].reason, /停转模式/);
+});
+
 test('resolves source and packaged sensor hosts without machine-specific paths', () => {
   assert.equal(resolveHardwareSensorHostPath({
     appPath: path.join('D:', 'apps', 'monitor'),
@@ -105,4 +132,16 @@ test('resolves source and packaged sensor hosts without machine-specific paths',
 
 test('rejects incompatible host protocol payloads', () => {
   assert.throws(() => parseHardwareSensorSnapshot({ type: 'snapshot', protocolVersion: 2 }), /incompatible/);
+});
+
+test('maps device update failures and empty sensor values to specific reasons', () => {
+  const snapshot = parseHardwareSensorSnapshot({
+    type: 'snapshot', protocolVersion: 1, elevated: false,
+    hardware: [{ identifier: '/cpu/0', name: 'CPU', hardwareType: 'Cpu' }],
+    sensors: [sensor({ hardwareIdentifier: '/cpu/0', hardwareName: 'CPU', value: null })],
+    errors: ['/cpu/0: Access denied'],
+  });
+  assert.equal(snapshot.issues[0].code, 'permission_required');
+  assert.equal(snapshot.sensors[0].reasonCode, 'permission_required');
+  assert.equal(snapshot.access.permissionEvidence, true);
 });

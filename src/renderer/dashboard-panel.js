@@ -80,11 +80,11 @@ function clamp(value, min, max) {
 }
 
 function percent(value) {
-  return finite(value) === null ? '读取源缺失' : `${Math.round(value)}%`;
+  return finite(value) === null ? '详情有说明' : `${Math.round(value)}%`;
 }
 
 function formatBytes(value, perSecond = false) {
-  if (finite(value) === null) return '读取源缺失';
+  if (finite(value) === null) return '详情有说明';
   const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
   let amount = Math.max(0, value);
   let unit = 0;
@@ -98,17 +98,17 @@ function formatBytes(value, perSecond = false) {
 
 function formatPair(used, total) {
   return finite(used) === null || finite(total) === null
-    ? '读取源缺失'
+    ? '详情有说明'
     : `${formatBytes(used)} / ${formatBytes(total)}`;
 }
 
 function formatClock(mhz) {
-  if (finite(mhz) === null) return '读取源缺失';
+  if (finite(mhz) === null) return '详情有说明';
   return mhz >= 1000 ? `${(mhz / 1000).toFixed(2)} GHz` : `${Math.round(mhz)} MHz`;
 }
 
 function formatDuration(seconds) {
-  if (finite(seconds) === null) return '读取源缺失';
+  if (finite(seconds) === null) return '详情有说明';
   const totalMinutes = Math.floor(seconds / 60);
   const days = Math.floor(totalMinutes / 1440);
   const hours = Math.floor((totalMinutes % 1440) / 60);
@@ -117,7 +117,7 @@ function formatDuration(seconds) {
 }
 
 function truncate(value, maxLength) {
-  const text = String(value ?? '读取源缺失');
+  const text = String(value ?? '详情有说明');
   return text.length > maxLength ? `${text.slice(0, maxLength - 1)}…` : text;
 }
 
@@ -218,33 +218,83 @@ function diskTotals(disks) {
 
 function sensorUnavailable(data, notApplicable = false) {
   if (notApplicable) return '本机无此设备';
-  if (data?.diagnostics?.hardwareSensorError) return '传感器读取源异常';
-  const access = data?.hardwareSensors?.access;
-  if (!access) return '传感器组件未就绪';
-  if (!access.elevated && access.permissionRecommended) return '需要管理员权限';
-  return access.elevated ? '硬件 / 固件未开放' : '权限受限或硬件未开放';
+  if (data?.diagnostics?.hardwareSensorError) return '硬件传感器本次读取失败';
+  if (!data?.hardwareSensors) return '硬件传感器组件没有启动';
+  return '当前驱动或固件接口没有公开此项';
 }
 
-function formatSensorValue(sensor, data) {
-  const value = finite(sensor?.value);
-  if (value === null) return sensorUnavailable(data);
-  const formats = {
-    Temperature: () => `${value.toFixed(1)} °C`,
-    Fan: () => `${Math.round(value)} RPM`,
-    Voltage: () => `${value.toFixed(3)} V`,
-    Current: () => `${value.toFixed(3)} A`,
-    Power: () => `${value.toFixed(2)} W`,
-    Clock: () => formatClock(value),
-    Load: () => `${value.toFixed(1)}%`,
-    Control: () => `${value.toFixed(1)}%`,
-    Level: () => `${value.toFixed(1)}%`,
-    Data: () => `${value.toFixed(2)} GB`,
-    SmallData: () => `${value.toFixed(2)} MB`,
-    Throughput: () => `${value.toFixed(1)} B/s`,
-    Energy: () => `${value.toFixed(2)} mWh`,
-    Frequency: () => `${value.toFixed(1)} Hz`,
+function unavailableMetric(data, key, cardId, notApplicable = false) {
+  if (notApplicable) return '本机没有检测到对应设备';
+  const issues = data?.availability || [];
+  const issue = issues.find((item) => item.key === key)
+    || issues.find((item) => item.cardId === cardId);
+  return issue?.reason || sensorUnavailable(data);
+}
+
+const PROVIDER_LABELS = Object.freeze({
+  'node-os': '系统基础信息',
+  'windows-cim': 'Windows',
+  'windows-storage': 'Windows 存储',
+  'performance-counter': '性能计数器',
+  'process-io-delta': '进程 I/O 计数',
+  'network-adapter-statistics': '网卡统计',
+  'netstat-e': '系统网络统计',
+  'nvidia-smi': 'NVIDIA',
+  librehardwaremonitor: '硬件传感器',
+});
+
+function formatMetricValue(metric) {
+  const value = finite(metric?.value);
+  if (metric?.kind === 'text') return String(metric.value || '');
+  if (value === null) return '';
+  if (metric.kind === 'bytes') return formatBytes(value);
+  if (metric.kind === 'bytes-per-second') return formatBytes(value, true);
+  if (metric.kind === 'bits-per-second') {
+    const units = ['bit/s', 'Kbit/s', 'Mbit/s', 'Gbit/s'];
+    let scaled = value;
+    let index = 0;
+    while (scaled >= 1000 && index < units.length - 1) { scaled /= 1000; index += 1; }
+    return `${scaled >= 100 ? scaled.toFixed(0) : scaled.toFixed(1)} ${units[index]}`;
+  }
+  if (metric.kind === 'clock') return formatClock(value);
+  if (metric.kind === 'temperature') return `${value.toFixed(1)} °C`;
+  if (metric.kind === 'percent') return `${value.toFixed(1)}%`;
+  if (metric.kind === 'fan') return `${Math.round(value)} RPM`;
+  if (metric.kind === 'power') return `${value.toFixed(2)} W`;
+  if (metric.kind === 'power-mw') return `${Math.round(value)} mW`;
+  if (metric.kind === 'voltage') return `${value.toFixed(3)} V`;
+  if (metric.kind === 'current') return `${value.toFixed(3)} A`;
+  if (metric.kind === 'duration') return formatDuration(value);
+  if (metric.kind === 'duration-minutes') return `${Math.round(value)} 分钟`;
+  if (metric.kind === 'integer') return Math.round(value).toLocaleString('zh-CN');
+  return `${Number.isInteger(value) ? value : value.toFixed(2)}${metric.unit ? ` ${metric.unit}` : ''}`;
+}
+
+function metricPresentation(metric) {
+  const presentations = {
+    temperature: ['温度', COLORS.cooling],
+    percent: ['比例', COLORS.cpu],
+    bytes: ['容量', COLORS.storage],
+    'bytes-per-second': ['速度', COLORS.network],
+    'bits-per-second': ['带宽', COLORS.network],
+    clock: ['频率', COLORS.memory],
+    fan: ['风扇', COLORS.cooling],
+    power: ['功耗', COLORS.power],
+    'power-mw': ['功耗', COLORS.power],
+    voltage: ['电压', COLORS.upload],
+    current: ['电流', COLORS.storage],
+    text: ['状态', COLORS.muted],
   };
-  return formats[sensor.sensorType]?.() || value.toFixed(2);
+  return presentations[metric?.kind] || ['数据', COLORS.dim];
+}
+
+function issueTypeLabel(issue) {
+  return {
+    Temperature: '温度', Power: '功耗', Load: '负载', Clock: '频率',
+    Fan: '风扇', Control: '控制', Voltage: '电压', Current: '电流',
+    Throughput: '速度', Data: '容量', SmallData: '容量', Level: '比例',
+    Energy: '能量', Frequency: '频率',
+  }[issue?.sensorType] || (issue?.reasonCode === 'device_absent' ? '设备' : '指标');
 }
 
 function makeButton(parent, label, x, y, width, height, onTap, options = {}) {
@@ -280,6 +330,20 @@ function cardTemperatureKind(cardId) {
   return 'unknown';
 }
 
+function detailAccent(cardId) {
+  return CARD_SPECS[cardId]?.color || COLORS.title;
+}
+
+function splitDetailMetric(line) {
+  const text = String(line || '');
+  const separator = text.indexOf('：');
+  if (separator < 0) return { label: '状态', value: text || '详情有说明' };
+  return {
+    label: text.slice(0, separator),
+    value: text.slice(separator + 1),
+  };
+}
+
 export class Panel {
   constructor({ onConfigurationCommit = null, onVisibilityChange = null, onRequestElevation = null } = {}) {
     this._onConfigurationCommit = onConfigurationCommit;
@@ -292,6 +356,7 @@ export class Panel {
     this._manageSection = 'layout';
     this._detailCard = null;
     this._detailPage = 0;
+    this._detailIssuesExpanded = false;
     this._partitionPage = 0;
     this._thresholdDeviceIndex = 0;
     this._overviewHeight = MIN_OVERVIEW_HEIGHT;
@@ -355,7 +420,10 @@ export class Panel {
     container.addChild(background, staticGraphic, motionGraphic, content);
     container.eventMode = 'static';
     container.cursor = 'pointer';
-    container.on('pointertap', () => this._openDetail(id));
+    container.on('pointertap', (event) => {
+      event?.stopPropagation?.();
+      this._openDetail(id);
+    });
     this._overviewLayer.addChild(container);
     return { id, spec, container, background, staticGraphic, motionGraphic, content, width: 0, height: spec.height };
   }
@@ -589,17 +657,27 @@ export class Panel {
       return;
     }
     if (card.id === 'cooling') {
-      const fans = (data.hardwareSensors?.fans || []).filter((sensor) => finite(sensor.value) !== null);
+      const fans = (data.hardwareSensors?.fans || []).filter((sensor) => (
+        finite(sensor.value) !== null && sensor.status !== 'unavailable'
+      ));
       const controls = (data.hardwareSensors?.sensors || []).filter((sensor) => (
-        sensor.sensorType === 'Control' && /fan/i.test(sensor.name || '') && finite(sensor.value) !== null
+        sensor.sensorType === 'Control'
+        && /fan/i.test(sensor.name || '')
+        && finite(sensor.value) !== null
+        && sensor.status !== 'unavailable'
+      ));
+      const fanIssue = (data.availability || []).find((item) => (
+        ['Fan', 'Control'].includes(item.sensorType) && item.reasonCode === 'zero_fan_unconfirmed'
       ));
       const fastest = fans.length ? Math.max(...fans.map((sensor) => sensor.value)) : null;
       const highestControl = controls.length ? Math.max(...controls.map((sensor) => sensor.value)) : null;
       const primaryReading = finite(fastest) !== null
         ? `${Math.round(fastest)} RPM`
-        : finite(highestControl) !== null ? `${Math.round(highestControl)}%` : sensorUnavailable(data);
+        : finite(highestControl) !== null
+          ? `${Math.round(highestControl)}%`
+          : fanIssue ? '转速状态待确认' : sensorUnavailable(data);
       addText(card.content, primaryReading, 11, 35, 18, color, { numeric: true, bold: true });
-      addText(card.content, `${fans.length} 路转速 · ${controls.length} 路控制 · 点击查看明细`, 11, 72, 10, COLORS.dim);
+      addText(card.content, `${fans.length} 路有效转速 · ${controls.length} 路有效控制 · 点击查看${fanIssue ? '原因' : '明细'}`, 11, 72, 10, COLORS.dim);
       return;
     }
     if (card.id === 'power') {
@@ -628,9 +706,16 @@ export class Panel {
     this._speedTracker.update('networkUp', readings.networkUploadBytesPerSec);
     this._speedTracker.update('diskRead', readings.diskReadBytesPerSec);
     this._speedTracker.update('diskWrite', readings.diskWriteBytesPerSec);
-    const fans = (data.hardwareSensors?.fans || []).map((sensor) => finite(sensor.value)).filter(Number.isFinite);
+    const fans = (data.hardwareSensors?.fans || [])
+      .filter((sensor) => sensor.status !== 'unavailable')
+      .map((sensor) => finite(sensor.value))
+      .filter(Number.isFinite);
     const fanControls = (data.hardwareSensors?.sensors || [])
-      .filter((sensor) => sensor.sensorType === 'Control' && /fan/i.test(sensor.name || ''))
+      .filter((sensor) => (
+        sensor.sensorType === 'Control'
+        && /fan/i.test(sensor.name || '')
+        && sensor.status !== 'unavailable'
+      ))
       .map((sensor) => finite(sensor.value))
       .filter(Number.isFinite);
     const fanMotionValue = fans.length
@@ -741,32 +826,37 @@ export class Panel {
     if (!this._data || this._page === 'manage') return;
     this._detailCard = cardId;
     this._detailPage = 0;
+    this._detailIssuesExpanded = false;
     this._showPage('detail');
     this._renderDetail();
   }
 
-  _sensorsForDetail(cardId) {
-    const sensors = this._data?.hardwareSensors?.sensors || [];
+  _inventoryMatchesCard(item, cardId) {
+    if (item.cardId === cardId) return true;
+    if (cardId === 'cooling') return ['Fan', 'Control'].includes(item.sensorType);
+    if (cardId === 'power') return ['Power', 'Voltage', 'Current', 'Energy'].includes(item.sensorType);
+    return false;
+  }
+
+  _inventoryTypeVisible(item) {
     const visible = this._config.sensors.visible;
-    const allowedType = (sensor) => {
-      if (sensor.sensorType === 'Temperature') return visible.temperature;
-      if (sensor.sensorType === 'Power') return visible.power;
-      if (sensor.sensorType === 'Fan' || sensor.sensorType === 'Control') return visible.fan;
-      if (sensor.sensorType === 'Voltage' || sensor.sensorType === 'Current') return visible.voltage;
-      return true;
-    };
-    return sensors.filter((sensor) => {
-      if (!allowedType(sensor)) return false;
-      if (cardId === 'cpu') return /^Cpu$/i.test(sensor.hardwareType);
-      if (cardId === 'memory') return /^Memory$/i.test(sensor.hardwareType);
-      if (cardId === 'gpu') return /^Gpu/i.test(sensor.hardwareType);
-      if (cardId === 'storage') return /^Storage$/i.test(sensor.hardwareType);
-      if (cardId === 'network') return /^Network$/i.test(sensor.hardwareType);
-      if (cardId === 'cooling') return ['Fan', 'Control'].includes(sensor.sensorType);
-      if (cardId === 'power') return ['Power', 'Voltage', 'Current'].includes(sensor.sensorType);
-      if (cardId === 'battery') return /^Battery$/i.test(sensor.hardwareType);
-      return true;
-    });
+    if (item.sensorType === 'Temperature') return visible.temperature;
+    if (item.sensorType === 'Power' || item.sensorType === 'Energy') return visible.power;
+    if (item.sensorType === 'Fan' || item.sensorType === 'Control') return visible.fan;
+    if (item.sensorType === 'Voltage' || item.sensorType === 'Current') return visible.voltage;
+    return true;
+  }
+
+  _metricsForDetail(cardId) {
+    return (this._data?.metrics || [])
+      .filter((item) => this._inventoryMatchesCard(item, cardId) && this._inventoryTypeVisible(item));
+  }
+
+  _availabilityForDetail(cardId) {
+    const issues = (this._data?.availability || [])
+      .filter((item) => this._inventoryMatchesCard(item, cardId) && this._inventoryTypeVisible(item));
+    const deviceAbsent = issues.filter((item) => item.reasonCode === 'device_absent');
+    return deviceAbsent.length ? [deviceAbsent[0]] : issues;
   }
 
   _detailSummary(cardId) {
@@ -776,12 +866,15 @@ export class Panel {
     const batteryState = normalizeBatteryState(data.battery);
     const summaries = {
       cpu: [
-        `型号：${data.cpu?.model || '读取源缺失'}`,
+        `型号：${data.cpu?.model || unavailableMetric(data, 'cpu:model', 'cpu')}`,
         `负载：${percent(data.cpu?.usage)} · 当前频率 ${formatClock(data.cpu?.currentClockMHz)}`,
         `核心：${data.cpu?.physicalCores ?? '?'} 核 / ${data.cpu?.logicalCores ?? '?'} 线程`,
-        `温度：${readings.cpuTemperatureC === null ? sensorUnavailable(data) : `${readings.cpuTemperatureC.toFixed(1)} °C`}`,
+        `温度：${readings.cpuTemperatureC === null ? unavailableMetric(data, 'cpu:temperature', 'cpu') : `${readings.cpuTemperatureC.toFixed(1)} °C`}`,
+        `最高频率：${formatClock(data.cpu?.maxClockMHz)}`,
+        `处理器队列：${finite(data.system?.cpuQueueLength) === null ? unavailableMetric(data, 'system:cpu-queue', 'system') : Math.round(data.system.cpuQueueLength)}`,
       ],
       memory: [
+        `使用率：${percent(data.memory?.usage)}`,
         `物理内存：${formatPair(data.memory?.usedBytes, data.memory?.totalBytes)}`,
         `可用：${formatBytes(data.memory?.availableBytes)}`,
         `页面文件：${formatPair(
@@ -791,16 +884,18 @@ export class Panel {
         )}`,
       ],
       gpu: [
-        `设备：${data.gpu?.name || '本机无此设备'}`,
+        `设备：${data.gpu?.name || '本机没有检测到独立或集成显卡'}`,
         `负载：${percent(readings.gpuUsage)} · 显存 ${formatPair(data.gpu?.memoryUsedBytes, data.gpu?.memoryTotalBytes)}`,
-        `温度：${readings.gpuTemperatureC === null ? sensorUnavailable(data, !data.gpu?.name) : `${readings.gpuTemperatureC.toFixed(1)} °C`}`,
-        `驱动：${data.gpu?.driverVersion || '读取源缺失'}`,
+        `温度：${readings.gpuTemperatureC === null ? unavailableMetric(data, 'gpu:temperature', 'gpu', !data.gpu?.name) : `${readings.gpuTemperatureC.toFixed(1)} °C`}`,
+        `驱动：${data.gpu?.driverVersion || 'Windows 显卡接口没有公开驱动版本'}`,
+        `适配器：${(data.gpu?.adapters || []).length || (data.gpu ? 1 : 0)} 个`,
       ],
       network: [
         `下载：${formatBytes(readings.networkDownloadBytesPerSec, true)}`,
         `上传：${formatBytes(readings.networkUploadBytesPerSec, true)}`,
-        `活动接口：${readings.networkInterfaceName || '读取源缺失'}`,
+        `活动接口：${readings.networkInterfaceName || data.network?.interfaces?.[0]?.name || unavailableMetric(data, 'network:download', 'network')}`,
         `接口数量：${(data.network?.interfaces || []).length} 个`,
+        `总吞吐：${formatBytes(data.network?.totalBytesPerSec, true)}`,
       ],
       storage: [
         `总容量：${formatPair(totals.used, totals.total)} · ${percent(totals.usage)}`,
@@ -809,23 +904,29 @@ export class Panel {
         `忙碌率：${percent(readings.diskActivity)}`,
         `分区：${(data.disks || []).length} 个`,
       ],
-      cooling: [`风扇传感器：${(data.hardwareSensors?.fans || []).length} 路`],
+      cooling: [
+        `有效风扇转速：${(data.hardwareSensors?.fans || []).filter((sensor) => sensor.status !== 'unavailable').length} 路`,
+        `温度传感器：${(data.hardwareSensors?.temperatures || []).length} 路`,
+        `有效控制通道：${(data.hardwareSensors?.sensors || []).filter((sensor) => sensor.sensorType === 'Control' && sensor.status !== 'unavailable').length} 路`,
+      ],
       power: [
-        `CPU 功耗：${readings.cpuPowerWatts === null ? sensorUnavailable(data) : `${readings.cpuPowerWatts.toFixed(1)} W`}`,
-        `GPU 功耗：${readings.gpuPowerWatts === null ? sensorUnavailable(data, !data.gpu?.name) : `${readings.gpuPowerWatts.toFixed(1)} W`}`,
+        `CPU 功耗：${readings.cpuPowerWatts === null ? unavailableMetric(data, 'cpu:power', 'cpu') : `${readings.cpuPowerWatts.toFixed(1)} W`}`,
+        `GPU 功耗：${readings.gpuPowerWatts === null ? unavailableMetric(data, 'gpu:power', 'gpu', !data.gpu?.name) : `${readings.gpuPowerWatts.toFixed(1)} W`}`,
         `电压传感器：${(data.hardwareSensors?.voltages || []).length} 路`,
+        `功耗传感器：${(data.hardwareSensors?.powers || []).length} 路`,
       ],
       battery: [
         `剩余：${percent(data.battery?.percent)}`,
         `状态：${batteryState.label}`,
-        `预计时间：${batteryState.estimatedMinutes === null ? '读取源缺失' : `${Math.round(batteryState.estimatedMinutes)} 分钟`}`,
+        `预计时间：${batteryState.estimatedMinutes === null ? 'Windows 电池接口没有公开预计时间' : `${Math.round(batteryState.estimatedMinutes)} 分钟`}`,
       ],
       system: [
-        `主机：${data.system?.hostname || '读取源缺失'}`,
-        `系统：${data.system?.osName || data.system?.platform || '读取源缺失'} ${data.system?.osVersion || data.system?.release || ''}`,
-        `主板：${`${data.system?.manufacturer || ''} ${data.system?.model || ''}`.trim() || '读取源缺失'}`,
+        `主机：${data.system?.hostname || '系统基础接口没有公开主机名'}`,
+        `系统：${data.system?.osName || data.system?.platform || unavailableMetric(data, 'system:os', 'system')} ${data.system?.osVersion || data.system?.release || ''}`,
+        `架构：${data.system?.arch || '系统基础接口没有公开处理器架构'}`,
+        `主板：${`${data.system?.manufacturer || ''} ${data.system?.model || ''}`.trim() || 'Windows 计算机接口没有公开厂商或型号'}`,
         `运行时间：${formatDuration(data.system?.uptimeSec)}`,
-        `进程 / 线程：${data.system?.processCount ?? '读取源缺失'} / ${data.system?.threadCount ?? '读取源缺失'}`,
+        `进程 / 线程：${data.system?.processCount ?? unavailableMetric(data, 'system:processes', 'system')} / ${data.system?.threadCount ?? unavailableMetric(data, 'system:threads', 'system')}`,
       ],
     };
     return summaries[cardId] || [];
@@ -833,42 +934,113 @@ export class Panel {
 
   _renderDetail() {
     clearContainer(this._detailLayer);
+    this._detailLayer.eventMode = 'static';
+    this._detailLayer.hitArea = new PIXI.Rectangle(12, 62, PANEL_WIDTH - 24, DETAIL_HEIGHT - 74);
+    const cardId = this._detailCard;
+    const accent = detailAccent(cardId);
     const inner = new PIXI.Graphics();
     drawPixelPanel(inner, 12, 62, PANEL_WIDTH - 24, DETAIL_HEIGHT - 74, COLORS.background, COLORS.border, 0.985);
+    inner.beginFill(accent, 0.9);
+    inner.drawRect(12, 70, 4, DETAIL_HEIGHT - 90);
+    inner.endFill();
     this._detailLayer.addChild(inner);
-    makeButton(this._detailLayer, '‹ 返回概览', 28, 76, 105, 30, () => this._leaveToOverview(false), { size: 11 });
-    addText(this._detailLayer, `${this._detailCard === 'system' ? '系统' : CARD_LABELS[this._detailCard]}明细`, 150, 78, 18, COLORS.title, { bold: true });
-    addText(this._detailLayer, '整理摘要', 34, 124, 13, COLORS.muted, { bold: true });
-    this._detailSummary(this._detailCard).slice(0, 6).forEach((line, index) => {
-      addText(this._detailLayer, truncate(line, 82), 34, 148 + index * 22, 12, index === 0 ? COLORS.text : COLORS.muted);
+    makeButton(this._detailLayer, '‹ 返回', 28, 76, 82, 30, () => this._leaveToOverview(false), { size: 11 });
+    addText(this._detailLayer, `${cardId === 'system' ? '系统与主板' : CARD_LABELS[cardId]}详情`, 128, 76, 19, accent, { bold: true });
+    addText(this._detailLayer, '系统计数器与硬件传感器的实时诊断视图', 128, 102, 11, COLORS.dim);
+
+    const summary = this._detailSummary(cardId).slice(0, 6).map(splitDetailMetric);
+    const metricStartY = 130;
+    const metricGap = 8;
+    const metricWidth = (PANEL_WIDTH - 68 - metricGap) / 2;
+    const metricHeight = 46;
+    summary.forEach((metric, index) => {
+      const column = index % 2;
+      const rowIndex = Math.floor(index / 2);
+      const x = 34 + column * (metricWidth + metricGap);
+      const y = metricStartY + rowIndex * (metricHeight + metricGap);
+      const tile = new PIXI.Graphics();
+      drawPixelPanel(tile, x, y, metricWidth, metricHeight, 0x151b28, accent, 0.74);
+      this._detailLayer.addChild(tile);
+      addText(this._detailLayer, metric.label, x + 10, y + 6, 10, COLORS.dim, { bold: true });
+      const valueSize = metric.value.length > 32 ? 9 : metric.value.length > 24 ? 10 : 11;
+      addText(this._detailLayer, truncate(metric.value, 40), x + 10, y + 23, valueSize, COLORS.text, { numeric: true, bold: true });
     });
 
-    const sensors = this._sensorsForDetail(this._detailCard);
-    const page = paginate(sensors, this._detailPage, 8);
+    const summaryRows = Math.max(1, Math.ceil(summary.length / 2));
+    const summaryBottom = metricStartY + summaryRows * (metricHeight + metricGap) - metricGap;
+    const listTitleY = Math.max(252, summaryBottom + 14);
+    const listRowsY = listTitleY + 31;
+    const issueBarY = 537;
+    const footerY = 573;
+    const metrics = this._metricsForDetail(cardId);
+    const issues = this._availabilityForDetail(cardId);
+    const showingIssues = this._detailIssuesExpanded && issues.length > 0;
+    const items = showingIssues ? issues : metrics;
+    const rowHeight = showingIssues ? 43 : 31;
+    const pageSize = clamp(Math.floor((issueBarY - listRowsY - 6) / rowHeight), 1, showingIssues ? 5 : 8);
+    const page = paginate(items, this._detailPage, pageSize);
     this._detailPage = page.page;
-    addText(this._detailLayer, `原始传感器 · ${sensors.length} 项`, 34, 294, 13, COLORS.gpu, { bold: true });
-    addText(this._detailLayer, `${page.page + 1}/${page.pageCount}`, PANEL_WIDTH - 36, 294, 11, COLORS.dim, { numeric: true }).anchor.set(1, 0);
-    page.items.forEach((sensor, index) => {
-      const y = 326 + index * 31;
+    addText(this._detailLayer, showingIssues ? `读取说明 · ${issues.length} 项` : `完整数据 · ${metrics.length} 项`, 34, listTitleY, 13, showingIssues ? COLORS.warning : accent, { bold: true });
+    const pageLabel = addText(this._detailLayer, `第 ${page.page + 1} / ${page.pageCount} 页`, PANEL_WIDTH - 36, listTitleY, 11, COLORS.dim, { numeric: true });
+    pageLabel.anchor.set(1, 0);
+    page.items.forEach((item, index) => {
+      const y = listRowsY + index * rowHeight;
       const row = new PIXI.Graphics();
       row.beginFill(index % 2 ? 0x111622 : 0x151b28, 0.72);
-      row.drawRect(34, y, PANEL_WIDTH - 68, 26);
+      row.drawRect(34, y, PANEL_WIDTH - 68, rowHeight - 4);
       row.endFill();
       this._detailLayer.addChild(row);
-      addText(this._detailLayer, `${truncate(sensor.hardwareName, 20)} · ${truncate(sensor.name, 28)}`, 43, y + 4, 11, COLORS.muted);
-      const value = addText(this._detailLayer, formatSensorValue(sensor, this._data), PANEL_WIDTH - 43, y + 4, 11,
-        sensor.sensorType === 'Temperature'
-          ? temperatureColor(sensor.value, this._temperatureThresholds(cardTemperatureKind(this._detailCard), sensor.hardwareIdentifier))
-          : COLORS.text,
-        { numeric: true, bold: true });
-      value.anchor.set(1, 0);
+      const [typeLabel, typeColor] = showingIssues ? [`缺${issueTypeLabel(item)}`, COLORS.warning] : metricPresentation(item);
+      const badge = new PIXI.Graphics();
+      drawPixelPanel(badge, 42, y + 3, 52, 21, 0x111622, typeColor, 0.94);
+      this._detailLayer.addChild(badge);
+      const badgeText = addText(this._detailLayer, truncate(typeLabel, 4), 68, y + 5, 9, typeColor, { bold: true });
+      badgeText.anchor.set(0.5, 0);
+      if (showingIssues) {
+        addText(this._detailLayer, `${truncate(item.device, 18)} · ${truncate(item.label, 24)} · ${issueTypeLabel(item)}`, 104, y + 3, 11, COLORS.text, { bold: true });
+        const evidence = item.evidence ? ` · 依据：${item.evidence}` : '';
+        addText(this._detailLayer, truncate(`${item.reason}${evidence}`, 82), 104, y + 21, 9, COLORS.muted);
+      } else {
+        const source = PROVIDER_LABELS[item.provider] || item.provider || '系统';
+        addText(this._detailLayer, `${truncate(item.device, 17)} · ${truncate(item.label, 23)} · ${truncate(source, 10)}`, 104, y + 4, 10, COLORS.muted);
+        const value = addText(this._detailLayer, formatMetricValue(item), PANEL_WIDTH - 43, y + 4, 11,
+          item.kind === 'temperature'
+            ? temperatureColor(item.value, this._temperatureThresholds(cardTemperatureKind(cardId), item.hardwareIdentifier))
+            : COLORS.text,
+          { numeric: true, bold: true });
+        value.anchor.set(1, 0);
+      }
     });
-    if (!sensors.length) addText(this._detailLayer, '当前类别没有可用的原始传感器。', 34, 332, 12, COLORS.dim);
-    makeButton(this._detailLayer, '‹ 上一页', 470, 573, 90, 28, () => {
+    if (!items.length) {
+      const empty = new PIXI.Graphics();
+      drawPixelPanel(empty, 34, listRowsY, PANEL_WIDTH - 68, 72, 0x111622, COLORS.sectionBorder, 0.72);
+      this._detailLayer.addChild(empty);
+      addText(this._detailLayer, '这个类别目前没有可展示的数据', 50, listRowsY + 13, 12, COLORS.text, { bold: true });
+      addText(this._detailLayer, issues[0]?.reason || '电脑没有公开与这个类别相关的指标', 50, listRowsY + 38, 10, COLORS.dim);
+    }
+
+    makeButton(
+      this._detailLayer,
+      issues.length
+        ? `${showingIssues ? '▾' : '▸'} 读取说明 · ${issues.length} 项${showingIssues ? '（点击返回数据）' : ''}`
+        : '✓ 读取说明 · 当前没有异常',
+      34, issueBarY, issues.some((item) => item.action === 'request_elevation') ? 402 : PANEL_WIDTH - 68, 28,
+      () => {
+        if (!issues.length) return;
+        this._detailIssuesExpanded = !this._detailIssuesExpanded;
+        this._detailPage = 0;
+        this._renderDetail();
+      },
+      { size: 10, active: showingIssues, disabled: !issues.length },
+    );
+    if (issues.some((item) => item.action === 'request_elevation')) {
+      makeButton(this._detailLayer, '请求管理员权限', 446, issueBarY, 214, 28, () => this._onRequestElevation?.(), { size: 10 });
+    }
+    makeButton(this._detailLayer, '‹ 上一页', 470, footerY, 90, 28, () => {
       this._detailPage -= 1;
       this._renderDetail();
     }, { size: 11, disabled: page.pageCount <= 1 });
-    makeButton(this._detailLayer, '下一页 ›', 570, 573, 90, 28, () => {
+    makeButton(this._detailLayer, '下一页 ›', 570, footerY, 90, 28, () => {
       this._detailPage += 1;
       this._renderDetail();
     }, { size: 11, disabled: page.pageCount <= 1 });
@@ -1110,20 +1282,29 @@ export class Panel {
       34, 176, 13, access ? elevated ? COLORS.gpu : COLORS.warning : COLORS.warning, { bold: true });
     addText(this._managementLayer,
       elevated
-        ? '底层读取权限已启用；仍为空的项目属于设备不存在或固件未开放。'
-        : access?.permissionRecommended
-          ? 'CPU 或主板受保护传感器尚未开放，提升权限可继续探测。'
-          : '标准权限下已读取可用项目；提升权限可继续探测受保护项目。',
+        ? '管理员权限已启用；空项会按接口未公开、传感器空值或查询失败分别说明。'
+        : access?.permissionEvidence
+          ? '硬件接口明确拒绝了当前权限，管理员模式可能增加可读取项目。'
+          : '当前没有发现明确的权限拒绝；管理员模式只用于进一步排查硬件接口。',
       34, 207, 12, COLORS.muted, { wordWrap: true, wordWrapWidth: 600 });
-    const error = data.diagnostics?.hardwareSensorError;
-    if (error) addText(this._managementLayer, `读取源异常：${truncate(error, 70)}`, 34, 250, 11, COLORS.warning);
-    makeButton(this._managementLayer, elevated ? '已使用管理员权限' : '请求管理员权限', 34, 292, 235, 48, async () => {
+    addText(this._managementLayer, '数据来源', 34, 252, 12, COLORS.dim, { bold: true });
+    const stateLabels = {
+      available: ['运行正常', COLORS.gpu],
+      stale: ['本次失败，保留上次数据', COLORS.warning],
+      failed: ['读取失败', COLORS.danger],
+      not_detected: ['本机未检测到', COLORS.dim],
+    };
+    (data.providerStates || []).slice(0, 4).forEach((provider, index) => {
+      const [label, color] = stateLabels[provider.state] || stateLabels.not_detected;
+      addText(this._managementLayer, `${provider.label} · ${label}${provider.error ? ` · ${truncate(provider.error, 42)}` : ''}`, 34, 278 + index * 24, 10, color);
+    });
+    makeButton(this._managementLayer, elevated ? '已使用管理员权限' : '请求管理员权限', 34, 382, 235, 48, async () => {
       if (elevated) return;
       this._commitDraft();
       await this._onRequestElevation?.();
     }, { active: elevated, disabled: elevated, size: 12, bold: true });
-    addText(this._managementLayer, '提升权限会由 Windows 显示确认窗口，并以相同免费版或赞助版重新启动。', 34, 360, 11, COLORS.dim);
-    addText(this._managementLayer, '设备不存在会保留在布局编辑器中并标注，但不会占用日常概览位置。', 34, 388, 11, COLORS.dim);
+    addText(this._managementLayer, '提升权限会由 Windows 显示确认窗口，并以相同免费版或赞助版重新启动。', 34, 450, 11, COLORS.dim);
+    addText(this._managementLayer, '设备不存在会保留在布局编辑器中并标注，但不会占用日常概览位置。', 34, 478, 11, COLORS.dim);
     makeButton(this._managementLayer, '返回概览', 520, 556, 140, 34, () => {
       this._commitDraft();
       this._leaveToOverview(false);

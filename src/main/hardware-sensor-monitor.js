@@ -13,13 +13,30 @@ function normalizedText(value, fallback = '') {
   return text || fallback;
 }
 
+function hardwareIssue(value) {
+  const message = normalizedText(value, 'Hardware sensor update failed');
+  const separator = message.indexOf(':');
+  const hardwareIdentifier = separator > 0 ? message.slice(0, separator).trim() : null;
+  const detail = separator > 0 ? message.slice(separator + 1).trim() : message;
+  const permissionRequired = /access.+denied|unauthori[sz]ed|privilege|permission|拒绝访问|权限/i.test(detail);
+  return {
+    hardwareIdentifier,
+    code: permissionRequired ? 'permission_required' : 'device_update_failed',
+    message: detail || message,
+  };
+}
+
 function maximum(values) {
   const valid = values.map(finiteOrNull).filter(Number.isFinite);
   return valid.length ? Math.max(...valid) : null;
 }
 
 function preferredValue(sensors, type, preferredNames = []) {
-  const candidates = sensors.filter((sensor) => sensor.sensorType === type && sensor.value !== null);
+  const candidates = sensors.filter((sensor) => (
+    sensor.sensorType === type
+    && sensor.value !== null
+    && sensor.status !== 'unavailable'
+  ));
   for (const pattern of preferredNames) {
     const match = candidates.find((sensor) => pattern.test(sensor.name));
     if (match) return match.value;
@@ -28,11 +45,16 @@ function preferredValue(sensors, type, preferredNames = []) {
 }
 
 function valuesOfType(sensors, type) {
-  return sensors.filter((sensor) => sensor.sensorType === type && sensor.value !== null);
+  return sensors.filter((sensor) => sensor.sensorType === type && sensor.value !== null && sensor.status !== 'unavailable');
+}
+
+function isZeroOnlyReading(sensor) {
+  return sensor?.value === 0 && sensor?.min === 0 && sensor?.max === 0;
 }
 
 function summarizeDeviceSensors(sensors) {
   return {
+    loadPercent: preferredValue(sensors, 'Load', [/cpu total|gpu core|gpu total|^3d$/i]),
     temperatureC: preferredValue(sensors, 'Temperature', [
       /package|tdie|tctl|core average|gpu core|temperature/i,
     ]),
@@ -52,18 +74,46 @@ export function parseHardwareSensorSnapshot(value) {
     throw new Error('Hardware sensor host returned an incompatible payload');
   }
 
-  const sensors = (Array.isArray(raw.sensors) ? raw.sensors : []).map((sensor) => ({
-    identifier: normalizedText(sensor?.identifier),
-    name: normalizedText(sensor?.name, 'Sensor'),
-    sensorType: normalizedText(sensor?.sensorType, 'Unknown'),
-    index: finiteOrNull(sensor?.index),
-    value: finiteOrNull(sensor?.value),
-    min: finiteOrNull(sensor?.min),
-    max: finiteOrNull(sensor?.max),
-    hardwareIdentifier: normalizedText(sensor?.hardwareIdentifier),
-    hardwareName: normalizedText(sensor?.hardwareName, 'Hardware'),
-    hardwareType: normalizedText(sensor?.hardwareType, 'Unknown'),
-  }));
+  const issues = (Array.isArray(raw.errors) ? raw.errors : []).map(hardwareIssue);
+  const sensors = (Array.isArray(raw.sensors) ? raw.sensors : []).map((sensor) => {
+    const value = finiteOrNull(sensor?.value);
+    const hardwareIdentifier = normalizedText(sensor?.hardwareIdentifier);
+    const deviceIssue = issues.find((issue) => issue.hardwareIdentifier === hardwareIdentifier);
+    return {
+      identifier: normalizedText(sensor?.identifier),
+      name: normalizedText(sensor?.name, 'Sensor'),
+      sensorType: normalizedText(sensor?.sensorType, 'Unknown'),
+      index: finiteOrNull(sensor?.index),
+      value,
+      min: finiteOrNull(sensor?.min),
+      max: finiteOrNull(sensor?.max),
+      hardwareIdentifier,
+      hardwareName: normalizedText(sensor?.hardwareName, 'Hardware'),
+      hardwareType: normalizedText(sensor?.hardwareType, 'Unknown'),
+      provider: normalizedText(raw.provider, 'librehardwaremonitor'),
+      status: value !== null ? 'available' : 'unavailable',
+      reasonCode: value !== null ? null : (deviceIssue?.code || 'sensor_returned_no_value'),
+      reason: value !== null ? null : (deviceIssue?.message || '传感器已被硬件接口枚举，但本次没有返回数值'),
+    };
+  });
+
+  // Some GPU drivers expose placeholder fan and control channels whose value,
+  // minimum and maximum are all permanently zero. One sample cannot distinguish
+  // that from a genuine zero-RPM stop mode, so do not report it as measured RPM.
+  for (const fan of sensors.filter((sensor) => sensor.sensorType === 'Fan' && isZeroOnlyReading(sensor))) {
+    const matchingControl = sensors.find((sensor) => (
+      sensor.sensorType === 'Control'
+      && sensor.hardwareIdentifier === fan.hardwareIdentifier
+      && isZeroOnlyReading(sensor)
+    ));
+    if (!matchingControl) continue;
+    fan.status = 'unavailable';
+    fan.reasonCode = 'zero_fan_unconfirmed';
+    fan.reason = '风扇通道只返回 0，暂时不能判断是停转模式，还是驱动没有公开转速';
+    matchingControl.status = 'unavailable';
+    matchingControl.reasonCode = 'zero_fan_unconfirmed';
+    matchingControl.reason = '风扇控制通道只返回 0，暂时不能把它当成真实控制比例';
+  }
   const hardware = (Array.isArray(raw.hardware) ? raw.hardware : []).map((device) => ({
     identifier: normalizedText(device?.identifier),
     parentIdentifier: normalizedText(device?.parentIdentifier) || null,
@@ -79,6 +129,13 @@ export function parseHardwareSensorSnapshot(value) {
   }
   const gpuSensorSets = [...gpuGroups.values()].sort((a, b) => b.length - a.length);
   const gpuSensors = gpuSensorSets[0] || [];
+  const gpus = gpuSensorSets.map((group) => ({
+    hardwareIdentifier: group[0]?.hardwareIdentifier || null,
+    name: group[0]?.hardwareName || 'GPU',
+    hardwareType: group[0]?.hardwareType || 'Gpu',
+    ...summarizeDeviceSensors(group),
+    sensors: group,
+  }));
   const boardSensors = sensors.filter((sensor) => /Motherboard|SuperIO|EmbeddedController/i.test(sensor.hardwareType));
   const fanSensors = valuesOfType(sensors, 'Fan');
   const voltageSensors = valuesOfType(sensors, 'Voltage');
@@ -106,7 +163,15 @@ export function parseHardwareSensorSnapshot(value) {
   const hasCpuHardware = hardware.some((device) => /^Cpu$/i.test(device.hardwareType));
   const protectedCpuDataMissing = hasCpuHardware && cpu.temperatureC === null;
   const cpuPowerValues = valuesOfType(cpuSensors, 'Power').map((sensor) => sensor.value);
-  if (cpuPowerValues.length && cpuPowerValues.every((value) => value === 0)) cpu.powerWatts = null;
+  if (cpuPowerValues.length && cpuPowerValues.every((value) => value === 0)) {
+    cpu.powerWatts = null;
+    for (const sensor of cpuSensors.filter((item) => item.sensorType === 'Power')) {
+      sensor.status = 'unavailable';
+      sensor.reasonCode = 'invalid_reading';
+      sensor.reason = '功耗通道持续返回 0，已按无效硬件计数器处理';
+    }
+  }
+  const explicitPermissionIssue = issues.some((issue) => issue.code === 'permission_required');
 
   return {
     provider: normalizedText(raw.provider, 'librehardwaremonitor'),
@@ -116,15 +181,18 @@ export function parseHardwareSensorSnapshot(value) {
     hardware,
     sensors,
     errors: (Array.isArray(raw.errors) ? raw.errors : []).map(String),
+    issues,
     access: {
       elevated: Boolean(raw.elevated),
       permissionRecommended: !raw.elevated && protectedCpuDataMissing,
-      sensorCount: sensors.filter((sensor) => sensor.value !== null).length,
+      permissionEvidence: !raw.elevated && explicitPermissionIssue,
+      sensorCount: sensors.filter((sensor) => sensor.value !== null && sensor.status === 'available').length,
       totalSensorCount: sensors.length,
       hardwareCount: hardware.length,
     },
     cpu,
     gpu,
+    gpus,
     motherboard: {
       temperatures: valuesOfType(boardSensors, 'Temperature'),
       fans: valuesOfType(boardSensors, 'Fan'),
@@ -132,6 +200,8 @@ export function parseHardwareSensorSnapshot(value) {
     },
     fans: fanSensors,
     voltages: voltageSensors,
+    temperatures: valuesOfType(sensors, 'Temperature'),
+    powers: valuesOfType(sensors, 'Power'),
     storage: storageSensors,
   };
 }

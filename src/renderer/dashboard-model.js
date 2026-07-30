@@ -17,6 +17,7 @@ function usableSensors(data, hardwarePattern, sensorType) {
     hardwarePattern.test(sensor.hardwareType || '')
     && sensor.sensorType === sensorType
     && finite(sensor.value) !== null
+    && sensor.status !== 'unavailable'
   ));
 }
 
@@ -140,7 +141,8 @@ export function reorderDashboardCards(order, sourceId, targetId) {
 }
 
 export function normalizeBatteryState(battery = {}) {
-  const statusCode = finite(battery.statusCode);
+  const source = battery || {};
+  const statusCode = finite(source.statusCode);
   const labels = {
     1: '电池供电',
     2: '外接电源',
@@ -154,7 +156,7 @@ export function normalizeBatteryState(battery = {}) {
     10: '状态未知',
     11: '部分充电',
   };
-  const rawMinutes = finite(battery.estimatedMinutes);
+  const rawMinutes = finite(source.estimatedMinutes);
   const estimatedMinutes = rawMinutes !== null && rawMinutes >= 0 && rawMinutes <= 7 * 24 * 60
     ? rawMinutes
     : null;

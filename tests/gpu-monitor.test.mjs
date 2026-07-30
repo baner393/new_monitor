@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   parseNvidiaOutput,
   parseNvidiaOutputAll,
+  parseNvidiaOptionalOutput,
   parseWindowsGpuOutput,
   selectPrimaryGpu,
 } from '../src/main/gpu-monitor.js';
@@ -32,6 +33,24 @@ test('parses and selects from multiple NVIDIA adapters', () => {
   assert.equal(adapters.length, 2);
   assert.equal(selectPrimaryGpu(adapters).name, 'NVIDIA GeForce RTX 4090');
   assert.equal(adapters[1].memoryTotalBytes, 24564 * 1024 * 1024);
+});
+
+test('parses only optional NVIDIA fields supported by the installed tool', () => {
+  assert.deepEqual(
+    parseNvidiaOptionalOutput('35, 2415, 10501, 4, 1, P2, 320.0', [
+      'fan.speed', 'clocks.current.graphics', 'clocks.current.memory',
+      'utilization.encoder', 'utilization.decoder', 'pstate', 'power.limit',
+    ]),
+    [{
+      fanPercent: 35,
+      clockMHz: 2415,
+      memoryClockMHz: 10501,
+      encoderUsage: 4,
+      decoderUsage: 1,
+      performanceState: 'P2',
+      powerLimitWatts: 320,
+    }],
+  );
 });
 
 test('keeps unavailable metrics as null instead of fake zeroes', () => {

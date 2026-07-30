@@ -59,6 +59,22 @@ test('missing optional devices keep their desired config but do not occupy the o
   assert.deepEqual(effectiveDashboardCardIds(config, {}), ['cpu', 'memory', 'network', 'storage']);
 });
 
+test('unavailable placeholder sensors never become live dashboard readings', () => {
+  const data = {
+    gpu: { name: 'GPU', usage: null },
+    hardwareSensors: {
+      sensors: [
+        { hardwareType: 'GpuAmd', sensorType: 'Load', name: 'GPU Core', value: 0, status: 'unavailable' },
+        { hardwareType: 'GpuAmd', sensorType: 'Fan', name: 'GPU Fan', value: 0, status: 'unavailable' },
+        { hardwareType: 'GpuAmd', sensorType: 'Control', name: 'GPU Fan', value: 0, status: 'unavailable' },
+      ],
+    },
+  };
+
+  assert.equal(deriveDashboardReadings(data).gpuUsage, null);
+  assert.equal(detectDashboardCardAvailability(data).cooling, true);
+});
+
 test('card reordering is deterministic in both directions', () => {
   const order = ['cpu', 'memory', 'gpu', 'network'];
   assert.deepEqual(reorderDashboardCards(order, 'cpu', 'gpu'), ['memory', 'gpu', 'cpu', 'network']);
@@ -73,4 +89,9 @@ test('battery status distinguishes external power and rejects Windows unknown-ti
     estimatedMinutes: null,
   });
   assert.equal(normalizeBatteryState({ statusCode: 6, estimatedMinutes: 90 }).charging, true);
+  assert.deepEqual(normalizeBatteryState(null), {
+    label: '状态未知',
+    charging: false,
+    estimatedMinutes: null,
+  });
 });

@@ -5,6 +5,16 @@ export const NVIDIA_ARGS = [
   '--format=csv,noheader,nounits',
 ];
 
+export const NVIDIA_OPTIONAL_FIELDS = Object.freeze([
+  'fan.speed',
+  'clocks.current.graphics',
+  'clocks.current.memory',
+  'utilization.encoder',
+  'utilization.decoder',
+  'pstate',
+  'power.limit',
+]);
+
 function toNumber(value) {
   const number = Number.parseFloat(value);
   return Number.isFinite(number) ? number : null;
@@ -50,6 +60,26 @@ export function parseNvidiaOutputAll(stdout) {
 
   if (lines.length === 0) throw new Error('Empty nvidia-smi output');
   return lines.map(parseNvidiaLine);
+}
+
+export function parseNvidiaOptionalOutput(stdout, fields) {
+  const lines = String(stdout || '').trim().split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  return lines.map((line) => {
+    const values = line.split(/,\s*/);
+    const result = {};
+    fields.forEach((field, index) => {
+      const raw = values[index];
+      const value = toNumber(raw);
+      if (field === 'fan.speed') result.fanPercent = value;
+      if (field === 'clocks.current.graphics') result.clockMHz = value;
+      if (field === 'clocks.current.memory') result.memoryClockMHz = value;
+      if (field === 'utilization.encoder') result.encoderUsage = value;
+      if (field === 'utilization.decoder') result.decoderUsage = value;
+      if (field === 'pstate') result.performanceState = raw && !/not supported|n\/a/i.test(raw) ? raw : null;
+      if (field === 'power.limit') result.powerLimitWatts = value;
+    });
+    return result;
+  });
 }
 
 /**
@@ -100,10 +130,10 @@ export function selectPrimaryGpu(adapters) {
 }
 
 export function queryNvidiaGpus({ execFileImpl = execFile, timeoutMs = 5000 } = {}) {
-  return new Promise((resolve, reject) => {
+  const execute = (args) => new Promise((resolve, reject) => {
     execFileImpl(
       'nvidia-smi.exe',
-      NVIDIA_ARGS,
+      args,
       { timeout: timeoutMs, windowsHide: true, maxBuffer: 1024 * 1024 },
       (error, stdout, stderr) => {
         if (error) {
@@ -111,12 +141,31 @@ export function queryNvidiaGpus({ execFileImpl = execFile, timeoutMs = 5000 } = 
           reject(new Error(detail || error.message));
           return;
         }
-        try {
-          resolve(parseNvidiaOutputAll(stdout));
-        } catch (parseError) {
-          reject(parseError);
-        }
+        resolve(stdout);
       },
     );
+  });
+
+  return execute(NVIDIA_ARGS).then(async (stdout) => {
+    const sampledAt = Date.now();
+    const adapters = parseNvidiaOutputAll(stdout).map((adapter) => ({ ...adapter, sampledAt }));
+    let help = '';
+    try {
+      help = await execute(['--help-query-gpu']);
+    } catch {
+      return adapters;
+    }
+    const supportedFields = NVIDIA_OPTIONAL_FIELDS.filter((field) => String(help).includes(field));
+    if (!supportedFields.length) return adapters;
+    try {
+      const optionalOutput = await execute([
+        `--query-gpu=${supportedFields.join(',')}`,
+        '--format=csv,noheader,nounits',
+      ]);
+      const optional = parseNvidiaOptionalOutput(optionalOutput, supportedFields);
+      return adapters.map((adapter, index) => ({ ...adapter, ...(optional[index] || {}) }));
+    } catch {
+      return adapters;
+    }
   });
 }
