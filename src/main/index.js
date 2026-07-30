@@ -12,8 +12,8 @@ import {
 } from '../shared/monitor-panel-config.js';
 import {
   ReloadInputGuard,
-  reloadWindowSafely,
   resolveCustomResourcePath,
+  SoftRefreshCoordinator,
 } from './window-lifecycle.js';
 
 let mainWindow;
@@ -22,6 +22,8 @@ let canvasWindow;
 let regionWindow;
 let systemMonitor;
 let mainWindowInputGuard;
+let mainWindowRefreshCoordinator;
+let pendingWindowRecovery = null;
 let pendingGridData = null;
 let pendingRegionImage = null; // temp storage for region marker image data
 
@@ -33,8 +35,36 @@ function resolveCustomResource(fileName) {
   });
 }
 
-function reloadMainWindow() {
-  reloadWindowSafely(mainWindow);
+function requestMainWindowSoftRefresh() {
+  return mainWindowRefreshCoordinator?.request() ?? false;
+}
+
+function completeWindowRecovery(browserWindow) {
+  const recovery = pendingWindowRecovery;
+  if (!recovery || recovery.replacementWindow !== browserWindow) return;
+  if (recovery.watchdog) clearTimeout(recovery.watchdog);
+  pendingWindowRecovery = null;
+  if (!browserWindow.isDestroyed()) browserWindow.showInactive();
+  if (recovery.oldWindow && !recovery.oldWindow.isDestroyed()) recovery.oldWindow.destroy();
+  console.log(`[Window] Recovery complete (${recovery.reason})`);
+}
+
+function recreateMainWindow(reason) {
+  if (pendingWindowRecovery || !mainWindow || mainWindow.isDestroyed()) return false;
+  const oldWindow = mainWindow;
+  mainWindowInputGuard?.suspend();
+  const recovery = { reason, oldWindow, replacementWindow: null, watchdog: null };
+  pendingWindowRecovery = recovery;
+  console.warn(`[Window] Rebuilding renderer after ${reason}`);
+  recovery.replacementWindow = createWindow({ show: false });
+  recovery.watchdog = setTimeout(() => {
+    if (pendingWindowRecovery !== recovery) return;
+    console.error('[Window] Replacement renderer did not become interactive; relaunching application');
+    app.relaunch();
+    app.exit(0);
+  }, 8000);
+  recovery.watchdog.unref?.();
+  return true;
 }
 
 // ── Chromium flags (must be before app.whenReady) ────────────
@@ -239,7 +269,7 @@ ipcMain.handle('skin-list-get', async () => {
   };
 });
 
-function createWindow() {
+function createWindow({ show = true } = {}) {
   // Get screen dimensions for full-screen transparent window
   const primaryDisplay = screen.getPrimaryDisplay();
   const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
@@ -247,7 +277,7 @@ function createWindow() {
   
   // Full-screen transparent window (transparent pixels are nearly free in GPU)
   // y:-50 extends 50px above screen to hide DWM white border outside visible area
-  mainWindow = new BrowserWindow({
+  const browserWindow = new BrowserWindow({
     x: screenX - 2,
     y: screenY - 50,
     width: screenWidth + 4,
@@ -261,6 +291,7 @@ function createWindow() {
     fullscreenable: false,
     titleBarStyle: 'hidden',
     title: ' ',
+    show,
     icon: path.join(__dirname, '..', '..', 'assets', 'icon.png'),
     // titleBarOverlay 会绘制渐变白线，桌面宠物不需要原生窗口按钮，完全删除
     backgroundThrottling: false,
@@ -270,76 +301,95 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
     },
   });
+  mainWindow = browserWindow;
 
   // Remove menu bar to prevent Alt-triggered black text
-  mainWindow.setMenu(null);
-  mainWindowInputGuard = new ReloadInputGuard(mainWindow);
+  browserWindow.setMenu(null);
+  const inputGuard = new ReloadInputGuard(browserWindow);
+  mainWindowInputGuard = inputGuard;
+  const refreshCoordinator = new SoftRefreshCoordinator({
+    send: (requestId) => {
+      if (browserWindow.isDestroyed() || browserWindow.webContents.isDestroyed()) {
+        throw new Error('Renderer window is unavailable');
+      }
+      browserWindow.webContents.send('soft-refresh', { requestId });
+    },
+    onFailure: (error) => {
+      if (mainWindow === browserWindow) recreateMainWindow(error.message);
+    },
+  });
+  mainWindowRefreshCoordinator = refreshCoordinator;
 
-  // The renderer owns transparent hit testing. Capture input while it is being
-  // replaced, then let the new renderer restore passthrough from the real
-  // cursor position. This remains stable across repeated reloads on Windows.
+  // The renderer owns transparent hit testing. Keep the full-work-area window
+  // click-through until the active document restores hit testing from the real
+  // cursor position.
   let rendererLoadGeneration = 0;
-  mainWindow.webContents.on('did-start-loading', () => {
+  browserWindow.webContents.on('did-start-loading', () => {
     rendererLoadGeneration += 1;
-    console.log(`[Window] Renderer load ${rendererLoadGeneration} started; mouse captured`);
-    mainWindowInputGuard.beginLoad();
+    console.log(`[Window] Renderer load ${rendererLoadGeneration} started; desktop passthrough enabled`);
+    inputGuard.beginLoad();
   });
 
-  mainWindow.webContents.on('did-finish-load', () => {
+  browserWindow.webContents.on('did-finish-load', () => {
     console.log(`[Window] Renderer load ${rendererLoadGeneration} finished`);
-    mainWindow.setTitle(' ');
-    mainWindowInputGuard.finishLoad();
+    browserWindow.setTitle(' ');
+    inputGuard.finishLoad();
   });
 
-  mainWindow.webContents.on('did-fail-load', (_event, code, description, url, isMainFrame) => {
+  browserWindow.webContents.on('did-fail-load', (_event, code, description, url, isMainFrame) => {
     if (isMainFrame) {
       console.error(`[Window] Renderer load failed (${code}) ${description}: ${url}`);
-      mainWindowInputGuard.failOpen();
+      inputGuard.failOpen();
     }
   });
 
-  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+  browserWindow.webContents.on('render-process-gone', (_event, details) => {
     console.error(`[Window] Renderer process gone: ${details.reason}`);
-    mainWindowInputGuard.failOpen();
+    inputGuard.failOpen();
+    if (mainWindow === browserWindow) recreateMainWindow(`renderer process ${details.reason}`);
   });
 
   // Fix DPI scaling - prevent Windows from auto-scaling
-  mainWindow.webContents.setZoomFactor(1);
+  browserWindow.webContents.setZoomFactor(1);
 
   // Handle DPI changes when window moves between monitors
-  mainWindow.on('moved', () => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('dpi-changed');
+  browserWindow.on('moved', () => {
+    if (!browserWindow.isDestroyed()) {
+      browserWindow.webContents.send('dpi-changed');
     }
   });
 
   // Enable click-through with forward
-  mainWindow.setIgnoreMouseEvents(true, { forward: true });
+  browserWindow.setIgnoreMouseEvents(true, { forward: true });
 
   if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
-    mainWindow.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
+    browserWindow.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
   } else {
-    mainWindow.loadFile(
+    browserWindow.loadFile(
       path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`)
     );
   }
 
   // Listen for console messages from renderer (new API)
-  mainWindow.webContents.on('console-message', (event) => {
+  browserWindow.webContents.on('console-message', (event) => {
     const message = event.message;
     if (message.includes('[BOUNCE]') || message.includes('[Input]') || message.includes('[GameLoop]') || message.includes('[FPS]') || message.includes('[Skin]') || message.includes('[SkinSelector]')) {
       console.log(`[RENDERER] ${message}`);
     }
   });
 
-  mainWindow.on('closed', () => {
-    mainWindowInputGuard?.dispose();
-    mainWindowInputGuard = null;
-    if (systemMonitor) {
-      systemMonitor.stop();
-      systemMonitor = null;
+  browserWindow.on('closed', () => {
+    inputGuard.dispose();
+    refreshCoordinator.dispose();
+    if (mainWindow === browserWindow) {
+      mainWindowInputGuard = null;
+      mainWindowRefreshCoordinator = null;
+      if (systemMonitor) {
+        systemMonitor.stop();
+        systemMonitor = null;
+      }
+      mainWindow = null;
     }
-    mainWindow = null;
   });
 
   // Start the unified CPU / memory / disk / network / GPU monitor.
@@ -348,8 +398,14 @@ function createWindow() {
     resourcesPath: process.resourcesPath,
     isPackaged: app.isPackaged,
   });
-  systemMonitor = new SystemMonitor(mainWindow, 2000, { sensorHostPath });
-  systemMonitor.start();
+  if (systemMonitor) {
+    systemMonitor.win = browserWindow;
+    systemMonitor.requestSnapshot();
+  } else {
+    systemMonitor = new SystemMonitor(browserWindow, 2000, { sensorHostPath });
+    systemMonitor.start();
+  }
+  return browserWindow;
 }
 
 // ── Launch on Windows ──────────────────────────────────────────────
@@ -373,7 +429,17 @@ ipcMain.on('renderer-input-ready', (event, ignore, generation) => {
   if (mainWindow && event.sender === mainWindow.webContents) {
     const accepted = mainWindowInputGuard?.markRendererReady(ignore, generation);
     console.log(`[Window] Renderer input generation ${mainWindowInputGuard?.generation} ready; passthrough=${Boolean(ignore)} accepted=${Boolean(accepted)}`);
+    if (accepted) completeWindowRecovery(mainWindow);
   }
+});
+
+ipcMain.on('soft-refresh-complete', (event, result) => {
+  if (!mainWindow || event.sender !== mainWindow.webContents) return;
+  mainWindowRefreshCoordinator?.complete(
+    result?.requestId,
+    result?.ok !== false,
+    result?.error || '',
+  );
 });
 
 ipcMain.handle('cursor-position-get', (event) => {
@@ -426,7 +492,7 @@ ipcMain.on('show-context-menu', (event) => {
     {
       label: '刷新',
       click: () => {
-        reloadMainWindow();
+        requestMainWindowSoftRefresh();
       },
     },
     {

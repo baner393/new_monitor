@@ -37,6 +37,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.send('request-system-data');
   },
 
+  /** Refresh renderer-owned state without navigating or destroying the page. */
+  onSoftRefresh: (callback) => {
+    const listener = (_event, request) => callback(request);
+    ipcRenderer.on('soft-refresh', listener);
+    return () => ipcRenderer.removeListener('soft-refresh', listener);
+  },
+
+  completeSoftRefresh: (result) => {
+    ipcRenderer.send('soft-refresh-complete', result);
+  },
+
   /** Persistent monitor field visibility and optional elevated restart. */
   monitor: {
     getConfiguration: () => ipcRenderer.invoke('monitor-panel-config-get'),

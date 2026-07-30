@@ -5,8 +5,8 @@ import test from 'node:test';
 import {
   applyMousePassthrough,
   ReloadInputGuard,
-  reloadWindowSafely,
   resolveCustomResourcePath,
+  SoftRefreshCoordinator,
 } from '../src/main/window-lifecycle.js';
 
 test('reload passthrough keeps forwarding mouse movement', () => {
@@ -27,43 +27,6 @@ test('destroyed windows are ignored by passthrough updates', () => {
   };
 
   assert.equal(applyMousePassthrough(browserWindow, false), false);
-});
-
-test('every completed reload cycle captures input before navigation', () => {
-  const calls = [];
-  const webContents = {
-    isDestroyed: () => false,
-    isLoading: () => false,
-    reload: () => calls.push(['reload']),
-  };
-  const browserWindow = {
-    webContents,
-    isDestroyed: () => false,
-    setIgnoreMouseEvents: (...args) => calls.push(['passthrough', ...args]),
-  };
-
-  for (let cycle = 0; cycle < 25; cycle += 1) {
-    assert.equal(reloadWindowSafely(browserWindow), true);
-  }
-  assert.equal(calls.length, 50);
-  for (let index = 0; index < calls.length; index += 2) {
-    assert.deepEqual(calls[index], ['passthrough', false, { forward: true }]);
-    assert.deepEqual(calls[index + 1], ['reload']);
-  }
-});
-
-test('duplicate reload is ignored while navigation is in progress', () => {
-  const browserWindow = {
-    isDestroyed: () => false,
-    setIgnoreMouseEvents: () => assert.fail('passthrough changed during an active reload'),
-    webContents: {
-      isDestroyed: () => false,
-      isLoading: () => true,
-      reload: () => assert.fail('duplicate reload started'),
-    },
-  };
-
-  assert.equal(reloadWindowSafely(browserWindow), false);
 });
 
 test('input guard rejects stale renderer messages across 25 reload generations', () => {
@@ -116,10 +79,54 @@ test('input guard watchdog fails open when renderer startup never completes', ()
   guard.finishLoad();
   watchdog();
   assert.deepEqual(calls, [
-    [false, { forward: true }],
+    [true, { forward: true }],
     [true, { forward: true }],
   ]);
   assert.equal(guard.rendererReady, true);
+});
+
+test('soft refresh coalesces repeated requests and accepts only the active acknowledgement', () => {
+  const sent = [];
+  const timers = new Map();
+  let nextTimer = 1;
+  const coordinator = new SoftRefreshCoordinator({
+    send: (requestId) => sent.push(requestId),
+    onFailure: (error) => assert.fail(error.message),
+    setTimeoutImpl: (callback) => {
+      const id = nextTimer++;
+      timers.set(id, callback);
+      return id;
+    },
+    clearTimeoutImpl: (id) => timers.delete(id),
+  });
+
+  for (let cycle = 0; cycle < 25; cycle += 1) {
+    assert.equal(coordinator.request(), true);
+    assert.equal(coordinator.request(), false, 'duplicate request was not coalesced');
+    assert.equal(coordinator.complete(cycle, true), false, 'stale acknowledgement was accepted');
+    assert.equal(coordinator.complete(cycle + 1, true), true);
+    assert.equal(timers.size, 0, 'completed refresh left a watchdog behind');
+  }
+  assert.deepEqual(sent, Array.from({ length: 25 }, (_, index) => index + 1));
+});
+
+test('soft refresh timeout clears single-flight state before recovery', () => {
+  let watchdog;
+  const failures = [];
+  const coordinator = new SoftRefreshCoordinator({
+    send: () => {},
+    onFailure: (error) => failures.push(error.message),
+    setTimeoutImpl: (callback) => {
+      watchdog = callback;
+      return 1;
+    },
+    clearTimeoutImpl: () => {},
+  });
+
+  assert.equal(coordinator.request(), true);
+  watchdog();
+  assert.match(failures[0], /timed out/);
+  assert.equal(coordinator.request(), true, 'timeout left refresh permanently locked');
 });
 
 test('input guard keeps the desktop click-through while a secondary window is active', () => {

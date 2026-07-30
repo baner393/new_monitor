@@ -183,6 +183,13 @@ class PhysicsEngine {
     this.screenAnchorX = this.pulley.x / this.windowWidth
   }
 
+  // Cancel only pointer-owned state. Runtime settings and the current physical
+  // position are intentionally preserved for renderer-local recovery.
+  cancelInteraction() {
+    this.turtle.dragging = false
+    this.velocityTracker.clear()
+  }
+
   // ──────────────────────────────────────────
   // 右键甩动物理模拟
   // 乌龟：重力 + 绳子弹簧力 + 空气阻尼 + 碰撞

@@ -73,6 +73,15 @@ export class InputManager {
     this._resetRightDrag();
   }
 
+  resetInteraction() {
+    if (this._destroyed) return false;
+    const wasEnabled = this._enabled;
+    this.disable();
+    this.physics?.cancelInteraction?.();
+    if (wasEnabled) this.enable();
+    return true;
+  }
+
   destroy() {
     this._destroyed = true;
     this.disable();

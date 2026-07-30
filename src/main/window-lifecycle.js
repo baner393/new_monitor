@@ -8,20 +8,6 @@ export function applyMousePassthrough(browserWindow, ignore) {
 }
 
 /**
- * Reloading destroys the renderer that owns transparent hit testing. Capture
- * mouse input until the replacement renderer is ready, and ignore duplicate
- * reload requests while navigation is already in progress.
- */
-export function reloadWindowSafely(browserWindow) {
-  if (!browserWindow || browserWindow.isDestroyed()) return false;
-  const webContents = browserWindow.webContents;
-  if (!webContents || webContents.isDestroyed() || webContents.isLoading()) return false;
-  applyMousePassthrough(browserWindow, false);
-  webContents.reload();
-  return true;
-}
-
-/**
  * Owns the transparent full-screen window's input state across navigations.
  * Renderer messages are ignored until the replacement document explicitly
  * announces that hit testing is ready. A watchdog fails open so a renderer
@@ -49,7 +35,7 @@ export class ReloadInputGuard {
     this.generation += 1;
     this.rendererReady = false;
     this._clearWatchdog();
-    applyMousePassthrough(this.browserWindow, this.suspended);
+    applyMousePassthrough(this.browserWindow, true);
     return this.generation;
   }
 
@@ -106,6 +92,71 @@ export class ReloadInputGuard {
   _clearWatchdog() {
     if (this.watchdog !== null) this.clearTimeoutImpl(this.watchdog);
     this.watchdog = null;
+  }
+}
+
+/**
+ * Single-flight request/ack watchdog used by renderer-preserving refreshes.
+ * Repeated user requests are coalesced; a missing/failed acknowledgement lets
+ * the caller rebuild the BrowserWindow without navigating the existing one.
+ */
+export class SoftRefreshCoordinator {
+  constructor({
+    send,
+    onFailure,
+    timeoutMs = 2500,
+    setTimeoutImpl = setTimeout,
+    clearTimeoutImpl = clearTimeout,
+  }) {
+    this.send = send;
+    this.onFailure = onFailure;
+    this.timeoutMs = timeoutMs;
+    this.setTimeoutImpl = setTimeoutImpl;
+    this.clearTimeoutImpl = clearTimeoutImpl;
+    this.sequence = 0;
+    this.pendingId = null;
+    this.watchdog = null;
+    this.disposed = false;
+  }
+
+  request() {
+    if (this.disposed || this.pendingId !== null) return false;
+    const requestId = ++this.sequence;
+    this.pendingId = requestId;
+    try {
+      this.send(requestId);
+    } catch (error) {
+      this._finish();
+      this.onFailure?.(error);
+      return false;
+    }
+    this.watchdog = this.setTimeoutImpl(() => {
+      if (this.disposed || this.pendingId !== requestId) return;
+      this._finish();
+      this.onFailure?.(new Error(`Soft refresh ${requestId} timed out`));
+    }, this.timeoutMs);
+    this.watchdog?.unref?.();
+    return true;
+  }
+
+  complete(requestId, ok = true, errorMessage = '') {
+    if (this.disposed || requestId !== this.pendingId) return false;
+    this._finish();
+    if (!ok) this.onFailure?.(new Error(errorMessage || `Soft refresh ${requestId} failed`));
+    return true;
+  }
+
+  dispose() {
+    this.disposed = true;
+    this._finish();
+    this.send = null;
+    this.onFailure = null;
+  }
+
+  _finish() {
+    if (this.watchdog !== null) this.clearTimeoutImpl(this.watchdog);
+    this.watchdog = null;
+    this.pendingId = null;
   }
 }
 

@@ -964,6 +964,19 @@ export class SettingsPanel {
     this._animating = true;
   }
 
+  settleForRefresh() {
+    this._activeSlider = null;
+    if (!this._animating) return this.isOpen;
+    const opening = this._animDirection >= 0;
+    this._animating = false;
+    this._animCallback = null;
+    this._animProgress = opening ? 1 : 0;
+    this.container.visible = opening;
+    this.container.alpha = opening ? 1 : 0;
+    this.container.scale.set(opening ? 1 : 0.3);
+    return opening;
+  }
+
   updateAnimation(dt) {
     if (!this._animating) return;
 

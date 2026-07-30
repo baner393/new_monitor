@@ -410,10 +410,12 @@ async function synchronizeMousePassthroughFromSystem(force = false, announceRead
     const ignore = cursor ? synchronizeMousePassthrough(cursor.x, cursor.y, force) : true;
     if (!cursor) window.electronAPI.setIgnoreMouseEvents(true);
     if (announceReady) window.electronAPI.markRendererInputReady(ignore);
+    return ignore;
   } catch (error) {
     console.warn('[Input] Failed to synchronize cursor after load:', error);
     window.electronAPI.setIgnoreMouseEvents(true);
     if (announceReady) window.electronAPI.markRendererInputReady(true);
+    return true;
   }
 }
 
@@ -435,6 +437,51 @@ if (window.electronAPI?.onResyncMousePassthrough) {
 }
 
 // ── System snapshot receiver ───────────────────────────────────────────
+const waitForRenderedFrame = () => new Promise((resolve) => requestAnimationFrame(resolve));
+let softRefreshRunning = false;
+
+if (window.electronAPI?.onSoftRefresh) {
+  window.electronAPI.onSoftRefresh(async ({ requestId } = {}) => {
+    if (softRefreshRunning) return;
+    softRefreshRunning = true;
+    try {
+      panel.commitPendingConfiguration();
+      const state = stateMachine.getState();
+      const transientState = [
+        'PULLING', 'BOUNCING', 'EXPANDING', 'COLLAPSING', 'PULLEY_DRAG',
+      ].includes(state);
+
+      inputManager.resetInteraction();
+      if (transientState) {
+        const panelOpen = panel.settleForRefresh();
+        settingsPanel.settleForRefresh();
+        const recoveredState = panelOpen ? 'PANEL_OPEN' : 'IDLE';
+        stateMachine.reset(recoveredState);
+        prevState = recoveredState;
+        setSpriteTextureForState(recoveredState);
+        bounceStartPos = null;
+        ropeReturnActive = false;
+        _panelDragActive = false;
+      }
+
+      window.electronAPI.requestSystemData();
+      await waitForRenderedFrame();
+      await waitForRenderedFrame();
+      await synchronizeMousePassthroughFromSystem(true);
+      window.electronAPI.completeSoftRefresh({ requestId, ok: true });
+    } catch (error) {
+      console.error('[Refresh] Soft refresh failed:', error);
+      window.electronAPI.completeSoftRefresh({
+        requestId,
+        ok: false,
+        error: error?.message || String(error),
+      });
+    } finally {
+      softRefreshRunning = false;
+    }
+  });
+}
+
 window.electronAPI.onSystemData((data) => {
   panel.update(data);
 });

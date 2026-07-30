@@ -1162,6 +1162,19 @@ export class Panel {
     this._animCallback = onComplete || null;
   }
 
+  settleForRefresh() {
+    this.commitPendingConfiguration();
+    if (!this._animating) return this.isOpen;
+    const opening = this._animDirection >= 0;
+    this._animating = false;
+    this._animCallback = null;
+    this._animProgress = opening ? 1 : 0;
+    this.container.visible = opening;
+    this.container.alpha = opening ? 1 : 0;
+    this.container.scale.set(opening ? 1 : 0.3);
+    return opening;
+  }
+
   updateAnimation(dt) {
     if (this.container.visible && this._page === 'overview') {
       this._motionTime += dt;
