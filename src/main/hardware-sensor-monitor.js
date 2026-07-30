@@ -3,7 +3,7 @@ import { randomUUID } from 'crypto';
 import fs from 'fs';
 import net from 'net';
 import path from 'path';
-import { launchElevatedProcess } from './elevation-restart.js';
+import { launchElevatedProcess, resolveWindowsUserSid } from './elevation-restart.js';
 
 function finiteOrNull(value) {
   if (value === null || value === undefined || value === '') return null;
@@ -220,13 +220,15 @@ export class HardwareSensorClient {
     spawnImpl = spawn,
     connectImpl = net.createConnection,
     launchElevatedImpl = launchElevatedProcess,
+    resolveUserSidImpl = resolveWindowsUserSid,
     timeoutMs = 12000,
-    elevationConnectTimeoutMs = 15000,
+    elevationConnectTimeoutMs = 60000,
   } = {}) {
     this.executablePath = executablePath ? path.resolve(executablePath) : executablePath;
     this.spawnImpl = spawnImpl;
     this.connectImpl = connectImpl;
     this.launchElevatedImpl = launchElevatedImpl;
+    this.resolveUserSidImpl = resolveUserSidImpl;
     this.timeoutMs = timeoutMs;
     this.elevationConnectTimeoutMs = elevationConnectTimeoutMs;
     this.child = null;
@@ -249,9 +251,12 @@ export class HardwareSensorClient {
     }
 
     const pipeName = `turtle-monitor-hardware-${randomUUID()}`;
+    const clientSid = this.resolveUserSidImpl();
+    const elevatedArgs = ['--pipe', pipeName];
+    if (clientSid) elevatedArgs.push('--client-sid', clientSid);
     await this.launchElevatedImpl({
       executable: this.executablePath,
-      args: ['--pipe', pipeName],
+      args: elevatedArgs,
       workingDirectory: path.dirname(this.executablePath),
     });
     this._stopCurrentTransport();
@@ -433,16 +438,25 @@ export class HardwareSensorClient {
   _connectElevatedPipe(pipeName) {
     const pipePath = `\\\\.\\pipe\\${pipeName}`;
     const deadline = Date.now() + this.elevationConnectTimeoutMs;
+    let lastConnectionError = null;
     return new Promise((resolve, reject) => {
       const attempt = () => {
         if (Date.now() >= deadline) {
-          reject(new Error('管理员硬件读取器启动超时'));
+          const code = String(lastConnectionError?.code || '').toUpperCase();
+          if (code === 'EACCES' || code === 'EPERM') {
+            reject(new Error('管理员读取器已启动，但 Windows 拒绝了面板与读取器之间的连接'));
+          } else if (code === 'ENOENT') {
+            reject(new Error('管理员读取器已启动，但没有建立通信通道；请检查安全软件是否拦截了 HardwareSensorHost.exe'));
+          } else {
+            reject(new Error(`管理员读取器通信等待超时${code ? `（${code}）` : ''}`));
+          }
           return;
         }
         const socket = this.connectImpl(pipePath);
         let connected = false;
-        const onEarlyError = () => {
+        const onEarlyError = (error) => {
           if (connected) return;
+          lastConnectionError = error;
           socket.destroy();
           setTimeout(attempt, 100);
         };

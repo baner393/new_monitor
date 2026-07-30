@@ -6,6 +6,7 @@ import {
   createElevationScript,
   isWindowsProcessElevated,
   launchElevatedProcess,
+  resolveWindowsUserSid,
 } from '../src/main/elevation-restart.js';
 
 test('elevated launcher quotes executable and native arguments safely', () => {
@@ -35,6 +36,18 @@ test('administrator identity check uses the stable Windows role result', () => {
     execFileSyncImpl: () => 'False\r\n',
   }), false);
   assert.equal(isWindowsProcessElevated({ platform: 'linux' }), false);
+});
+
+test('resolves the requesting Windows account SID for cross-account UAC', () => {
+  assert.equal(resolveWindowsUserSid({
+    platform: 'win32',
+    execFileSyncImpl: () => '"DESKTOP\\visitor","S-1-5-21-123-456-789-1001"\r\n',
+  }), 'S-1-5-21-123-456-789-1001');
+  assert.equal(resolveWindowsUserSid({ platform: 'linux' }), null);
+  assert.equal(resolveWindowsUserSid({
+    platform: 'win32',
+    execFileSyncImpl: () => 'unexpected output',
+  }), null);
 });
 
 test('launcher requests UAC for the sensor executable without restarting Electron', async () => {

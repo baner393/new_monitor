@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.IO.Pipes;
 using System.Linq;
+using System.Security.AccessControl;
 using System.Security.Principal;
 using System.Text;
 using System.Web.Script.Serialization;
@@ -26,50 +27,40 @@ namespace TurtleMonitor.HardwareSensorHost
 
             try
             {
-                Computer computer = CreateComputer();
-                try
+                string pipeName = ReadArgument(args, "--pipe");
+                if (!string.IsNullOrWhiteSpace(pipeName))
                 {
-                    computer.Open();
-
-                    string pipeName = ReadArgument(args, "--pipe");
-                    if (!string.IsNullOrWhiteSpace(pipeName))
+                    ValidatePipeName(pipeName);
+                    string clientSid = ReadArgument(args, "--client-sid");
+                    using (NamedPipeServerStream pipe = new NamedPipeServerStream(
+                        pipeName,
+                        PipeDirection.InOut,
+                        1,
+                        PipeTransmissionMode.Byte,
+                        PipeOptions.Asynchronous,
+                        4096,
+                        4096,
+                        CreatePipeSecurity(clientSid)))
                     {
-                        ValidatePipeName(pipeName);
-                        using (NamedPipeServerStream pipe = new NamedPipeServerStream(
-                            pipeName,
-                            PipeDirection.InOut,
-                            1,
-                            PipeTransmissionMode.Byte,
-                            PipeOptions.Asynchronous))
+                        IAsyncResult connection = pipe.BeginWaitForConnection(null, null);
+                        if (!connection.AsyncWaitHandle.WaitOne(TimeSpan.FromSeconds(20)))
+                            throw new TimeoutException("Hardware sensor pipe connection timed out");
+                        pipe.EndWaitForConnection(connection);
+                        using (StreamReader reader = new StreamReader(
+                            pipe, new UTF8Encoding(false), false, 4096, true))
+                        using (StreamWriter writer = new StreamWriter(
+                            pipe, new UTF8Encoding(false), 4096, true) { AutoFlush = true })
                         {
-                            IAsyncResult connection = pipe.BeginWaitForConnection(null, null);
-                            if (!connection.AsyncWaitHandle.WaitOne(TimeSpan.FromSeconds(20)))
-                                throw new TimeoutException("Hardware sensor pipe connection timed out");
-                            pipe.EndWaitForConnection(connection);
-                            using (StreamReader reader = new StreamReader(
-                                pipe, new UTF8Encoding(false), false, 4096, true))
-                            using (StreamWriter writer = new StreamWriter(
-                                pipe, new UTF8Encoding(false), 4096, true) { AutoFlush = true })
-                            {
-                                responseWriter = writer;
-                                RunCommandLoop(computer, reader, writer);
-                            }
+                            responseWriter = writer;
+                            RunComputerSession(reader, writer, false);
                         }
-                        return 0;
                     }
-
-                    if (args.Any(argument => string.Equals(argument, "--once", StringComparison.OrdinalIgnoreCase)))
-                    {
-                        WriteSnapshot(computer, Console.Out);
-                        return 0;
-                    }
-
-                    RunCommandLoop(computer, Console.In, Console.Out);
+                    return 0;
                 }
-                finally
-                {
-                    computer.Close();
-                }
+
+                bool once = args.Any(argument => string.Equals(
+                    argument, "--once", StringComparison.OrdinalIgnoreCase));
+                RunComputerSession(Console.In, Console.Out, once);
                 return 0;
             }
             catch (Exception error)
@@ -89,6 +80,23 @@ namespace TurtleMonitor.HardwareSensorHost
                     // The original exception on stderr is the useful fallback.
                 }
                 return 1;
+            }
+        }
+
+        private static void RunComputerSession(TextReader reader, TextWriter writer, bool once)
+        {
+            Computer computer = CreateComputer();
+            try
+            {
+                computer.Open();
+                if (once)
+                    WriteSnapshot(computer, writer);
+                else
+                    RunCommandLoop(computer, reader, writer);
+            }
+            finally
+            {
+                computer.Close();
             }
         }
 
@@ -132,6 +140,25 @@ namespace TurtleMonitor.HardwareSensorHost
         {
             if (pipeName.Length > 160 || pipeName.IndexOfAny(new[] { '\\', '/' }) >= 0)
                 throw new ArgumentException("Invalid hardware sensor pipe name");
+        }
+
+        private static PipeSecurity CreatePipeSecurity(string clientSid)
+        {
+            PipeSecurity security = new PipeSecurity();
+            SecurityIdentifier client = string.IsNullOrWhiteSpace(clientSid)
+                ? new SecurityIdentifier(WellKnownSidType.AuthenticatedUserSid, null)
+                : new SecurityIdentifier(clientSid);
+            PipeAccessRights clientRights = PipeAccessRights.ReadWrite | PipeAccessRights.CreateNewInstance;
+            security.AddAccessRule(new PipeAccessRule(client, clientRights, AccessControlType.Allow));
+            security.AddAccessRule(new PipeAccessRule(
+                new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null),
+                PipeAccessRights.FullControl,
+                AccessControlType.Allow));
+            security.AddAccessRule(new PipeAccessRule(
+                new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null),
+                PipeAccessRights.FullControl,
+                AccessControlType.Allow));
+            return security;
         }
 
         private static Computer CreateComputer()

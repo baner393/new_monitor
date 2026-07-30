@@ -48,6 +48,23 @@ export function isWindowsProcessElevated({
   }
 }
 
+export function resolveWindowsUserSid({
+  platform = process.platform,
+  execFileSyncImpl = execFileSync,
+  env = process.env,
+} = {}) {
+  if (platform !== 'win32') return null;
+  try {
+    const systemRoot = env.SystemRoot || env.WINDIR || 'C:\\Windows';
+    const output = execFileSyncImpl(path.join(systemRoot, 'System32', 'whoami.exe'), [
+      '/user', '/fo', 'csv', '/nh',
+    ], { encoding: 'utf8', windowsHide: true, timeout: 5000 });
+    return String(output).match(/S-\d(?:-\d+)+/i)?.[0] || null;
+  } catch {
+    return null;
+  }
+}
+
 export function createElevationScript(executable, args = [], workingDirectory = null) {
   const nativeArguments = args.map(quoteWindowsCommandLineArgument).join(' ');
   return [

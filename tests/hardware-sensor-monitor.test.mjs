@@ -161,6 +161,7 @@ test('elevates only the hardware host and confirms the named-pipe handshake', as
       launchOptions = options;
       return { started: true };
     },
+    resolveUserSidImpl: () => 'S-1-5-21-123-456-789-1001',
     connectImpl: (pipePath) => {
       connectedPath = pipePath;
       queueMicrotask(() => {
@@ -179,6 +180,7 @@ test('elevates only the hardware host and confirms the named-pipe handshake', as
   assert.equal(launchOptions.executable, process.execPath);
   assert.equal(launchOptions.args[0], '--pipe');
   assert.match(launchOptions.args[1], /^turtle-monitor-hardware-/);
+  assert.deepEqual(launchOptions.args.slice(2), ['--client-sid', 'S-1-5-21-123-456-789-1001']);
   assert.match(connectedPath, /^\\\\\.\\pipe\\turtle-monitor-hardware-/);
   client.stop();
 });
