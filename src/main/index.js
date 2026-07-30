@@ -2,19 +2,22 @@ import { app, BrowserWindow, ipcMain, Menu, dialog, screen } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import { SystemMonitor } from './system-monitor.js';
-import { applyMousePassthrough, reloadWindowSafely, resolveCustomResourcePath } from './window-lifecycle.js';
+import { resolveHardwareSensorHostPath } from './hardware-sensor-monitor.js';
+import { launchElevatedRestart } from './elevation-restart.js';
+import {
+  ReloadInputGuard,
+  reloadWindowSafely,
+  resolveCustomResourcePath,
+} from './window-lifecycle.js';
 
 let mainWindow;
 let customWindow;
 let canvasWindow;
 let regionWindow;
 let systemMonitor;
+let mainWindowInputGuard;
 let pendingGridData = null;
 let pendingRegionImage = null; // temp storage for region marker image data
-
-function setMainWindowMousePassthrough(ignore) {
-  applyMousePassthrough(mainWindow, ignore);
-}
 
 function resolveCustomResource(fileName) {
   return resolveCustomResourcePath({
@@ -48,6 +51,20 @@ const DEFAULT_SETTINGS = {
   ropeElasticity:   5,      // 档位 1-12（与渲染进程一致）
   selectedSkin:     'turtle',
   panelMoveStable:  true,
+  monitorVisibility: {
+    cpu: true,
+    memory: true,
+    gpu: true,
+    disk: true,
+    network: true,
+    system: true,
+    temperature: true,
+    power: true,
+    fan: true,
+    voltage: true,
+    storageHealth: true,
+    battery: true,
+  },
 };
 
 let currentSettings = { ...DEFAULT_SETTINGS };
@@ -87,6 +104,20 @@ loadSettings();
 // IPC: settings.get — return current settings
 ipcMain.handle('settings-get', () => {
   return { ...currentSettings };
+});
+
+ipcMain.handle('monitor-settings-get', () => ({
+  ...DEFAULT_SETTINGS.monitorVisibility,
+  ...(currentSettings.monitorVisibility || {}),
+}));
+
+ipcMain.on('monitor-settings-set', (_event, visibility) => {
+  const next = {};
+  for (const key of Object.keys(DEFAULT_SETTINGS.monitorVisibility)) {
+    next[key] = visibility?.[key] !== false;
+  }
+  currentSettings.monitorVisibility = next;
+  saveSettings();
 });
 
 // IPC: settings.set — set a single value
@@ -229,6 +260,7 @@ function createWindow() {
 
   // Remove menu bar to prevent Alt-triggered black text
   mainWindow.setMenu(null);
+  mainWindowInputGuard = new ReloadInputGuard(mainWindow);
 
   // The renderer owns transparent hit testing. Capture input while it is being
   // replaced, then let the new renderer restore passthrough from the real
@@ -237,12 +269,25 @@ function createWindow() {
   mainWindow.webContents.on('did-start-loading', () => {
     rendererLoadGeneration += 1;
     console.log(`[Window] Renderer load ${rendererLoadGeneration} started; mouse captured`);
-    setMainWindowMousePassthrough(false);
+    mainWindowInputGuard.beginLoad();
   });
 
   mainWindow.webContents.on('did-finish-load', () => {
     console.log(`[Window] Renderer load ${rendererLoadGeneration} finished`);
     mainWindow.setTitle(' ');
+    mainWindowInputGuard.finishLoad();
+  });
+
+  mainWindow.webContents.on('did-fail-load', (_event, code, description, url, isMainFrame) => {
+    if (isMainFrame) {
+      console.error(`[Window] Renderer load failed (${code}) ${description}: ${url}`);
+      mainWindowInputGuard.failOpen();
+    }
+  });
+
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    console.error(`[Window] Renderer process gone: ${details.reason}`);
+    mainWindowInputGuard.failOpen();
   });
 
   // Fix DPI scaling - prevent Windows from auto-scaling
@@ -275,6 +320,8 @@ function createWindow() {
   });
 
   mainWindow.on('closed', () => {
+    mainWindowInputGuard?.dispose();
+    mainWindowInputGuard = null;
     if (systemMonitor) {
       systemMonitor.stop();
       systemMonitor = null;
@@ -283,7 +330,12 @@ function createWindow() {
   });
 
   // Start the unified CPU / memory / disk / network / GPU monitor.
-  systemMonitor = new SystemMonitor(mainWindow, 2000);
+  const sensorHostPath = resolveHardwareSensorHostPath({
+    appPath: app.getAppPath(),
+    resourcesPath: process.resourcesPath,
+    isPackaged: app.isPackaged,
+  });
+  systemMonitor = new SystemMonitor(mainWindow, 2000, { sensorHostPath });
   systemMonitor.start();
 }
 
@@ -293,8 +345,22 @@ app.whenReady().then(() => {
 });
 
 // IPC: renderer can toggle click-through
-ipcMain.on('set-ignore-mouse', (event, ignore) => {
-  setMainWindowMousePassthrough(ignore);
+ipcMain.on('set-ignore-mouse', (event, ignore, generation) => {
+  if (mainWindow && event.sender === mainWindow.webContents) {
+    mainWindowInputGuard?.setFromRenderer(ignore, generation);
+  }
+});
+
+ipcMain.handle('renderer-input-generation-get', (event) => {
+  if (!mainWindow || event.sender !== mainWindow.webContents) return null;
+  return mainWindowInputGuard?.generation ?? null;
+});
+
+ipcMain.on('renderer-input-ready', (event, ignore, generation) => {
+  if (mainWindow && event.sender === mainWindow.webContents) {
+    const accepted = mainWindowInputGuard?.markRendererReady(ignore, generation);
+    console.log(`[Window] Renderer input generation ${mainWindowInputGuard?.generation} ready; passthrough=${Boolean(ignore)} accepted=${Boolean(accepted)}`);
+  }
 });
 
 ipcMain.handle('cursor-position-get', (event) => {
@@ -310,6 +376,22 @@ ipcMain.on('request-system-data', () => {
   if (systemMonitor) {
     systemMonitor.requestSnapshot();
   }
+});
+
+ipcMain.handle('monitor-request-elevation', async () => {
+  if (systemMonitor?.hardwareSensors?.access?.elevated) {
+    return { started: false, alreadyElevated: true };
+  }
+  const restartOptions = app.isPackaged
+    ? { executable: process.execPath, args: process.argv.slice(1) }
+    : {
+        executable: 'npm.cmd',
+        args: ['run', __IS_SPONSOR__ ? 'start:sponsor' : 'start:free'],
+        workingDirectory: app.getAppPath(),
+      };
+  await launchElevatedRestart(restartOptions);
+  setTimeout(() => app.quit(), 750);
+  return { started: true, alreadyElevated: false };
 });
 
 // IPC: renderer can resize the window
@@ -386,7 +468,7 @@ function openCustomMode() {
   // The pet window is a full-work-area always-on-top surface. Make it
   // click-through before showing the editor so the editor cannot be trapped
   // underneath transparent pixels.
-  setMainWindowMousePassthrough(true);
+  mainWindowInputGuard?.suspend();
 
   const customPreloadPath = resolveCustomResource('preload.js');
   const customHtmlPath = resolveCustomResource('index.html');
@@ -436,6 +518,7 @@ function openCustomMode() {
   customWindow.on('closed', () => {
     customWindow = null;
     if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindowInputGuard?.resume();
       mainWindow.webContents.send('resync-mouse-passthrough');
     }
   });

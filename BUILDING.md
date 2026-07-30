@@ -6,6 +6,15 @@
 - Node.js 22+
 - 首次安装：`npm ci`
 
+仓库已提交运行所需的 `resources/hardware-sensor`，普通开发和启动不依赖本机 .NET SDK。只有更新传感器宿主源码或 LibreHardwareMonitor 版本时才需要 .NET SDK，并执行：
+
+```powershell
+npm run build:sensor-host
+npm run verify
+```
+
+该命令固定构建 x64 `.NET Framework 4.7.2` 宿主，更新许可证副本和 SHA-256 清单。不要手工替换其中某个 DLL，否则项目门禁和安装包门禁会因清单不一致而失败。
+
 依赖版本和完整依赖树由 `package.json` 与 `package-lock.json` 固定。不要手工复制 `node_modules`。
 
 ## 开发启动
@@ -49,8 +58,9 @@ out/sponsor/win-unpacked/TurtleMonitorSponsor.exe
 2. `npm ci` 成功，`npm run verify` 通过。
 3. `npm run dist` 退出码为 0；任何子进程失败都会终止，不再吞掉错误。
 4. `npm run verify:artifacts` 通过。
-5. 分别启动两个 `win-unpacked` EXE，检查桌宠、GPU 面板、设置、皮肤和图标；赞助版额外检查自定义模式，免费版确认没有该入口。
-6. 对最终安装包计算并保存 SHA-256；正式发行时再做 Windows 代码签名。
+5. `verify:artifacts` 同时确认传感器宿主位于 ASAR 外部、所有 DLL/许可证与清单哈希一致；缺文件或被替换会直接失败。
+6. 分别启动两个 `win-unpacked` EXE，检查桌宠、系统面板、监控管理页、权限状态、设置、皮肤和图标；赞助版额外检查自定义模式，免费版确认没有该入口。
+7. 对最终安装包计算并保存 SHA-256；正式发行时再做 Windows 代码签名。
 
 运行时审计可使用：
 

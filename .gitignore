@@ -7,3 +7,5 @@ out/
 tmp_screenshot.*
 keys/
 .build-edition
+native/**/bin/
+native/**/obj/

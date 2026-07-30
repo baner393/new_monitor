@@ -103,3 +103,32 @@ test('keeps portable values when an optional Windows provider is empty', () => {
 test('malformed PowerShell output is rejected instead of becoming zeroes', () => {
   assert.throws(() => parseWindowsSystemOutput('warning only'), /no JSON/);
 });
+
+test('hardware sensors enrich OS counters without replacing their fallbacks', () => {
+  const portable = {
+    providers: ['node-os'],
+    system: { hostname: 'PC' },
+    cpu: { usage: 35 },
+    memory: { usage: 50 },
+    disks: [],
+    diskIo: {},
+    network: { interfaces: [] },
+    gpu: { name: 'GPU', usage: 20 },
+    thermalZones: [],
+    battery: null,
+    diagnostics: {},
+  };
+  const hardwareSensors = {
+    provider: 'librehardwaremonitor',
+    cpu: { temperatureC: 61, powerWatts: 70 },
+    gpu: { temperatureC: 52, powerWatts: 90, fanRpm: 1100 },
+  };
+
+  const merged = mergeSnapshots(portable, null, null, {}, hardwareSensors);
+  assert.equal(merged.cpu.usage, 35);
+  assert.equal(merged.cpu.temperatureC, 61);
+  assert.equal(merged.gpu.usage, 20);
+  assert.equal(merged.gpu.temperatureC, 52);
+  assert.equal(merged.gpu.fanRpm, 1100);
+  assert.ok(merged.providers.includes('librehardwaremonitor'));
+});

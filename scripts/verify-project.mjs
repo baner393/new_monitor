@@ -18,6 +18,13 @@ const required = [
   'public/assets/skins/skins.json',
   'src/custom/index.html',
   'src/custom/preload.js',
+  'native/HardwareSensorHost/HardwareSensorHost.csproj',
+  'native/HardwareSensorHost/Program.cs',
+  'resources/hardware-sensor/HardwareSensorHost.exe',
+  'resources/hardware-sensor/LibreHardwareMonitorLib.dll',
+  'resources/hardware-sensor/LICENSE.txt',
+  'resources/hardware-sensor/THIRD-PARTY-LICENSES.txt',
+  'resources/hardware-sensor/manifest.json',
 ];
 for (const file of required) if (!exists(file)) fail(`Missing required file: ${file}`);
 
@@ -30,11 +37,38 @@ for (const section of ['dependencies', 'devDependencies']) {
 for (const script of ['start:free', 'start:sponsor', 'dist:free', 'dist:sponsor', 'verify:artifacts']) {
   if (!packageJson.scripts?.[script]) fail(`Missing npm script: ${script}`);
 }
+if (!packageJson.scripts?.['build:sensor-host']) fail('Missing npm script: build:sensor-host');
 
 const iconHeader = exists('build/icon.ico') ? fs.readFileSync(path.join(root, 'build/icon.ico')).subarray(0, 4) : Buffer.alloc(0);
 if (!iconHeader.equals(Buffer.from([0, 0, 1, 0]))) fail('build/icon.ico is not a valid ICO resource');
 const pngHeader = exists('assets/icon.png') ? fs.readFileSync(path.join(root, 'assets/icon.png')).subarray(0, 8) : Buffer.alloc(0);
 if (!pngHeader.equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) fail('assets/icon.png is not a valid PNG resource');
+
+const sensorHostHeader = exists('resources/hardware-sensor/HardwareSensorHost.exe')
+  ? fs.readFileSync(path.join(root, 'resources/hardware-sensor/HardwareSensorHost.exe')).subarray(0, 2)
+  : Buffer.alloc(0);
+if (!sensorHostHeader.equals(Buffer.from('MZ'))) fail('HardwareSensorHost.exe is not a valid Windows executable');
+
+if (exists('resources/hardware-sensor/manifest.json')) {
+  const manifest = JSON.parse(fs.readFileSync(path.join(root, 'resources/hardware-sensor/manifest.json'), 'utf8'));
+  if (manifest.library !== 'LibreHardwareMonitorLib 0.9.6') fail(`Unexpected sensor library: ${manifest.library}`);
+  for (const entry of manifest.files || []) {
+    const file = path.join(root, 'resources', 'hardware-sensor', path.basename(entry.file));
+    if (!fs.existsSync(file)) {
+      fail(`Sensor host manifest file is missing: ${entry.file}`);
+      continue;
+    }
+    const content = fs.readFileSync(file);
+    const digest = crypto.createHash('sha256').update(content).digest('hex');
+    if (content.length !== entry.bytes || digest !== entry.sha256) {
+      fail(`Sensor host manifest mismatch: ${entry.file}`);
+    }
+  }
+}
+
+if (!fs.readFileSync(path.join(root, 'electron-builder.config.js'), 'utf8').includes("from: 'resources/hardware-sensor'")) {
+  fail('Electron Builder does not copy the hardware sensor host to extraResources');
+}
 
 if (exists('public/assets/skins/skins.json')) {
   const skinConfig = JSON.parse(fs.readFileSync(path.join(root, 'public/assets/skins/skins.json'), 'utf8'));
@@ -53,7 +87,7 @@ if (exists('public/assets/skins/skins.json')) {
   if (!ids.has(skinConfig.defaultSkin)) fail(`Default skin does not exist: ${skinConfig.defaultSkin}`);
 }
 
-const ignoredDirectories = new Set(['.git', '.vite', 'node_modules', 'out']);
+const ignoredDirectories = new Set(['.git', '.vite', 'bin', 'node_modules', 'obj', 'out']);
 const textExtensions = new Set(['.bat', '.cjs', '.css', '.html', '.js', '.json', '.md', '.mjs', '.ps1', '.txt']);
 function walk(directory) {
   const result = [];

@@ -34,11 +34,31 @@ for (const edition of ['free', 'sponsor']) {
   const executable = path.join(unpacked, isSponsor ? 'TurtleMonitorSponsor.exe' : 'TurtleMonitorFree.exe');
   const installer = path.join(output, isSponsor ? 'TurtleMonitor-Sponsor-Setup.exe' : 'TurtleMonitor-Free-Setup.exe');
   const asarPath = path.join(unpacked, 'resources', 'app.asar');
+  const sensorRoot = path.join(unpacked, 'resources', 'hardware-sensor');
 
   for (const required of [executable, installer, asarPath]) {
     if (!fs.existsSync(required) || fs.statSync(required).size === 0) fail(`${edition}: missing artifact ${path.relative(root, required)}`);
   }
   if (!fs.existsSync(asarPath)) continue;
+
+  const sensorManifestPath = path.join(sensorRoot, 'manifest.json');
+  if (!fs.existsSync(sensorManifestPath)) {
+    fail(`${edition}: hardware sensor manifest is missing outside ASAR`);
+  } else {
+    const sensorManifest = JSON.parse(fs.readFileSync(sensorManifestPath, 'utf8'));
+    for (const entry of sensorManifest.files || []) {
+      const target = path.join(sensorRoot, path.basename(entry.file));
+      if (!fs.existsSync(target)) {
+        fail(`${edition}: hardware sensor file is missing: ${entry.file}`);
+        continue;
+      }
+      const content = fs.readFileSync(target);
+      const digest = crypto.createHash('sha256').update(content).digest('hex');
+      if (content.length !== entry.bytes || digest !== entry.sha256) {
+        fail(`${edition}: hardware sensor file changed: ${entry.file}`);
+      }
+    }
+  }
 
   const entries = packageEntrySet(asarPath);
   for (const required of [

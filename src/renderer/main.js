@@ -31,6 +31,7 @@ async function waitForFonts() {
 
 // ── Init ──────────────────────────────────────────────────────────────
 async function init() {
+  await window.electronAPI.initializeRendererInputSession();
   await waitForFonts();
 
 // ── Pixel-art rendering settings ───────────────────────────────────────
@@ -147,8 +148,17 @@ Object.defineProperty(sprite, 'texture', {
 });
 
 // ── System Monitor Panel ───────────────────────────────────────────────
-const panel = new Panel();
+const panel = new Panel({
+  onVisibilityChange: (visibility) => window.electronAPI.monitor?.setVisibility(visibility),
+  onRequestElevation: () => window.electronAPI.monitor?.requestElevation(),
+});
 pixiApp.stage.addChild(panel.container);
+try {
+  const monitorVisibility = await window.electronAPI.monitor?.getVisibility();
+  if (monitorVisibility) panel.setVisibility(monitorVisibility);
+} catch (error) {
+  console.warn('[Monitor] Failed to load visibility settings:', error);
+}
 
 // ── Settings Panel ─────────────────────────────────────────────────────
 const settingsPanel = new SettingsPanel();
@@ -347,25 +357,25 @@ function synchronizeMousePassthrough(x, y, force = false) {
   const state = stateMachine.getState();
   if (state === 'PULLING' || state === 'PULLEY_DRAG') {
     window.electronAPI.setIgnoreMouseEvents(false);
-    return;
+    return false;
   }
 
   // Also keep mouse events when panel is open
   if (state === 'PANEL_OPEN' || state === 'EXPANDING' || state === 'COLLAPSING' || state === 'HAPPY') {
     window.electronAPI.setIgnoreMouseEvents(false);
-    return;
+    return false;
   }
 
   // Keep mouse events when settings panel is open
   if (settingsPanel.isOpen || settingsPanel.isAnimating) {
     window.electronAPI.setIgnoreMouseEvents(false);
-    return;
+    return false;
   }
 
   // Keep mouse events when skin selector is open
   if (skinSelector.isOpen) {
     window.electronAPI.setIgnoreMouseEvents(false);
-    return;
+    return false;
   }
   
   const bounds = sprite.getBounds();
@@ -384,16 +394,19 @@ function synchronizeMousePassthrough(x, y, force = false) {
   if (force) {
     console.log(`[Input] Cursor synchronized after load: ${over ? 'interactive' : 'passthrough'}`);
   }
+  return !over;
 }
 
-async function synchronizeMousePassthroughFromSystem(force = false) {
+async function synchronizeMousePassthroughFromSystem(force = false, announceReady = false) {
   try {
     const cursor = await window.electronAPI.getCursorPosition();
-    if (cursor) synchronizeMousePassthrough(cursor.x, cursor.y, force);
-    else window.electronAPI.setIgnoreMouseEvents(true);
+    const ignore = cursor ? synchronizeMousePassthrough(cursor.x, cursor.y, force) : true;
+    if (!cursor) window.electronAPI.setIgnoreMouseEvents(true);
+    if (announceReady) window.electronAPI.markRendererInputReady(ignore);
   } catch (error) {
     console.warn('[Input] Failed to synchronize cursor after load:', error);
     window.electronAPI.setIgnoreMouseEvents(true);
+    if (announceReady) window.electronAPI.markRendererInputReady(true);
   }
 }
 
@@ -405,7 +418,7 @@ document.addEventListener('mousemove', (event) => {
 // two rendered frames, then hand hit testing back to this renderer exactly
 // once. Skin texture completion performs a second deterministic sync above.
 requestAnimationFrame(() => requestAnimationFrame(() => {
-  synchronizeMousePassthroughFromSystem(true);
+  synchronizeMousePassthroughFromSystem(true, true);
 }));
 
 if (window.electronAPI?.onResyncMousePassthrough) {
@@ -416,7 +429,6 @@ if (window.electronAPI?.onResyncMousePassthrough) {
 
 // ── System snapshot receiver ───────────────────────────────────────────
 window.electronAPI.onSystemData((data) => {
-  console.log('[System Data]', data);
   panel.update(data);
 });
 window.electronAPI.requestSystemData();

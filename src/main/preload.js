@@ -1,12 +1,25 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
+let rendererInputGeneration = null;
+
 contextBridge.exposeInMainWorld('electronAPI', {
   /**
    * Toggle mouse-event passthrough.
    * @param {boolean} ignore  true = click-through, false = normal
    */
   setIgnoreMouseEvents: (ignore) => {
-    ipcRenderer.send('set-ignore-mouse', ignore);
+    ipcRenderer.send('set-ignore-mouse', ignore, rendererInputGeneration);
+  },
+
+  /** Complete the per-navigation transparent-window input handshake. */
+  markRendererInputReady: (ignore) => {
+    ipcRenderer.send('renderer-input-ready', ignore, rendererInputGeneration);
+  },
+
+  /** Bind this isolated renderer document to the current navigation generation. */
+  initializeRendererInputSession: async () => {
+    rendererInputGeneration = await ipcRenderer.invoke('renderer-input-generation-get');
+    return rendererInputGeneration;
   },
 
   /** Return the current cursor position relative to this window. */
@@ -22,6 +35,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   /** Manually request a fresh system snapshot. */
   requestSystemData: () => {
     ipcRenderer.send('request-system-data');
+  },
+
+  /** Persistent monitor field visibility and optional elevated restart. */
+  monitor: {
+    getVisibility: () => ipcRenderer.invoke('monitor-settings-get'),
+    setVisibility: (visibility) => ipcRenderer.send('monitor-settings-set', visibility),
+    requestElevation: () => ipcRenderer.invoke('monitor-request-elevation'),
   },
 
   /**

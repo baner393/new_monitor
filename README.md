@@ -11,7 +11,11 @@ Windows 桌面系统监控宠物，使用 Electron、PixiJS 和 Vite 构建。
 
 ## 系统监控
 
-资源面板显示 CPU 总占用与核心信息、内存和页面文件、各固定分区容量、磁盘 I/O、各网络接口实时吞吐、GPU/显存、系统运行时间、进程/线程、热区与电池信息。采集采用 Node 原生接口、Windows CIM、性能计数器、累计计数差值和显卡厂商工具的多级回退；硬件或驱动未公开的传感器会显示“硬件未提供”，不会伪装成 `0`。
+资源面板显示 CPU 总占用与核心信息、内存和页面文件、各固定分区容量、磁盘 I/O、各网络接口实时吞吐、GPU/显存、系统运行时间、进程/线程、温度、功耗、风扇、电压、存储健康与电池信息。采集采用 Node 原生接口、Windows CIM、本地化性能计数器、累计计数差值、显卡厂商工具和 LibreHardwareMonitor 0.9.6 的多级回退。底层宿主独立运行；单个传感器或宿主异常不会阻塞桌宠和基础占用率。
+
+面板右上角的“监控管理”页可逐类隐藏或显示数据，设置保存在 Electron `userData` 中。页面同时显示标准/管理员权限、已读取传感器数量和读取源错误，并可由用户主动请求以管理员权限重启。状态含义已经拆开：台式机电池等不存在的设备显示“本机无此设备”；标准权限受限时显示权限提示；管理员权限下仍为空才显示“硬件 / 固件未开放”。不存在物理传感器或厂商固件没有导出的值不会伪造成 `0`。
+
+仓库已经包含可直接运行的 x64 `.NET Framework 4.7.2` 传感器宿主，因此普通使用者拉取后只需 `npm ci` 和启动命令，不需要安装 .NET SDK。维护者需要重建该宿主时运行 `npm run build:sensor-host`；固定依赖、许可证与文件哈希见 `native/HardwareSensorHost`、`third_party/LibreHardwareMonitor` 和 `resources/hardware-sensor/manifest.json`。
 
 ## 本地开发
 
@@ -41,6 +45,7 @@ npm run dist
 ## 数据路径
 
 - 内置只读资源：随 ASAR 发布，通过 `app.getAppPath()` 定位。
+- 硬件传感器宿主：源码开发从仓库 `resources/hardware-sensor` 读取；打包后从 `process.resourcesPath/hardware-sensor` 读取，不进入 ASAR。
 - 设置和用户皮肤：Electron 的 `app.getPath('userData')`。
 - 构建路径：全部从脚本文件或仓库根目录动态计算，不依赖盘符、用户名或固定工作区。
 

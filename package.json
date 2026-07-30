@@ -12,6 +12,7 @@
     "start:free": "cross-env VITE_EDITION=free electron-forge start",
     "start:sponsor": "cross-env VITE_EDITION=sponsor electron-forge start",
     "build": "node scripts/build.mjs",
+    "build:sensor-host": "node scripts/build-sensor-host.mjs",
     "build:free": "cross-env VITE_EDITION=free node scripts/build.mjs",
     "build:sponsor": "cross-env VITE_EDITION=sponsor node scripts/build.mjs",
     "dist": "node scripts/build-all.mjs",

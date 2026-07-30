@@ -4,6 +4,7 @@ import os from 'os';
 import path from 'path';
 
 import { queryNvidiaGpus, selectPrimaryGpu } from './gpu-monitor.js';
+import { HardwareSensorClient } from './hardware-sensor-monitor.js';
 
 const WINDOWS_SNAPSHOT_SCRIPT = String.raw`
 $ErrorActionPreference = 'SilentlyContinue'
@@ -712,7 +713,13 @@ function mergeObject(portable, enriched) {
   return result;
 }
 
-export function mergeSnapshots(portable, windowsSnapshot = null, nvidiaAdapters = null, diagnostics = {}) {
+export function mergeSnapshots(
+  portable,
+  windowsSnapshot = null,
+  nvidiaAdapters = null,
+  diagnostics = {},
+  hardwareSensors = null,
+) {
   const snapshot = {
     ...portable,
     timestamp: Date.now(),
@@ -728,6 +735,7 @@ export function mergeSnapshots(portable, windowsSnapshot = null, nvidiaAdapters 
     gpu: windowsSnapshot?.gpu || portable.gpu,
     thermalZones: windowsSnapshot?.thermalZones?.length ? windowsSnapshot.thermalZones : portable.thermalZones,
     battery: windowsSnapshot?.battery ?? portable.battery,
+    hardwareSensors,
     diagnostics: { ...portable.diagnostics, ...diagnostics },
   };
 
@@ -736,6 +744,30 @@ export function mergeSnapshots(portable, windowsSnapshot = null, nvidiaAdapters 
     snapshot.gpu = { ...primary, adapters: nvidiaAdapters, provider: 'nvidia-smi' };
     snapshot.providers.push('nvidia-smi');
   }
+
+  if (hardwareSensors) {
+    snapshot.providers.push(hardwareSensors.provider);
+    snapshot.cpu = mergeObject(snapshot.cpu, {
+      temperatureC: hardwareSensors.cpu?.temperatureC,
+      powerWatts: hardwareSensors.cpu?.powerWatts,
+      voltageVolts: hardwareSensors.cpu?.voltageVolts,
+      sensorClockMHz: hardwareSensors.cpu?.clockMHz,
+    });
+    if (snapshot.gpu || hardwareSensors.gpu) {
+      snapshot.gpu = mergeObject(snapshot.gpu, {
+        temperatureC: hardwareSensors.gpu?.temperatureC,
+        hotspotTemperatureC: hardwareSensors.gpu?.hotspotTemperatureC,
+        powerWatts: hardwareSensors.gpu?.powerWatts,
+        voltageVolts: hardwareSensors.gpu?.voltageVolts,
+        fanRpm: hardwareSensors.gpu?.fanRpm,
+        fanPercent: hardwareSensors.gpu?.fanPercent,
+        clockMHz: hardwareSensors.gpu?.clockMHz,
+        memoryClockMHz: hardwareSensors.gpu?.memoryClockMHz,
+      });
+    }
+  }
+
+  snapshot.providers = [...new Set(snapshot.providers)];
 
   return snapshot;
 }
@@ -823,7 +855,8 @@ export class SystemMonitor {
     this.lastPortable = null;
     this.windowsSnapshot = null;
     this.nvidiaAdapters = null;
-    this.diagnostics = { windowsError: null, nvidiaError: null };
+    this.hardwareSensors = null;
+    this.diagnostics = { windowsError: null, nvidiaError: null, hardwareSensorError: null };
     this.previousCpuTimes = null;
     this.previousNetwork = new Map();
     this.previousDisk = null;
@@ -831,10 +864,13 @@ export class SystemMonitor {
     this.windowsCounterGroups = null;
     this.windowsInFlight = false;
     this.nvidiaInFlight = false;
+    this.hardwareInFlight = false;
     this.pollCount = 0;
     this.nvidiaAvailable = null;
+    this.hardwareAvailable = null;
     this.queryWindows = dependencies.queryWindows || queryWindowsSystem;
     this.queryNvidia = dependencies.queryNvidia || queryNvidiaGpus;
+    this.hardwareClient = dependencies.hardwareClient || new HardwareSensorClient(dependencies.sensorHostPath);
   }
 
   start() {
@@ -845,6 +881,7 @@ export class SystemMonitor {
   stop() {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
+    this.hardwareClient?.stop();
   }
 
   requestSnapshot() {
@@ -864,6 +901,9 @@ export class SystemMonitor {
     if (!this.windowsInFlight) this._pollWindows();
     if (!this.nvidiaInFlight && (this.nvidiaAvailable !== false || this.pollCount % 150 === 0)) {
       this._pollNvidia();
+    }
+    if (!this.hardwareInFlight && (this.hardwareAvailable !== false || this.pollCount % 150 === 0)) {
+      this._pollHardware();
     }
   }
 
@@ -920,6 +960,24 @@ export class SystemMonitor {
     }
   }
 
+  async _pollHardware() {
+    this.hardwareInFlight = true;
+    try {
+      const snapshot = await this.hardwareClient.query();
+      if (snapshot) {
+        this.hardwareSensors = snapshot;
+        this.hardwareAvailable = true;
+        this.diagnostics.hardwareSensorError = null;
+      }
+    } catch (error) {
+      this.hardwareAvailable = false;
+      this.diagnostics.hardwareSensorError = error.message;
+    } finally {
+      this.hardwareInFlight = false;
+      this._publishMerged();
+    }
+  }
+
   _publishMerged() {
     if (!this.lastPortable) return;
     this.lastData = mergeSnapshots(
@@ -927,12 +985,14 @@ export class SystemMonitor {
       this.windowsSnapshot,
       this.nvidiaAdapters,
       this.diagnostics,
+      this.hardwareSensors,
     );
     this._send(this.lastData);
   }
 
   _send(data) {
     if (this.win && !this.win.isDestroyed() && !this.win.webContents.isDestroyed()) {
+      if (this.win.webContents.isLoadingMainFrame?.()) return;
       this.win.webContents.send('system-data', data);
     }
   }

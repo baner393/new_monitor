@@ -23,6 +23,13 @@ module.exports = {
     'assets/icon.png',
     'package.json',
   ],
+  extraResources: [
+    {
+      from: 'resources/hardware-sensor',
+      to: 'hardware-sensor',
+      filter: ['**/*'],
+    },
+  ],
   win: {
     icon: path.join(__dirname, 'build', 'icon.ico'),
     target: [{ target: 'nsis', arch: ['x64'] }],

@@ -4,6 +4,7 @@ import test from 'node:test';
 
 import {
   applyMousePassthrough,
+  ReloadInputGuard,
   reloadWindowSafely,
   resolveCustomResourcePath,
 } from '../src/main/window-lifecycle.js';
@@ -41,14 +42,14 @@ test('every completed reload cycle captures input before navigation', () => {
     setIgnoreMouseEvents: (...args) => calls.push(['passthrough', ...args]),
   };
 
-  for (let cycle = 0; cycle < 3; cycle += 1) {
+  for (let cycle = 0; cycle < 25; cycle += 1) {
     assert.equal(reloadWindowSafely(browserWindow), true);
   }
-  assert.deepEqual(calls, [
-    ['passthrough', false, { forward: true }], ['reload'],
-    ['passthrough', false, { forward: true }], ['reload'],
-    ['passthrough', false, { forward: true }], ['reload'],
-  ]);
+  assert.equal(calls.length, 50);
+  for (let index = 0; index < calls.length; index += 2) {
+    assert.deepEqual(calls[index], ['passthrough', false, { forward: true }]);
+    assert.deepEqual(calls[index + 1], ['reload']);
+  }
 });
 
 test('duplicate reload is ignored while navigation is in progress', () => {
@@ -63,6 +64,81 @@ test('duplicate reload is ignored while navigation is in progress', () => {
   };
 
   assert.equal(reloadWindowSafely(browserWindow), false);
+});
+
+test('input guard rejects stale renderer messages across 25 reload generations', () => {
+  const calls = [];
+  const timers = new Map();
+  let nextTimer = 1;
+  const browserWindow = {
+    isDestroyed: () => false,
+    setIgnoreMouseEvents: (...args) => calls.push(args),
+  };
+  const guard = new ReloadInputGuard(browserWindow, {
+    setTimeoutImpl: (callback) => {
+      const id = nextTimer++;
+      timers.set(id, callback);
+      return id;
+    },
+    clearTimeoutImpl: (id) => timers.delete(id),
+  });
+
+  for (let cycle = 0; cycle < 25; cycle += 1) {
+    const generation = guard.beginLoad();
+    assert.equal(generation, cycle + 1);
+    assert.equal(guard.setFromRenderer(true, generation - 1), false, 'stale document changed passthrough');
+    assert.equal(guard.markRendererReady(true, generation - 1), false, 'stale document completed the handshake');
+    guard.finishLoad();
+    assert.equal(guard.markRendererReady(cycle % 2 === 0, generation), true);
+    assert.equal(timers.size, 0, 'ready handshake left a watchdog behind');
+    assert.equal(guard.setFromRenderer(false, generation), true);
+  }
+
+  assert.equal(calls.length, 75);
+  assert.equal(guard.generation, 25);
+});
+
+test('input guard watchdog fails open when renderer startup never completes', () => {
+  const calls = [];
+  let watchdog;
+  const guard = new ReloadInputGuard({
+    isDestroyed: () => false,
+    setIgnoreMouseEvents: (...args) => calls.push(args),
+  }, {
+    setTimeoutImpl: (callback) => {
+      watchdog = callback;
+      return 1;
+    },
+    clearTimeoutImpl: () => {},
+  });
+
+  guard.beginLoad();
+  guard.finishLoad();
+  watchdog();
+  assert.deepEqual(calls, [
+    [false, { forward: true }],
+    [true, { forward: true }],
+  ]);
+  assert.equal(guard.rendererReady, true);
+});
+
+test('input guard keeps the desktop click-through while a secondary window is active', () => {
+  const calls = [];
+  const guard = new ReloadInputGuard({
+    isDestroyed: () => false,
+    setIgnoreMouseEvents: (...args) => calls.push(args),
+  });
+  const generation = guard.beginLoad();
+  guard.markRendererReady(false, generation);
+  assert.equal(guard.suspend(), true);
+  assert.equal(guard.setFromRenderer(false, generation), false);
+  assert.equal(guard.resume(), true);
+  assert.equal(guard.setFromRenderer(false, generation), true);
+  assert.deepEqual(calls.slice(-3), [
+    [false, { forward: true }],
+    [true, { forward: true }],
+    [false, { forward: true }],
+  ]);
 });
 
 test('source startup resolves custom-mode files from src/custom', () => {
