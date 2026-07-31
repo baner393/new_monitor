@@ -1,7 +1,18 @@
 import { execFile } from 'child_process';
 
+export const NVIDIA_BASE_FIELDS = Object.freeze([
+  'name',
+  'driver_version',
+  'temperature.gpu',
+  'utilization.gpu',
+  'utilization.memory',
+  'memory.used',
+  'memory.total',
+  'power.draw',
+]);
+
 export const NVIDIA_ARGS = [
-  '--query-gpu=name,driver_version,temperature.gpu,utilization.gpu,utilization.memory,memory.used,memory.total,power.draw',
+  `--query-gpu=${NVIDIA_BASE_FIELDS.join(',')}`,
   '--format=csv,noheader,nounits',
 ];
 
@@ -82,6 +93,20 @@ export function parseNvidiaOptionalOutput(stdout, fields) {
   });
 }
 
+export function parseNvidiaCombinedOutput(stdout, optionalFields = []) {
+  const lines = String(stdout || '').trim().split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  if (!lines.length) throw new Error('Empty nvidia-smi output');
+  return lines.map((line) => {
+    const values = line.split(/,\s*/);
+    const base = parseNvidiaLine(values.slice(0, NVIDIA_BASE_FIELDS.length).join(', '));
+    const optional = parseNvidiaOptionalOutput(
+      values.slice(NVIDIA_BASE_FIELDS.length).join(', '),
+      optionalFields,
+    )[0] || {};
+    return { ...base, ...optional };
+  });
+}
+
 /**
  * Backward-compatible single-adapter parser used by earlier tests and callers.
  * Legacy aliases remain so old renderer payloads do not silently break.
@@ -129,12 +154,19 @@ export function selectPrimaryGpu(adapters) {
   })[0];
 }
 
-export function queryNvidiaGpus({ execFileImpl = execFile, timeoutMs = 5000 } = {}) {
-  const execute = (args) => new Promise((resolve, reject) => {
-    execFileImpl(
+export class NvidiaQueryClient {
+  constructor({ execFileImpl = execFile, timeoutMs = 5000 } = {}) {
+    this.execFileImpl = execFileImpl;
+    this.timeoutMs = timeoutMs;
+    this.supportedFields = null;
+  }
+
+  execute(args) {
+    return new Promise((resolve, reject) => {
+      this.execFileImpl(
       'nvidia-smi.exe',
       args,
-      { timeout: timeoutMs, windowsHide: true, maxBuffer: 1024 * 1024 },
+      { timeout: this.timeoutMs, windowsHide: true, maxBuffer: 1024 * 1024 },
       (error, stdout, stderr) => {
         if (error) {
           const detail = String(stderr || '').trim();
@@ -143,29 +175,46 @@ export function queryNvidiaGpus({ execFileImpl = execFile, timeoutMs = 5000 } = 
         }
         resolve(stdout);
       },
-    );
-  });
+      );
+    });
+  }
 
-  return execute(NVIDIA_ARGS).then(async (stdout) => {
-    const sampledAt = Date.now();
-    const adapters = parseNvidiaOutputAll(stdout).map((adapter) => ({ ...adapter, sampledAt }));
-    let help = '';
-    try {
-      help = await execute(['--help-query-gpu']);
-    } catch {
-      return adapters;
+  resetCapabilities() {
+    this.supportedFields = null;
+  }
+
+  async query() {
+    if (this.supportedFields === null) {
+      try {
+        const help = await this.execute(['--help-query-gpu']);
+        this.supportedFields = NVIDIA_OPTIONAL_FIELDS.filter((field) => String(help).includes(field));
+      } catch {
+        this.supportedFields = [];
+      }
     }
-    const supportedFields = NVIDIA_OPTIONAL_FIELDS.filter((field) => String(help).includes(field));
-    if (!supportedFields.length) return adapters;
+    const fields = [...NVIDIA_BASE_FIELDS, ...this.supportedFields];
+    let stdout;
     try {
-      const optionalOutput = await execute([
-        `--query-gpu=${supportedFields.join(',')}`,
+      stdout = await this.execute([
+        `--query-gpu=${fields.join(',')}`,
         '--format=csv,noheader,nounits',
       ]);
-      const optional = parseNvidiaOptionalOutput(optionalOutput, supportedFields);
-      return adapters.map((adapter, index) => ({ ...adapter, ...(optional[index] || {}) }));
-    } catch {
-      return adapters;
+    } catch (error) {
+      if (!this.supportedFields.length) throw error;
+      // Some driver versions advertise a field but reject it for the current
+      // board. Keep the base GPU data and remember the reduced capability set.
+      this.supportedFields = [];
+      stdout = await this.execute(NVIDIA_ARGS);
     }
-  });
+    const sampledAt = Date.now();
+    return parseNvidiaCombinedOutput(stdout, this.supportedFields)
+      .map((adapter) => ({ ...adapter, sampledAt }));
+  }
+}
+
+const defaultNvidiaClient = new NvidiaQueryClient();
+
+export function queryNvidiaGpus(options = {}) {
+  if (options.execFileImpl || options.timeoutMs) return new NvidiaQueryClient(options).query();
+  return defaultNvidiaClient.query();
 }

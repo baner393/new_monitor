@@ -397,8 +397,13 @@ export class CodexMonitor {
     this.config = normalizeCodexIntegrationConfig(config);
     this.onConfigChange = onConfigChange;
     this.pollIntervalMs = pollIntervalMs;
+    this.idlePollIntervalMs = Math.max(5000, pollIntervalMs);
     this.window = null;
     this.timer = null;
+    this.running = false;
+    this.watcher = null;
+    this.watchedRoot = '';
+    this.watchDebounce = null;
     this.scanPromise = null;
     this.scanAgain = false;
     this.tasks = new Map();
@@ -415,15 +420,18 @@ export class CodexMonitor {
   }
 
   start() {
-    if (this.timer) return;
-    this.timer = setInterval(() => this.scan(), this.pollIntervalMs);
-    this.timer.unref?.();
+    if (this.running) return;
+    this.running = true;
     this.scan();
   }
 
   stop() {
-    if (this.timer) clearInterval(this.timer);
+    this.running = false;
+    if (this.timer) clearTimeout(this.timer);
+    if (this.watchDebounce) clearTimeout(this.watchDebounce);
     this.timer = null;
+    this.watchDebounce = null;
+    this.#closeWatcher();
     this.client?.stop();
     this.client = null;
   }
@@ -452,6 +460,8 @@ export class CodexMonitor {
   }
 
   scan(force = false) {
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
     if (this.scanPromise) {
       if (force) this.scanAgain = true;
       return this.scanPromise;
@@ -465,18 +475,21 @@ export class CodexMonitor {
       } while (this.scanAgain);
     })().finally(() => {
       this.scanPromise = null;
+      this.#scheduleScan();
     });
     return this.scanPromise;
   }
 
   async #scanOnce(force = false) {
       if (!this.config.enabled) {
+        this.#closeWatcher();
         this.lastSnapshot = this.#emptySnapshot();
         this.#sendSnapshot();
         return;
       }
       const codexHome = resolveCodexHome(this.config);
       if (!codexHome) {
+        this.#closeWatcher();
         this.lastSnapshot = {
           ...this.#emptySnapshot(),
           configured: true,
@@ -489,6 +502,7 @@ export class CodexMonitor {
       }
       const sessionsRoot = path.join(codexHome, 'sessions');
       if (!fs.existsSync(sessionsRoot)) {
+        this.#watchSessions(codexHome);
         this.lastSnapshot = {
           ...this.#emptySnapshot(),
           configured: true,
@@ -498,6 +512,8 @@ export class CodexMonitor {
         this.#sendSnapshot();
         return;
       }
+
+      this.#watchSessions(sessionsRoot);
 
       const files = await collectSessionFiles(sessionsRoot);
       const readIds = new Set(this.config.readEventIds);
@@ -541,6 +557,46 @@ export class CodexMonitor {
         reason: '',
       };
       this.#sendSnapshot();
+  }
+
+  #scheduleScan() {
+    if (!this.running || this.timer) return;
+    const active = this.lastSnapshot.activity === CODEX_ACTIVITY.RUNNING
+      || this.lastSnapshot.tasks?.some((task) => task.activity === CODEX_ACTIVITY.RUNNING);
+    const delay = active ? this.pollIntervalMs : this.idlePollIntervalMs;
+    this.timer = setTimeout(() => {
+      this.timer = null;
+      this.scan();
+    }, delay);
+    this.timer.unref?.();
+  }
+
+  #watchSessions(root) {
+    const resolved = path.resolve(root);
+    if (this.watcher && this.watchedRoot === resolved) return;
+    this.#closeWatcher();
+    try {
+      this.watcher = fs.watch(resolved, { recursive: process.platform === 'win32' }, (_event, fileName) => {
+        const name = String(fileName || '');
+        if (name && !/\.jsonl$|sessions/i.test(name)) return;
+        if (this.watchDebounce) clearTimeout(this.watchDebounce);
+        this.watchDebounce = setTimeout(() => {
+          this.watchDebounce = null;
+          this.scan(true);
+        }, 120);
+        this.watchDebounce.unref?.();
+      });
+      this.watchedRoot = resolved;
+      this.watcher.on('error', () => this.#closeWatcher());
+    } catch {
+      this.#closeWatcher();
+    }
+  }
+
+  #closeWatcher() {
+    this.watcher?.close();
+    this.watcher = null;
+    this.watchedRoot = '';
   }
 
   markRead(eventId) {

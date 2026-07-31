@@ -485,6 +485,7 @@ document.addEventListener('mousemove', (event) => {
 requestAnimationFrame(() => requestAnimationFrame(() => {
   synchronizeMousePassthroughFromSystem(true, true);
 }));
+window.electronAPI.setMonitorActivity?.({ panelOpen: false });
 
 if (window.electronAPI?.onResyncMousePassthrough) {
   window.electronAPI.onResyncMousePassthrough(() => {
@@ -512,6 +513,7 @@ if (window.electronAPI?.onSoftRefresh) {
       codexCompanion.settleForRefresh();
       if (transientState) {
         const panelOpen = panel.settleForRefresh();
+        window.electronAPI.setMonitorActivity?.({ panelOpen });
         settingsPanel.settleForRefresh();
         const recoveredState = panelOpen ? 'PANEL_OPEN' : 'IDLE';
         stateMachine.reset(recoveredState);
@@ -687,6 +689,7 @@ function onStateChange() {
     console.log('[Panel] EXPANDING — showing panel + HAPPY sprite');
     // Disable click-through while panel is open
     window.electronAPI.setIgnoreMouseEvents(false);
+    window.electronAPI.setMonitorActivity?.({ panelOpen: true });
     // Position panel below the sprite
     const anchorX = physics.screenAnchorX * window.innerWidth;
     panel.setPosition(anchorX, sprite.y + 80);
@@ -718,6 +721,7 @@ function onStateChange() {
       console.log('[Panel] Fully closed → IDLE');
       window.electronAPI.setIgnoreMouseEvents(true);
       isOverSprite = false;
+      window.electronAPI.setMonitorActivity?.({ panelOpen: false });
       stateMachine.transition('PANEL_FULLY_CLOSED');
     });
   }

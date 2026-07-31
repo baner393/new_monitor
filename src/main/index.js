@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Menu, dialog, screen, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu, dialog, powerMonitor, screen, shell } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import { SystemMonitor } from './system-monitor.js';
@@ -445,7 +445,11 @@ function createWindow({ show = true } = {}) {
     systemMonitor.win = browserWindow;
     systemMonitor.requestSnapshot();
   } else {
-    systemMonitor = new SystemMonitor(browserWindow, 2000, { sensorHostPath });
+    systemMonitor = new SystemMonitor(browserWindow, 2000, {
+      sensorHostPath,
+      getSystemIdleTime: () => powerMonitor.getSystemIdleTime(),
+    });
+    systemMonitor.setActivityState({ onBattery: powerMonitor.isOnBatteryPower() });
     systemMonitor.start();
   }
   if (codexMonitor) {
@@ -466,6 +470,14 @@ app.whenReady().then(() => {
   });
   codexMonitor.start();
   createWindow();
+  powerMonitor.on('on-battery', () => systemMonitor?.setActivityState({ onBattery: true }));
+  powerMonitor.on('on-ac', () => systemMonitor?.setActivityState({ onBattery: false }));
+  powerMonitor.on('suspend', () => systemMonitor?.setActivityState({ suspended: true }));
+  powerMonitor.on('resume', () => {
+    systemMonitor?.setActivityState({ suspended: false });
+    systemMonitor?.requestSnapshot();
+    codexMonitor?.scan(true);
+  });
 });
 
 // IPC: renderer can toggle click-through
@@ -511,6 +523,11 @@ ipcMain.on('request-system-data', () => {
     systemMonitor.requestSnapshot();
   }
   codexMonitor?.scan(true);
+});
+
+ipcMain.on('monitor-activity-set', (event, state = {}) => {
+  if (!mainWindow || event.sender !== mainWindow.webContents) return;
+  systemMonitor?.setActivityState({ panelOpen: Boolean(state.panelOpen) });
 });
 
 ipcMain.handle('monitor-request-elevation', async () => {

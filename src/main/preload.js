@@ -37,6 +37,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.send('request-system-data');
   },
 
+  /** Report whether the hardware panel is visible; animation frame rate is unaffected. */
+  setMonitorActivity: (state) => {
+    ipcRenderer.send('monitor-activity-set', state);
+  },
+
   /** Refresh renderer-owned state without navigating or destroying the page. */
   onSoftRefresh: (callback) => {
     const listener = (_event, request) => callback(request);

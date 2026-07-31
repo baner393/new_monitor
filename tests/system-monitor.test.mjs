@@ -3,9 +3,12 @@ import test from 'node:test';
 
 import {
   calculateCpuUsage,
+  createPersistentWindowsMonitorScript,
   matchHardwareGpu,
   mergeSnapshots,
+  mergeWindowsSnapshots,
   parseWindowsSystemOutput,
+  resolveMonitorCadence,
 } from '../src/main/system-monitor.js';
 
 test('calculates total and per-core CPU deltas', () => {
@@ -145,4 +148,69 @@ test('matches hardware readings to the correct GPU without guessing between mult
   ];
   assert.equal(matchHardwareGpu('AMD Radeon RX590 GME', hardware).temperatureC, 60);
   assert.equal(matchHardwareGpu('Unknown virtual adapter', hardware), null);
+});
+
+test('monitor cadence keeps panel data fast while reducing hidden and battery polling', () => {
+  assert.deepEqual(resolveMonitorCadence({ panelOpen: true, onBattery: true, idleSeconds: 600 }), {
+    portable: 1000, windows: 2000, nvidia: 2000, hardware: 2000,
+  });
+  assert.deepEqual(resolveMonitorCadence({ panelOpen: false, onBattery: false, idleSeconds: 0 }), {
+    portable: 2000, windows: 5000, nvidia: 5000, hardware: 5000,
+  });
+  assert.deepEqual(resolveMonitorCadence({ panelOpen: false, onBattery: true, idleSeconds: 0 }), {
+    portable: 5000, windows: 10000, nvidia: 10000, hardware: 10000,
+  });
+});
+
+test('persistent Windows monitor script accepts repeated snapshot commands', () => {
+  const script = createPersistentWindowsMonitorScript('"{\\"ok\\":true}"');
+  assert.match(script, /while \(\$null -ne \(\$requestLine/);
+  assert.match(script, /TURTLE_MONITOR_COUNTER_GROUPS/);
+  assert.match(script, /TURTLE_MONITOR_FAST_ONLY/);
+  assert.match(script, /__TURTLE_MONITOR_END__:/);
+});
+
+test('fast Windows samples update live counters without dropping static details', () => {
+  const previous = {
+    timestamp: 100,
+    providers: ['windows-cim', 'Win32_LogicalDisk'],
+    probeErrors: [{ probe: 'thermal', code: 'query_failed', message: 'not exposed' }],
+    system: { osName: 'Windows 11', model: 'Desktop', processCount: 100 },
+    cpu: { model: 'CPU model', usage: 20, physicalCores: 8 },
+    memory: { totalBytes: 1000, usage: 50 },
+    disks: [{ name: 'C:', sizeBytes: 1000 }],
+    physicalDisks: [{ name: 'SSD' }],
+    diskIo: { readBytesPerSec: 10 },
+    network: { interfaces: [{ name: 'Ethernet' }], downloadBytesPerSec: 10 },
+    gpu: { name: 'GPU', adapters: [{ name: 'GPU' }], memoryTotalBytes: 8000, usage: 20 },
+    thermalZones: [{ name: 'TZ0', temperatureC: 40 }],
+    battery: { percent: 80 },
+  };
+  const fast = {
+    timestamp: 200,
+    providers: ['windows-cim', 'Get-Counter:CPU'],
+    probeErrors: [],
+    system: { osName: null, model: null, processCount: 110 },
+    cpu: { model: null, usage: 65, physicalCores: null },
+    memory: { totalBytes: null, usage: null },
+    disks: [],
+    physicalDisks: [],
+    diskIo: { readBytesPerSec: 500 },
+    network: { interfaces: [{ name: 'Ethernet' }], downloadBytesPerSec: 900 },
+    gpu: { name: null, adapters: [], memoryTotalBytes: null, usage: 70 },
+    thermalZones: [],
+    battery: null,
+  };
+
+  const merged = mergeWindowsSnapshots(previous, fast);
+  assert.equal(merged.timestamp, 200);
+  assert.equal(merged.system.model, 'Desktop');
+  assert.equal(merged.system.processCount, 110);
+  assert.equal(merged.cpu.model, 'CPU model');
+  assert.equal(merged.cpu.usage, 65);
+  assert.equal(merged.disks[0].name, 'C:');
+  assert.equal(merged.gpu.name, 'GPU');
+  assert.equal(merged.gpu.usage, 70);
+  assert.equal(merged.gpu.memoryTotalBytes, 8000);
+  assert.equal(merged.battery.percent, 80);
 });
