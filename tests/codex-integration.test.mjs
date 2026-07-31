@@ -12,7 +12,7 @@ import {
   resolveCodexHome,
 } from '../src/main/codex-monitor.js';
 import { StateMachine } from '../src/renderer/state-machine.js';
-import { InputManager } from '../src/renderer/input.js';
+import { InputManager, PET_HIT_PADDING, isPointWithinBounds } from '../src/renderer/input.js';
 import {
   CODEX_ACTIVITY,
   CODEX_CONNECTION,
@@ -250,6 +250,16 @@ test('short left interaction opens Codex config while long pull keeps monitor be
   longPull.transition('LEFT_RELEASE');
   longPull.transition('BOUNCE_COMPLETE', { pullExceeded: true });
   assert.equal(longPull.getState(), 'EXPANDING');
+
+  const rightClick = new StateMachine();
+  rightClick.transition('RIGHT_CLICK_TURTLE');
+  rightClick.transition('RIGHT_CLICK_RELEASE', { returnState: 'IDLE' });
+  assert.equal(rightClick.getState(), 'IDLE');
+
+  const panelRightClick = new StateMachine('PANEL_OPEN');
+  panelRightClick.transition('RIGHT_CLICK_TURTLE');
+  panelRightClick.transition('RIGHT_CLICK_RELEASE', { returnState: 'PANEL_OPEN' });
+  assert.equal(panelRightClick.getState(), 'PANEL_OPEN');
 });
 
 test('Codex overlay presses never start the pet left-click gesture', () => {
@@ -268,6 +278,50 @@ test('Codex overlay presses never start the pet left-click gesture', () => {
   input._onMouseUp({ button: 0, clientX: 100, clientY: 100 });
   assert.equal(input._isDragging, false);
   assert.deepEqual(transitions, []);
+});
+
+test('pet hit testing keeps a forgiving edge for stable left and right clicks', () => {
+  const bounds = { x: 50, y: 50, width: 100, height: 100 };
+  assert.equal(isPointWithinBounds(bounds, 50 - PET_HIT_PADDING, 100, PET_HIT_PADDING), true);
+  assert.equal(isPointWithinBounds(bounds, 49 - PET_HIT_PADDING, 100, PET_HIT_PADDING), false);
+
+  const input = new InputManager({
+    pixiApp: {},
+    sprite: { getBounds: () => bounds },
+    stateMachine: {},
+    physics: {},
+  });
+  assert.equal(input._isOverSprite(50 - PET_HIT_PADDING, 100), true);
+});
+
+test('a pet press can close an open follow panel without swallowing the same click', () => {
+  let state = 'CODEX_CONFIG_OPEN';
+  const transitions = [];
+  const previousWindow = globalThis.window;
+  globalThis.window = { electronAPI: { setIgnoreMouseEvents: () => {}, showContextMenu: () => {} } };
+  const input = new InputManager({
+    pixiApp: {},
+    sprite: { x: 100, y: 100, getBounds: () => ({ x: 50, y: 50, width: 100, height: 100 }) },
+    stateMachine: {
+      getState: () => state,
+      transition: (event) => {
+        transitions.push(event);
+        if (event === 'LEFT_CLICK_TURTLE') state = 'PULLING';
+      },
+    },
+    physics: { screenAnchorX: 0.5, startDrag: () => {} },
+    beforePetInteraction: () => { state = 'IDLE'; },
+  });
+  try {
+    input._onMouseDown({ button: 0, clientX: 100, clientY: 100 });
+    assert.equal(state, 'PULLING');
+    state = 'CODEX_CONFIG_OPEN';
+    input._onMouseDown({ button: 2, clientX: 100, clientY: 100, preventDefault: () => {} });
+    assert.deepEqual(transitions, ['LEFT_CLICK_TURTLE', 'RIGHT_CLICK_TURTLE']);
+  } finally {
+    if (previousWindow === undefined) delete globalThis.window;
+    else globalThis.window = previousWindow;
+  }
 });
 
 test('forced refresh waits for an in-flight enable scan and returns the fresh connection', async () => {

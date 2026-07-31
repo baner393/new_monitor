@@ -64,7 +64,7 @@ test('preview rope length uses the full visual range and changes monotonically',
   assert.equal(long, 230);
 });
 
-test('ambient swing is user-controlled and temporarily suppressed during stable reading', () => {
+test('ambient swing is user-controlled and temporarily suppressed for every stable follow panel', () => {
   assert.equal(resolveAmbientSwingEnabled(PET_SETTINGS_DEFAULTS, false), true);
   assert.equal(resolveAmbientSwingEnabled(PET_SETTINGS_DEFAULTS, true), false);
   assert.equal(resolveAmbientSwingEnabled({ ambientSwingEnabled: false, panelMoveStable: false }, false), false);

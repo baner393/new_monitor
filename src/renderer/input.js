@@ -13,14 +13,26 @@
 import { VelocityTracker } from './velocity-tracker.js';
 
 const PULL_THRESHOLD = 80;
+const RIGHT_CLICK_MOVE_TOLERANCE = 10;
+export const PET_HIT_PADDING = 14;
+
+export function isPointWithinBounds(bounds, x, y, padding = 0) {
+  if (!bounds) return false;
+  const inset = Math.max(0, Number(padding) || 0);
+  return x >= bounds.x - inset
+    && x <= bounds.x + bounds.width + inset
+    && y >= bounds.y - inset
+    && y <= bounds.y + bounds.height + inset;
+}
 
 export class InputManager {
-  constructor({ pixiApp, sprite, stateMachine, physics, shouldIgnoreEvent = null }) {
+  constructor({ pixiApp, sprite, stateMachine, physics, shouldIgnoreEvent = null, beforePetInteraction = null }) {
     this.pixiApp = pixiApp;
     this.sprite = sprite;
     this.stateMachine = stateMachine;
     this.physics = physics;
     this.shouldIgnoreEvent = typeof shouldIgnoreEvent === 'function' ? shouldIgnoreEvent : null;
+    this.beforePetInteraction = typeof beforePetInteraction === 'function' ? beforePetInteraction : null;
 
     this._enabled = false;
     this._isDragging = false;
@@ -40,6 +52,7 @@ export class InputManager {
     this._rightDragAnchorStart = 0;      // physics.screenAnchorX at drag start
     this._rightDragMoved = false;
     this._rightDragTime = 0;
+    this._rightDragReturnState = 'IDLE';
 
     // ── VelocityTracker for right-click throw ──
     this._rightVelocityTracker = new VelocityTracker(3000);
@@ -95,8 +108,7 @@ export class InputManager {
   // ── Hit test ──────────────────────────────────────────────────────────
   _isOverSprite(x, y) {
     if (!this.sprite) return false;
-    const b = this.sprite.getBounds();
-    return x >= b.x && x <= b.x + b.width && y >= b.y && y <= b.y + b.height;
+    return isPointWithinBounds(this.sprite.getBounds(), x, y, PET_HIT_PADDING);
   }
 
   // ── Context Menu (default prevention) ────────────────────────────────
@@ -119,12 +131,15 @@ export class InputManager {
       e.preventDefault();
 
       if (this._isOverSprite(e.clientX, e.clientY)) {
+        this.beforePetInteraction?.(e);
         // Right-click on turtle → start throw drag
         const state = this.stateMachine.getState();
         if (state !== 'IDLE' && state !== 'HOVER' && state !== 'PULLEY_MOMENTUM' && state !== 'PULLEY_PHYSICS'
         && state !== 'EXPANDING' && state !== 'PANEL_OPEN' && state !== 'COLLAPSING' && state !== 'HAPPY') return;
 
         this._isRightDragging = true;
+        this._rightDragReturnState = ['EXPANDING', 'PANEL_OPEN', 'COLLAPSING', 'HAPPY'].includes(state)
+          ? 'PANEL_OPEN' : 'IDLE';
         this._rightDragStartX = e.clientX;
         this._rightDragStartY = e.clientY;
         this._rightDragAnchorStart = this.physics.screenAnchorX;
@@ -149,9 +164,10 @@ export class InputManager {
 
     // ── Left button (button === 0) ──
     if (e.button !== 0) return;
+    if (!this._isOverSprite(e.clientX, e.clientY)) return;
+    this.beforePetInteraction?.(e);
     const state = this.stateMachine.getState();
     if (state !== 'IDLE' && state !== 'HOVER' && state !== 'PULLEY_PHYSICS' && state !== 'PULLEY_MOMENTUM') return;
-    if (!this._isOverSprite(e.clientX, e.clientY)) return;
 
     this._isDragging = true;
     this._dragStart = { x: e.clientX, y: e.clientY };
@@ -185,7 +201,7 @@ export class InputManager {
       // Track if mouse moved (for distinguishing click vs drag)
       const dx = e.clientX - this._rightDragStartX;
       const dy = e.clientY - this._rightDragStartY;
-      if (Math.abs(dx) > 5 || Math.abs(dy) > 5) {
+      if (Math.abs(dx) > RIGHT_CLICK_MOVE_TOLERANCE || Math.abs(dy) > RIGHT_CLICK_MOVE_TOLERANCE) {
         this._rightDragMoved = true;
       }
 
@@ -249,8 +265,9 @@ export class InputManager {
 
         if (!this._rightDragMoved) {
           // No movement → this was a click, show context menu
+          this.physics.cancelInteraction?.();
           window.electronAPI.showContextMenu();
-          this.stateMachine.transition('RIGHT_RELEASE');
+          this.stateMachine.transition('RIGHT_CLICK_RELEASE', { returnState: this._rightDragReturnState });
         } else {
           // Mouse moved → this was a throw drag
           const state = this.stateMachine.getState();
@@ -312,6 +329,7 @@ export class InputManager {
     this._rightDragStartY = 0;
     this._rightDragAnchorStart = 0;
     this._rightDragMoved = false;
+    this._rightDragReturnState = 'IDLE';
     this._rightVelocityTracker.clear();
   }
 

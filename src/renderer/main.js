@@ -12,7 +12,7 @@ const blinkSpriteUrl = publicAssetUrl('./assets/sprites/blink.png');
 import { PhysicsEngine } from './physics.js';
 import { RopeRenderer } from './rope.js';
 import { StateMachine } from './state-machine.js';
-import { InputManager } from './input.js';
+import { InputManager, PET_HIT_PADDING, isPointWithinBounds } from './input.js';
 import { Panel } from './panel.js';
 import { SettingsPanel } from './settings.js';
 import { ROPE_ELASTICITY_STEPS } from './settings.js';
@@ -485,7 +485,8 @@ document.addEventListener('mousedown', (e) => {
 
 document.addEventListener('mousedown', (event) => {
   const insideCodex = codexCompanion.containsPoint(event.clientX, event.clientY);
-  if (stateMachine.getState() === 'CODEX_CONFIG_OPEN' && !insideCodex) {
+  const overPet = isPointWithinBounds(sprite.getBounds(), event.clientX, event.clientY, PET_HIT_PADDING);
+  if (stateMachine.getState() === 'CODEX_CONFIG_OPEN' && !insideCodex && !overPet) {
     stateMachine.transition('CLICK_OUTSIDE');
     return;
   }
@@ -503,6 +504,13 @@ const inputManager = new InputManager({
   stateMachine,
   physics,
   shouldIgnoreEvent: (event) => codexCompanion.ownsEvent(event),
+  beforePetInteraction: () => {
+    if (stateMachine.getState() !== 'CODEX_CONFIG_OPEN') return;
+    codexCompanion.closeConfig({ notify: false });
+    stateMachine.reset('IDLE');
+    prevState = 'IDLE';
+    setSpriteTextureForState('IDLE');
+  },
 });
 inputManager.enable();
 
@@ -547,11 +555,7 @@ function synchronizeMousePassthrough(x, y, force = false) {
   }
   
   const bounds = sprite.getBounds();
-  const overSprite =
-    x >= bounds.x &&
-    x <= bounds.x + bounds.width &&
-    y >= bounds.y &&
-    y <= bounds.y + bounds.height;
+  const overSprite = isPointWithinBounds(bounds, x, y, PET_HIT_PADDING);
   const overCodex = codexCompanion.containsPoint(x, y);
   const ignore = !(overSprite || overCodex);
   const changed = overSprite !== isOverSprite;
@@ -872,7 +876,7 @@ function onStateChange() {
     const monitorPanelOpen = ['PANEL_OPEN', 'EXPANDING', 'HAPPY', 'COLLAPSING'].includes(prevState);
     _panelDragContext = resolvePanelDragContext({
       monitorPanelOpen,
-      codexConversationOpen: codexCompanion.isConversationOpen,
+      codexFollowPanelOpen: codexCompanion.isFollowPanelOpen,
     });
   }
   if (_panelDragContext && newState === 'PULLEY_DRAG') {
@@ -890,6 +894,10 @@ function onStateChange() {
 
   if (_panelDragContext && prevState === 'PULLEY_DRAG' && newState === 'PULLEY_PHYSICS') {
     console.log(`[PanelDrag] Physics started with ${_panelDragContext} attached`);
+  }
+  if (_panelDragContext && prevState === 'PULLEY_DRAG' && newState !== 'PULLEY_PHYSICS') {
+    restoreAttachedPanelDragPhysics();
+    console.log('[PanelDrag] Right-click completed without a throw; stable physics restored');
   }
   if (_panelDragContext && prevState === 'PULLEY_PHYSICS'
       && newState === resolvePanelDragSettledState(_panelDragContext)) {
@@ -941,9 +949,10 @@ pixiApp.ticker.add((delta) => {
     turtleSize: TURTLE_SIZE,
   });
 
+  const monitorFollowPanelOpen = ['EXPANDING', 'HAPPY', 'PANEL_OPEN', 'COLLAPSING'].includes(state);
   physics.ambientSwingEnabled = resolveAmbientSwingEnabled(
     petBehaviorSettings,
-    codexCompanion.isConversationOpen,
+    monitorFollowPanelOpen || codexCompanion.isFollowPanelOpen,
   );
 
   // Update physics (skipped during PULLING and BOUNCING)
@@ -1008,7 +1017,7 @@ pixiApp.ticker.add((delta) => {
       if (p && typeof p.x === 'number') { mx = p.x; my = p.y; }
     } catch (e) { /* ignore if events not available */ }
     const b = bodySprite.getBounds();
-    const over = mx >= b.x && mx <= b.x + b.width && my >= b.y && my <= b.y + b.height;
+    const over = isPointWithinBounds(b, mx, my, PET_HIT_PADDING);
     if (over && !_wasOverSprite) {
       _wasOverSprite = true;
       if (state === 'IDLE') { try { stateMachine.transition('TURTLE_HOVER'); } catch (e) {} }

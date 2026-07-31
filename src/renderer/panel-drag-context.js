@@ -3,9 +3,9 @@ export const PANEL_DRAG_CONTEXT = Object.freeze({
   CODEX: 'codex',
 });
 
-export function resolvePanelDragContext({ monitorPanelOpen = false, codexConversationOpen = false } = {}) {
+export function resolvePanelDragContext({ monitorPanelOpen = false, codexFollowPanelOpen = false } = {}) {
   if (monitorPanelOpen) return PANEL_DRAG_CONTEXT.MONITOR;
-  if (codexConversationOpen) return PANEL_DRAG_CONTEXT.CODEX;
+  if (codexFollowPanelOpen) return PANEL_DRAG_CONTEXT.CODEX;
   return null;
 }
 

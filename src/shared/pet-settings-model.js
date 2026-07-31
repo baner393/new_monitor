@@ -40,7 +40,7 @@ export const PET_SETTING_FIELDS = Object.freeze({
   ropeDamping: { section: 'right', label: '回拉收敛', hint: '抑制弹簧往复振动的强度', min: 5, max: 30, step: 1, unit: '' },
   bounceRestitution: { section: 'right', label: '碰撞弹力', hint: '桌宠碰到屏幕边缘后的反弹幅度', min: 0.1, max: 1, step: 0.1, unit: '' },
   airDamping: { section: 'right', label: '空气阻力', hint: '越小阻力越大，甩动停止得越快', min: 0.9, max: 1, step: 0.01, unit: '' },
-  panelMoveStable: { section: 'panel', label: '面板移动稳定', hint: '阅读 Codex 对话时固定面板并暂停待机自摆动；拖动面板时使用稳定参数', type: 'boolean' },
+  panelMoveStable: { section: 'panel', label: '面板移动稳定', hint: '打开跟随宠物的面板时固定位置并暂停待机自摆动；拖动时使用稳定参数', type: 'boolean' },
 });
 
 export const PET_SETTINGS_PRESETS = Object.freeze({
@@ -106,10 +106,10 @@ export function scalePreviewRopeLength(ropeLength, canvasHeight) {
   return minimumPreviewLength + (maximumPreviewLength - minimumPreviewLength) * progress;
 }
 
-export function resolveAmbientSwingEnabled(settings = {}, codexConversationReading = false) {
+export function resolveAmbientSwingEnabled(settings = {}, followPanelOpen = false) {
   const ambientSwingEnabled = settings.ambientSwingEnabled !== false;
-  const stabilizeReading = settings.panelMoveStable !== false && codexConversationReading === true;
-  return ambientSwingEnabled && !stabilizeReading;
+  const stabilizePanel = settings.panelMoveStable !== false && followPanelOpen === true;
+  return ambientSwingEnabled && !stabilizePanel;
 }
 
 function mix(min, max, value) {

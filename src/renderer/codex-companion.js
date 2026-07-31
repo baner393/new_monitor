@@ -91,7 +91,7 @@ export class CodexCompanion {
     this.configOpen = false;
     this.bubblesSuppressed = false;
     this.readingStabilityEnabled = true;
-    this.pinnedConversationPosition = null;
+    this.pinnedFollowPositions = new Map();
     this.anchor = { x: window.innerWidth / 2, y: 180 };
     this.alertFreshUntil = 0;
     this.lastMood = 'idle';
@@ -190,7 +190,7 @@ export class CodexCompanion {
       </div>
       <details class="codex-advanced"><summary></summary>
         <label class="codex-switch-row"><span><strong class="codex-control-setting-label"></strong><small class="codex-control-setting-note"></small></span><input class="codex-managed" type="checkbox"><i></i></label>
-        <label class="codex-select-row"><span><strong class="codex-new-message-view-label"></strong><small class="codex-new-message-view-note"></small></span><select class="codex-new-message-view"><option value="conversation"></option><option value="tasks"></option></select></label>
+        <div class="codex-choice-row"><span><strong class="codex-new-message-view-label"></strong><small class="codex-new-message-view-note"></small></span><div class="codex-segmented codex-new-message-view" role="radiogroup"><label><input type="radio" name="codex-new-message-view" value="conversation"><span class="codex-new-message-conversation"></span></label><label><input type="radio" name="codex-new-message-view" value="tasks"><span class="codex-new-message-tasks"></span></label></div></div>
         <label class="codex-select-row"><span><strong class="codex-reply-transport-label"></strong><small class="codex-reply-transport-note"></small></span><select class="codex-reply-transport"><option value="direct"></option><option value="desktop"></option></select></label>
         <div class="codex-config-note"></div>
       </details>
@@ -251,7 +251,9 @@ export class CodexCompanion {
     this.configPanel.querySelector('.codex-connect-button').addEventListener('click', () => this.#commitConfig({ enabled: true }));
     this.configPanel.querySelector('.codex-disconnect-button').addEventListener('click', () => this.#commitConfig({ enabled: false }));
     this.configPanel.querySelector('.codex-managed').addEventListener('change', () => this.#commitConfig({ enabled: this.config?.enabled === true }));
-    this.configPanel.querySelector('.codex-new-message-view').addEventListener('change', () => this.#commitConfig({ enabled: this.config?.enabled === true }));
+    this.configPanel.querySelectorAll('.codex-new-message-view input').forEach((input) => {
+      input.addEventListener('change', () => this.#commitConfig({ enabled: this.config?.enabled === true }));
+    });
     this.configPanel.querySelector('.codex-reply-transport').addEventListener('change', () => this.#commitConfig({ enabled: this.config?.enabled === true }));
     this.configPanel.querySelector('.codex-advanced').addEventListener('toggle', () => this.updatePosition(true));
     this.configPanel.querySelector('.codex-config-refresh').addEventListener('click', async () => {
@@ -287,8 +289,8 @@ export class CodexCompanion {
     this.configPanel.querySelector('.codex-control-setting-label').textContent = this.t('allowControl');
     this.configPanel.querySelector('.codex-control-setting-note').textContent = this.t('allowControlNote');
     this.configPanel.querySelector('.codex-new-message-view-label').textContent = this.t('newMessageView');
-    this.configPanel.querySelector('.codex-new-message-view option[value="conversation"]').textContent = this.t('newMessageConversation');
-    this.configPanel.querySelector('.codex-new-message-view option[value="tasks"]').textContent = this.t('newMessageTasks');
+    this.configPanel.querySelector('.codex-new-message-conversation').textContent = this.t('newMessageConversation');
+    this.configPanel.querySelector('.codex-new-message-tasks').textContent = this.t('newMessageTasks');
     this.configPanel.querySelector('.codex-reply-transport-label').textContent = this.t('replyTransport');
     this.configPanel.querySelector('.codex-reply-transport option[value="direct"]').textContent = this.t('replyDirect');
     this.configPanel.querySelector('.codex-reply-transport option[value="desktop"]').textContent = this.t('replyDesktop');
@@ -377,7 +379,7 @@ export class CodexCompanion {
     const next = enabled !== false;
     if (next === this.readingStabilityEnabled) return;
     this.readingStabilityEnabled = next;
-    if (!next) this.pinnedConversationPosition = null;
+    if (!next) this.pinnedFollowPositions.clear();
     this.updatePosition(true);
   }
 
@@ -410,6 +412,19 @@ export class CodexCompanion {
     node.style.transform = `translate3d(${Math.round(x)}px, ${Math.round(y)}px, 0)`;
   }
 
+  #resolveFollowPosition(node, proposed, width, height, open) {
+    const stable = this.readingStabilityEnabled && open;
+    if (!stable) {
+      this.pinnedFollowPositions.delete(node);
+      return proposed;
+    }
+    if (!this.pinnedFollowPositions.has(node)) this.pinnedFollowPositions.set(node, { ...proposed });
+    const pinned = this.pinnedFollowPositions.get(node);
+    pinned.x = clamp(pinned.x, 12, window.innerWidth - width - 12);
+    pinned.y = clamp(pinned.y, 62, window.innerHeight - height - 12);
+    return pinned;
+  }
+
   updatePosition(force = false) {
     const bubbleWidth = 430;
     const configWidth = 448;
@@ -418,28 +433,26 @@ export class CodexCompanion {
     const bubbleHeight = this.sizes.get(this.bubble)?.height || 430;
     const configHeight = this.sizes.get(this.configPanel)?.height || 560;
     const trayHeight = this.sizes.get(this.taskTray)?.height || 300;
-    const readingStable = this.readingStabilityEnabled && this.isConversationOpen;
-    if (!readingStable) this.pinnedConversationPosition = null;
-    if (readingStable && !this.pinnedConversationPosition) {
-      this.pinnedConversationPosition = {
-        x: clamp(bubbleLeft, 12, window.innerWidth - bubbleWidth - 12),
-        y: clamp(this.anchor.y - 92, 62, window.innerHeight - bubbleHeight - 12),
-        side: preferRight ? 'right' : 'left',
-      };
-    }
-    const bubblePosition = this.pinnedConversationPosition || {
+    const bubblePosition = this.#resolveFollowPosition(this.bubble, {
       x: clamp(bubbleLeft, 12, window.innerWidth - bubbleWidth - 12),
       y: clamp(this.anchor.y - 92, 62, window.innerHeight - bubbleHeight - 12),
       side: preferRight ? 'right' : 'left',
-    };
-    bubblePosition.x = clamp(bubblePosition.x, 12, window.innerWidth - bubbleWidth - 12);
-    bubblePosition.y = clamp(bubblePosition.y, 62, window.innerHeight - bubbleHeight - 12);
+    }, bubbleWidth, bubbleHeight, this.isConversationOpen);
     this.bubble.dataset.side = bubblePosition.side;
     this.#place(this.bubble, bubblePosition.x, bubblePosition.y, force);
-    this.#place(this.configPanel, clamp(this.anchor.x - configWidth / 2, 12, window.innerWidth - configWidth - 12), clamp(this.anchor.y + 58, 62, window.innerHeight - configHeight - 12), force);
+    const configPosition = this.#resolveFollowPosition(this.configPanel, {
+      x: clamp(this.anchor.x - configWidth / 2, 12, window.innerWidth - configWidth - 12),
+      y: clamp(this.anchor.y + 58, 62, window.innerHeight - configHeight - 12),
+    }, configWidth, configHeight, this.configOpen);
+    this.#place(this.configPanel, configPosition.x, configPosition.y, force);
     this.#place(this.badge, this.anchor.x + 29, this.anchor.y - 42, force);
-    this.taskTray.dataset.side = preferRight ? 'right' : 'left';
-    this.#place(this.taskTray, clamp(bubbleLeft, 12, window.innerWidth - 360 - 12), clamp(this.anchor.y - 70, 62, window.innerHeight - trayHeight - 12), force);
+    const trayPosition = this.#resolveFollowPosition(this.taskTray, {
+      x: clamp(bubbleLeft, 12, window.innerWidth - 360 - 12),
+      y: clamp(this.anchor.y - 70, 62, window.innerHeight - trayHeight - 12),
+      side: preferRight ? 'right' : 'left',
+    }, 360, trayHeight, this.trayOpen && !this.taskTray.hidden);
+    this.taskTray.dataset.side = trayPosition.side;
+    this.#place(this.taskTray, trayPosition.x, trayPosition.y, force);
   }
 
   containsPoint(x, y) {
@@ -457,6 +470,7 @@ export class CodexCompanion {
 
   get capturesOutsideClicks() { return this.configOpen || this.trayOpen; }
   get isConversationOpen() { return !this.bubble.hidden && this.viewState.mode !== 'closed'; }
+  get isFollowPanelOpen() { return this.configOpen || (this.trayOpen && !this.taskTray.hidden) || this.isConversationOpen; }
   get isReadingConversationOpen() { return !this.bubble.hidden && this.viewState.mode === 'manual'; }
   get pausesPetMotion() {
     return this.configOpen
@@ -882,7 +896,8 @@ export class CodexCompanion {
     this.configPanel.querySelector('.codex-managed').checked = config.managedReplies !== false;
     const newMessageView = config.newMessageView === CODEX_NEW_MESSAGE_VIEW.TASK_ACTIVITY
       ? CODEX_NEW_MESSAGE_VIEW.TASK_ACTIVITY : CODEX_NEW_MESSAGE_VIEW.CONVERSATION;
-    this.configPanel.querySelector('.codex-new-message-view').value = newMessageView;
+    const newMessageChoice = this.configPanel.querySelector(`.codex-new-message-view input[value="${newMessageView}"]`);
+    if (newMessageChoice) newMessageChoice.checked = true;
     this.configPanel.querySelector('.codex-new-message-view-note').textContent = this.t(
       newMessageView === CODEX_NEW_MESSAGE_VIEW.TASK_ACTIVITY ? 'newMessageTasksNote' : 'newMessageConversationNote',
     );
@@ -920,7 +935,8 @@ export class CodexCompanion {
         ...this.config,
         enabled,
         managedReplies: this.configPanel.querySelector('.codex-managed').checked,
-        newMessageView: this.configPanel.querySelector('.codex-new-message-view').value,
+        newMessageView: this.configPanel.querySelector('.codex-new-message-view input:checked')?.value
+          || CODEX_NEW_MESSAGE_VIEW.CONVERSATION,
         replyTransport: this.configPanel.querySelector('.codex-reply-transport').value,
         homeMode: this.configPanel.dataset.mode,
         manualHome: this.configPanel.dataset.manualHome || '',

@@ -131,6 +131,7 @@ const TRANSITIONS = {
 
   [PULLEY_DRAG]: {
     RIGHT_RELEASE:       PULLEY_PHYSICS,
+    RIGHT_CLICK_RELEASE: (ctx) => (ctx && ctx.returnState === PANEL_OPEN) ? PANEL_OPEN : IDLE,
     LEFT_CLICK_TURTLE:   PULLING,
   },
 
