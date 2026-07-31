@@ -5,7 +5,12 @@ import path from 'node:path';
 import test from 'node:test';
 import { EventEmitter } from 'node:events';
 
-import { CodexMonitor, parseCodexRollout, resolveCodexHome } from '../src/main/codex-monitor.js';
+import {
+  CodexMonitor,
+  parseCodexRollout,
+  parseCodexSessionIndex,
+  resolveCodexHome,
+} from '../src/main/codex-monitor.js';
 import { StateMachine } from '../src/renderer/state-machine.js';
 import { InputManager } from '../src/renderer/input.js';
 import {
@@ -299,6 +304,43 @@ test('Codex parser removes internal scaffolding and keeps only real user-facing 
   assert.deepEqual(parsed.task.messages.map((message) => message.message), ['请修复这个问题', '已经修复。']);
 });
 
+test('Codex session index keeps the latest desktop title for each task', () => {
+  const titles = parseCodexSessionIndex([
+    JSON.stringify({ id: 'thread-1', thread_name: '旧标题', updated_at: '2026-07-31T06:10:22Z' }),
+    JSON.stringify({ id: 'thread-1', thread_name: 'Codex 客户端最终标题', updated_at: '2026-07-31T06:10:39Z' }),
+    JSON.stringify({ id: 'thread-2', thread_name: '另一个任务', updated_at: '2026-07-31T06:10:30Z' }),
+  ].join('\n'));
+  assert.equal(titles.get('thread-1').title, 'Codex 客户端最终标题');
+  assert.equal(titles.get('thread-2').title, '另一个任务');
+});
+
+test('desktop session index title overrides the rollout prompt title', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'new-monitor-codex-title-'));
+  const sessions = path.join(root, 'sessions');
+  fs.mkdirSync(sessions);
+  fs.writeFileSync(path.join(sessions, 'title-thread.jsonl'), `${rollout([
+    { timestamp: '2026-07-31T06:10:00Z', type: 'session_meta', payload: { id: 'title-thread', cwd: root } },
+    { timestamp: '2026-07-31T06:10:01Z', type: 'event_msg', payload: { type: 'user_message', message: '一段很长的原始用户消息标题' } },
+  ])}\n`);
+  fs.writeFileSync(path.join(root, 'session_index.jsonl'), [
+    JSON.stringify({ id: 'title-thread', thread_name: '旧客户端标题', updated_at: '2026-07-31T06:10:22Z' }),
+    JSON.stringify({ id: 'title-thread', thread_name: 'Codex 当前窗口标题', updated_at: '2026-07-31T06:10:39Z' }),
+  ].join('\n'));
+  const monitor = new CodexMonitor({
+    config: { version: 2, enabled: true, homeMode: 'manual', manualHome: root },
+  });
+  try {
+    await monitor.scan(true);
+    assert.equal(
+      monitor.getSnapshot().tasks.find((task) => task.id === 'title-thread').title,
+      'Codex 当前窗口标题',
+    );
+  } finally {
+    monitor.stop();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('internal Codex approval-review tasks never become user conversations', () => {
   const parsed = parseCodexRollout(rollout([
     {
@@ -331,6 +373,22 @@ test('a zero-unread task opened from the connection list survives refreshes unti
     assert.equal(view.threadId, 'thread-stable');
   }
   assert.equal(closeCodexTask().mode, 'closed');
+});
+
+test('an open notification follows the current Codex task title after a rename', () => {
+  const event = {
+    id: 'rename-alert',
+    threadId: 'thread-rename',
+    title: '旧标题',
+    message: '保留通知正文',
+  };
+  const view = reconcileCodexViewState(createCodexViewState(), {
+    alerts: [event],
+    unread: [event],
+    tasks: [{ id: 'thread-rename', title: 'Codex 当前标题' }],
+  });
+  assert.equal(view.event.title, 'Codex 当前标题');
+  assert.equal(view.event.message, '保留通知正文');
 });
 
 test('notification detail remains visible after its event is resolved', () => {

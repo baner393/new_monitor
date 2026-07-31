@@ -1,1032 +1,596 @@
-/**
- * settings.js — Settings Panel
- *
- * Minecraft frosted-glass style settings panel for Turtle Monitor.
- * Features:
- *   - MC-style frosted glass background (multi-layer translucent + blur)
- *   - MC-style pixel border with cut corners, 3D highlights & shadows
- *   - Edge glow / bloom system
- *   - Slider controls with real-time value display
- *   - Save / Reset / Cancel buttons
- *   - IPC-based persistence via preload.js
- */
+import { PhysicsEngine } from './physics.js';
+import {
+  PET_SETTING_FIELDS,
+  PET_SETTING_SECTIONS,
+  PET_SETTINGS_DEFAULTS,
+  PET_SETTINGS_PRESETS,
+  QUICK_TUNING_DEFS,
+  ROPE_ELASTICITY_STEPS,
+  PetSettingsDraft,
+  applyPetSettingsPreset,
+  applyQuickTuning,
+  deriveQuickTunings,
+  detectPetSettingsPreset,
+  normalizePetSettings,
+  scalePreviewRopeLength,
+} from '../shared/pet-settings-model.js';
 
-import * as PIXI from 'pixi.js';
+export { ROPE_ELASTICITY_STEPS };
 
-// ── Constants ─────────────────────────────────────────────────────────
-const PANEL_WIDTH  = 520;
+const PANEL_WIDTH = 900;
 const PANEL_HEIGHT = 620;
-const PADDING      = 24;
-const PIXEL        = 4;
-const CORNER_CUT   = 24;
 
-// Slider dimensions
-const SLIDER_WIDTH  = PANEL_WIDTH - PADDING * 2 - 100; // leave room for value
-const SLIDER_HEIGHT = 6;
-const SLIDER_KNOB   = 14;
-const ROW_HEIGHT    = 56;  // height per setting row (label + slider)
-
-// ── MC Frosted Glass Palette (same as panel.js) ───────────────────────
-
-const BG_BASE       = 0x0e1018;
-const BG_BASE_ALPHA = 0.78;
-
-const FROST_WHITE   = 0xffffff;
-const FROST_ALPHA_1 = 0.06;
-const FROST_ALPHA_2 = 0.03;
-
-const BORDER_DARK    = 0x000000;
-const BORDER_SHADOW  = 0x1a1a1a;
-const BORDER_MID     = 0x2a2a3a;
-const BORDER_LIGHT   = 0x505068;
-const BORDER_BRIGHT  = 0x707088;
-
-const INNER_HIGHLIGHT = 0x404058;
-const INNER_SHADOW    = 0x151520;
-
-const GLOW_COLOR     = 0x6699cc;
-const GLOW_ALPHA     = 0.08;
-
-const STREAK_ALPHA_1 = 0.18;
-const STREAK_ALPHA_2 = 0.06;
-
-// Text
-const TEXT_COLOR    = 0xeeeeee;
-const LABEL_COLOR   = 0xffffff;
-const TITLE_COLOR   = 0x55ff55;
-const HINT_COLOR    = 0x888899;
-const VALUE_COLOR   = 0x88ccff;
-const SECTION_COLOR = 0xffaa44;
-
-// Button colors
-const BTN_SAVE_BG   = 0x2a6e2a;
-const BTN_RESET_BG  = 0x6e6e2a;
-const BTN_CANCEL_BG = 0x6e2a2a;
-const BTN_HOVER_BG  = 0x4a4a6e;
-
-// Slider
-const SLIDER_TRACK_COLOR = 0x1a1a2e;
-const SLIDER_FILL_COLOR  = 0x4488cc;
-const SLIDER_KNOB_COLOR  = 0x6699cc;
-const SLIDER_KNOB_HOVER  = 0x88bbff;
-
-// Animation
-const ANIM_DURATION = 0.35;
-
-// ── Default Settings ──────────────────────────────────────────────────
-
-const DEFAULTS = {
-  turtleSize:       64,
-  ropeLength:       150,
-  gravity:          800,
-  damping:          0.995,
-  pulleyFriction:   0.92,
-  ropeStiffness:    500,
-  ropeDamping:      15,
-  bounceRestitution: 0.6,
-  airDamping:       0.98,
-  ropeElasticity:   5,      // 档位 1-12（旧版为浮点数 0.001-2.0，自动迁移）
-  panelMoveStable:  true, // 面板移动稳定：面板打开时右键拖拽使用稳定参数
-};
-
-// ── 绳子弹性系数 12 档位映射（指数分布，每档感知变化幅度接近）──
-// 档位 1 = 最松，12 = 最紧
-export const ROPE_ELASTICITY_STEPS = [
-  0.001,  // 1: 极松
-  0.003,  // 2
-  0.006,  // 3
-  0.01,   // 4
-  0.02,   // 5: 适中 ⬅ 默认
-  0.04,   // 6
-  0.07,   // 7
-  0.12,   // 8
-  0.25,   // 9
-  0.5,    // 10
-  1.0,    // 11
-  2.0,    // 12: 极紧
-];
-
-// Setting definitions with labels, ranges, and hints
-const SETTINGS_DEFS = [
-  {
-    section: '基础设置',
-    items: [
-      {
-        key: 'turtleSize',
-        label: '乌龟大小',
-        hint: '控制乌龟精灵的显示尺寸',
-        min: 24, max: 192, step: 2,
-        unit: 'px',
-      },
-      {
-        key: 'ropeLength',
-        label: '绳子长度',
-        hint: '乌龟悬挂绳子的默认长度',
-        min: 30, max: 400, step: 5,
-        unit: 'px',
-      },
-    ],
-  },
-  {
-    section: '左键属性',
-    items: [
-      {
-        key: 'gravity',
-        label: '重力',
-        hint: '重力加速度，影响摆动和下落速度',
-        min: 200, max: 2000, step: 50,
-        unit: 'px/s²',
-      },
-      {
-        key: 'damping',
-        label: '阻尼系数',
-        hint: '钟摆运动的能量衰减，越小衰减越快',
-        min: 0.9, max: 1.0, step: 0.005,
-        unit: '',
-      },
-      {
-        key: 'ropeElasticity',
-        label: '绳子弹性档位',
-        hint: '左键拖拽时绳子的弹性，档位 1(极松)~12(极紧)，每档感知变化幅度接近',
-        min: 1, max: 12, step: 1,
-        unit: '档',
-      },
-    ],
-  },
-  {
-    section: '右键属性',
-    items: [
-      {
-        key: 'pulleyFriction',
-        label: '滑轮摩擦',
-        hint: '滑轮水平移动的摩擦力',
-        min: 0.8, max: 1.0, step: 0.01,
-        unit: '',
-      },
-      {
-        key: 'ropeStiffness',
-        label: '绳子弹簧刚度',
-        hint: '绳子被拉伸时的回弹力',
-        min: 100, max: 1000, step: 50,
-        unit: '',
-      },
-      {
-        key: 'ropeDamping',
-        label: '绳子弹簧阻尼',
-        hint: '绳子弹簧的振动衰减速度',
-        min: 5, max: 30, step: 1,
-        unit: '',
-      },
-      {
-        key: 'bounceRestitution',
-        label: '碰撞恢复系数',
-        hint: '乌龟碰墙后的弹力，越大弹越远',
-        min: 0.1, max: 1.0, step: 0.1,
-        unit: '',
-      },
-      {
-        key: 'airDamping',
-        label: '空气阻尼',
-        hint: '空气阻力，越小阻力越大',
-        min: 0.9, max: 1.0, step: 0.01,
-        unit: '',
-      },
-    ],
-  },
-  {
-    section: '面板相关',
-    items: [
-      {
-        key: 'panelMoveStable',
-        label: '面板移动稳定',
-        hint: '面板打开时右键拖拽使用稳定参数（弹簧刚度100，空气阻尼0.9），关闭则用右键属性值',
-        min: 0, max: 1, step: 1,
-        unit: '',
-      },
-    ],
-  },
-];
-
-// ── Helper: draw pixel-cut rectangle (MC GUI style) ──────────────────
-
-function drawPixelCutRect(g, x, y, w, h, cut, pixelSize) {
-  const ps = pixelSize || PIXEL;
-  const steps = Math.floor(cut / ps);
-  const points = [];
-
-  for (let i = 0; i <= steps; i++) {
-    points.push([x + i * ps, y + (steps - i) * ps]);
-  }
-  points.push([x + w - steps * ps, y]);
-  for (let i = 0; i <= steps; i++) {
-    points.push([x + w - steps * ps + i * ps, y + i * ps]);
-  }
-  points.push([x + w, y + h - steps * ps]);
-  for (let i = 0; i <= steps; i++) {
-    points.push([x + w - i * ps, y + h - steps * ps + i * ps]);
-  }
-  points.push([x + steps * ps, y + h]);
-  for (let i = 0; i <= steps; i++) {
-    points.push([x + steps * ps - i * ps, y + h - i * ps]);
-  }
-  points.push([x, y + steps * ps]);
-
-  g.beginFill(0, 0);
-  g.endFill();
-  g.moveTo(points[0][0], points[0][1]);
-  for (let i = 1; i < points.length; i++) {
-    g.lineTo(points[i][0], points[i][1]);
-  }
-  g.closePath();
+function element(tag, className = '', text = '') {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text) node.textContent = text;
+  return node;
 }
 
-// ── Helper: draw MC-style frosted glass border ─────────────────────
-
-function drawMCBorder(g, w, h) {
-  const cut = CORNER_CUT;
-  const ps = PIXEL;
-  const steps = Math.floor(cut / ps);
-
-  function pixelCutPoints(x, y, w, h, c) {
-    const s = Math.floor(c / ps);
-    const pts = [];
-    pts.push([x + s * ps, y]);
-    pts.push([x + w - s * ps, y]);
-    for (let i = 0; i <= s; i++) pts.push([x + w - s * ps + i * ps, y + i * ps]);
-    pts.push([x + w, y + h - s * ps]);
-    for (let i = 0; i <= s; i++) pts.push([x + w - i * ps, y + h - s * ps + i * ps]);
-    pts.push([x + s * ps, y + h]);
-    for (let i = 0; i <= s; i++) pts.push([x + s * ps - i * ps, y + h - i * ps]);
-    pts.push([x, y + s * ps]);
-    return pts;
-  }
-
-  function drawFilledPixelCut(x, y, w, h, c, color, alpha) {
-    const pts = pixelCutPoints(x, y, w, h, c);
-    g.beginFill(color, alpha);
-    g.moveTo(pts[0][0], pts[0][1]);
-    for (let i = 1; i < pts.length; i++) g.lineTo(pts[i][0], pts[i][1]);
-    g.closePath();
-    g.endFill();
-  }
-
-  function drawStrokedPixelCut(x, y, w, h, c, color, alpha, lineW) {
-    const pts = pixelCutPoints(x, y, w, h, c);
-    g.lineStyle(lineW, color, alpha);
-    g.moveTo(pts[0][0], pts[0][1]);
-    for (let i = 1; i < pts.length; i++) g.lineTo(pts[i][0], pts[i][1]);
-    g.closePath();
-    g.lineStyle(0);
-  }
-
-  // Outer edge glow
-  for (let i = 3; i >= 1; i--) {
-    const expand = i * 6;
-    drawFilledPixelCut(
-      -expand, -expand, w + expand * 2, h + expand * 2,
-      cut + expand, GLOW_COLOR, GLOW_ALPHA / (i + 1)
-    );
-  }
-
-  // Dark base background
-  drawFilledPixelCut(0, 0, w, h, cut, BG_BASE, BG_BASE_ALPHA);
-
-  // Frost white overlay
-  drawFilledPixelCut(2, 2, w - 4, h - 4, cut - 2, FROST_WHITE, FROST_ALPHA_1);
-
-  // Pixel texture stripes
-  const inner = 6;
-  for (let row = 0; row < h - inner * 2; row += ps) {
-    const a = (row % (ps * 2) === 0) ? 0.025 : 0.012;
-    g.beginFill(0xffffff, a);
-    g.drawRect(inner, inner + row, w - inner * 2, ps / 2);
-    g.endFill();
-  }
-
-  // Second frost layer
-  drawFilledPixelCut(4, 4, w - 8, h - 8, cut - 4, FROST_WHITE, FROST_ALPHA_2);
-
-  // Top highlight streak
-  const streakH = 60;
-  g.beginFill(0xffffff, STREAK_ALPHA_1);
-  g.drawRect(inner + 4, inner + 4, w - inner * 2 - 8, streakH / 3);
-  g.endFill();
-  g.beginFill(0xffffff, STREAK_ALPHA_2);
-  g.drawRect(inner + 4, inner + 4 + streakH / 3, w - inner * 2 - 8, streakH / 3);
-  g.endFill();
-
-  // Diagonal lens flare
-  g.beginFill(0xaaccff, 0.04);
-  g.moveTo(w * 0.15, inner);
-  g.lineTo(w * 0.45, inner);
-  g.lineTo(w * 0.35, inner + 80);
-  g.lineTo(w * 0.05, inner + 80);
-  g.closePath();
-  g.endFill();
-
-  // Outer border
-  drawStrokedPixelCut(0, 0, w, h, cut, BORDER_DARK, 0.9, 1);
-
-  // Bottom-right shadow
-  const shadowPts = pixelCutPoints(0, 0, w, h, cut);
-  g.lineStyle(ps, BORDER_SHADOW, 0.7);
-  const bottomStart = Math.floor(shadowPts.length * 0.55);
-  const bottomEnd = Math.floor(shadowPts.length * 0.85);
-  g.moveTo(shadowPts[bottomStart][0], shadowPts[bottomStart][1]);
-  for (let i = bottomStart + 1; i <= bottomEnd; i++) {
-    g.lineTo(shadowPts[i][0], shadowPts[i][1]);
-  }
-  const rightStart = Math.floor(shadowPts.length * 0.28);
-  const rightEnd = Math.floor(shadowPts.length * 0.55);
-  g.moveTo(shadowPts[rightStart][0], shadowPts[rightStart][1]);
-  for (let i = rightStart + 1; i <= rightEnd; i++) {
-    g.lineTo(shadowPts[i][0], shadowPts[i][1]);
-  }
-  g.lineStyle(0);
-
-  // Top-left highlight
-  g.lineStyle(ps, BORDER_LIGHT, 0.6);
-  const topStart = Math.floor(shadowPts.length * 0.85);
-  const topEnd = shadowPts.length - 1;
-  g.moveTo(shadowPts[topStart][0], shadowPts[topStart][1]);
-  for (let i = topStart + 1; i <= topEnd; i++) {
-    g.lineTo(shadowPts[i][0], shadowPts[i][1]);
-  }
-  g.lineTo(shadowPts[0][0], shadowPts[0][1]);
-  const leftStart = 0;
-  const leftEnd = Math.floor(shadowPts.length * 0.28);
-  for (let i = leftStart; i <= leftEnd; i++) {
-    g.lineTo(shadowPts[i][0], shadowPts[i][1]);
-  }
-  g.lineStyle(0);
-
-  // Brightest edge
-  g.lineStyle(1, BORDER_BRIGHT, 0.5);
-  g.moveTo(shadowPts[shadowPts.length - 2][0], shadowPts[shadowPts.length - 2][1]);
-  g.lineTo(shadowPts[shadowPts.length - 1][0], shadowPts[shadowPts.length - 1][1]);
-  g.lineTo(shadowPts[0][0], shadowPts[0][1]);
-  g.lineStyle(0);
-
-  // Inner inset border
-  const off = PIXEL * 3;
-  const iw = w - off * 2;
-  const ih = h - off * 2;
-
-  g.lineStyle(0);
-  g.beginFill(INNER_HIGHLIGHT, 0.5);
-  g.drawRect(off, off, iw, 1);
-  g.drawRect(off, off, 1, ih);
-  g.endFill();
-
-  g.beginFill(INNER_SHADOW, 0.5);
-  g.drawRect(off, off + ih - 1, iw, 1);
-  g.drawRect(off + iw - 1, off, 1, ih);
-  g.endFill();
-
-  // Corner pixel accents
-  const cs = 4;
-  g.beginFill(BORDER_BRIGHT, 0.6);
-  g.drawRect(off, off, cs, cs);
-  g.endFill();
-  g.beginFill(BORDER_LIGHT, 0.4);
-  g.drawRect(off + cs, off, cs, cs);
-  g.drawRect(off, off + cs, cs, cs);
-  g.endFill();
-  g.beginFill(BORDER_LIGHT, 0.4);
-  g.drawRect(off + iw - cs, off, cs, cs);
-  g.endFill();
-  g.beginFill(INNER_SHADOW, 0.5);
-  g.drawRect(off, off + ih - cs, cs, cs);
-  g.drawRect(off + iw - cs, off + ih - cs, cs, cs);
-  g.endFill();
+function formatValue(value, field) {
+  if (field.type === 'boolean') return value ? '开启' : '关闭';
+  const decimals = field.step < 1 ? String(field.step).split('.')[1]?.length || 0 : 0;
+  return `${Number(value).toFixed(decimals)}${field.unit ? ` ${field.unit}` : ''}`;
 }
 
-// ── Helper: create text ────────────────────────────────────────────
-
-function makeText(str, size, color, bold = false, isLabel = false) {
-  const isNumeric = /^\d/.test(str);  // starts with digit → treat as numeric (Mojang font)
-  const fontFamily = isNumeric 
-    ? '"Mojang", "Courier New", monospace'
-    : '"Unifont", "Microsoft YaHei", "PingFang SC", sans-serif';
-  
-  const style = new PIXI.TextStyle({
-    fontFamily: fontFamily,
-    fontSize: size,
-    fill: color,
-    fontWeight: bold ? 'bold' : 'normal',
-    stroke: 0x1a1a2e,
-    strokeThickness: isLabel ? 0.5 : (bold ? 1.5 : 1),
-    lineJoin: 'round',
-    miterLimit: 0,
-    padding: 4,
-    dropShadow: false,
-  });
-  const txt = new PIXI.Text(str, style);
-  txt.roundPixels = true;
-  return txt;
+function eventPoint(canvas, event) {
+  const bounds = canvas.getBoundingClientRect();
+  return {
+    x: event.clientX - bounds.left,
+    y: event.clientY - bounds.top,
+  };
 }
-
-// ── Helper: format value for display ───────────────────────────────
-
-function formatValue(val, step) {
-  if (step >= 1) return Math.round(val).toString();
-  if (step >= 0.01) return val.toFixed(2);
-  if (step >= 0.001) return val.toFixed(3);
-  return val.toString();
-}
-
-// ── Easing functions ──────────────────────────────────────────────
-
-function easeOutBack(t) {
-  const c1 = 1.70158;
-  const c3 = c1 + 1;
-  return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
-}
-
-function easeInQuad(t) {
-  return t * t;
-}
-
-// ── SettingsPanel Class ───────────────────────────────────────────
 
 export class SettingsPanel {
   constructor() {
-    // Root container
-    this.container = new PIXI.Container();
-    this.container.visible = false;
-    this.container.alpha = 0;
-
-    // Current values (deep copy of defaults)
-    this._values = { ...DEFAULTS };
-    this._originalValues = { ...DEFAULTS }; // for cancel/restore
-
-    // Slider references
-    this._sliders = {};
-
-    // Animation state
+    this._values = { ...PET_SETTINGS_DEFAULTS };
+    this._originalValues = { ...PET_SETTINGS_DEFAULTS };
+    this._draft = new PetSettingsDraft(this._values);
+    this._section = 'quick';
+    this._open = false;
     this._animating = false;
-    this._animProgress = 0;
-    this._animDirection = 1;
-    this._animCallback = null;
-
-    // Active slider drag
-    this._activeSlider = null;
-
-    // Build the UI
+    this._closeTimer = null;
+    this._previewFrame = null;
+    this._previewLastAt = performance.now();
+    this._previewReleasedAt = 0;
+    this._previewPhysics = new PhysicsEngine();
+    this._previewDragging = false;
+    this._reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches || false;
     this._build();
-
-    // Load saved settings
     this._loadSettings();
-
-    // Bind drag handlers
-    this._onPointerMove = this._onPointerMove.bind(this);
-    this._onPointerUp = this._onPointerUp.bind(this);
-    document.addEventListener('pointermove', this._onPointerMove);
-    document.addEventListener('pointerup', this._onPointerUp);
+    this._startPreviewLoop();
   }
-
-  // ── Build the full UI ────────────────────────────────────────────
 
   _build() {
-    // Background
-    this._bg = new PIXI.Graphics();
-    drawMCBorder(this._bg, PANEL_WIDTH, PANEL_HEIGHT);
-    this.container.addChild(this._bg);
+    this.root = element('div', 'pet-settings-root');
+    this.root.hidden = true;
+    this.root.setAttribute('aria-hidden', 'true');
 
-    // Scrollable content area
-    this._content = new PIXI.Container();
-    this._content.x = PADDING;
-    this._content.y = PADDING;
-    this.container.addChild(this._content);
+    this.panel = element('section', 'pet-settings-panel');
+    this.panel.setAttribute('role', 'dialog');
+    this.panel.setAttribute('aria-modal', 'true');
+    this.panel.setAttribute('aria-labelledby', 'pet-settings-title');
+    this.panel.tabIndex = -1;
+    this.container = this.panel;
+    this.root.appendChild(this.panel);
 
-    // Scroll mask
-    this._scrollMask = new PIXI.Graphics();
-    this._scrollMask.beginFill(0xffffff);
-    this._scrollMask.drawRect(PADDING, PADDING, PANEL_WIDTH - PADDING * 2, PANEL_HEIGHT - PADDING * 2 - 60);
-    this._scrollMask.endFill();
-    this.container.addChild(this._scrollMask);
-    this._content.mask = this._scrollMask;
+    const header = element('header', 'pet-settings-header');
+    const titleGroup = element('div', 'pet-settings-title-group');
+    titleGroup.append(element('div', 'pet-settings-kicker', 'TURTLE RIG / DESKTOP PET'));
+    const title = element('h2', '', '桌宠调校台');
+    title.id = 'pet-settings-title';
+    titleGroup.append(title);
+    header.append(titleGroup);
+    this.status = element('div', 'pet-settings-status', '设置已同步');
+    this.status.dataset.dirty = 'false';
+    header.append(this.status);
+    this.closeButton = element('button', 'pet-settings-close', '×');
+    this.closeButton.type = 'button';
+    this.closeButton.setAttribute('aria-label', '取消并关闭设置');
+    this.closeButton.addEventListener('click', () => this._cancel());
+    header.append(this.closeButton);
+    this.panel.append(header);
 
-    // Title
-    this._title = makeText('⚙ 设置', 20, TITLE_COLOR, true);
-    this._title.x = 0;
-    this._title.y = 0;
-    this._content.addChild(this._title);
+    const body = element('div', 'pet-settings-body');
+    this.nav = element('nav', 'pet-settings-nav');
+    this.nav.setAttribute('aria-label', '设置分类');
+    for (const section of PET_SETTING_SECTIONS) {
+      const button = element('button', 'pet-settings-nav-button');
+      button.type = 'button';
+      button.dataset.section = section.id;
+      button.innerHTML = `<span>${section.label}</span><small>${section.description}</small>`;
+      button.addEventListener('click', () => this._setSection(section.id));
+      this.nav.append(button);
+    }
+    body.append(this.nav);
 
-    // Build settings rows
-    let yOffset = 36;
+    this.workspace = element('main', 'pet-settings-workspace');
+    body.append(this.workspace);
 
-    for (const section of SETTINGS_DEFS) {
-      // Section header
-      const sectionText = makeText(`▎${section.section}`, 14, SECTION_COLOR, true);
-      sectionText.x = 0;
-      sectionText.y = yOffset;
-      this._content.addChild(sectionText);
-      yOffset += 28;
+    const preview = element('aside', 'pet-settings-preview');
+    const previewHead = element('div', 'pet-settings-preview-head');
+    const previewCopy = element('div');
+    previewCopy.append(element('div', 'pet-settings-kicker', 'LIVE PHYSICS'));
+    previewCopy.append(element('strong', '', '手感预览'));
+    previewHead.append(previewCopy);
+    this.replayButton = element('button', 'pet-settings-replay', '重新测试');
+    this.replayButton.type = 'button';
+    this.replayButton.addEventListener('click', () => this._resetPreview(true));
+    previewHead.append(this.replayButton);
+    preview.append(previewHead);
 
-      // Section separator line
-      const sepG = new PIXI.Graphics();
-      sepG.lineStyle(1, BORDER_LIGHT, 0.3);
-      sepG.moveTo(0, yOffset - 4);
-      sepG.lineTo(SLIDER_WIDTH + 80, yOffset - 4);
-      sepG.lineStyle(1, BORDER_SHADOW, 0.2);
-      sepG.moveTo(0, yOffset - 2);
-      sepG.lineTo(SLIDER_WIDTH + 80, yOffset - 2);
-      sepG.lineStyle(0);
-      this._content.addChild(sepG);
-
-      for (const item of section.items) {
-        const slider = this._createSlider(
-          item.label,
-          item.hint,
-          item.min,
-          item.max,
-          item.step,
-          this._values[item.key],
-          item.unit,
-          item.key
-        );
-        slider.container.x = 4;
-        slider.container.y = yOffset;
-        this._content.addChild(slider.container);
-        this._sliders[item.key] = slider;
-        yOffset += ROW_HEIGHT;
+    this.canvas = element('canvas', 'pet-settings-preview-canvas');
+    this.canvas.tabIndex = 0;
+    this.canvas.setAttribute('role', 'img');
+    this.canvas.setAttribute('aria-label', '可拖动的桌宠物理效果预览，按回车重新测试');
+    this.canvas.addEventListener('pointerdown', (event) => this._previewPointerDown(event));
+    this.canvas.addEventListener('pointermove', (event) => this._previewPointerMove(event));
+    this.canvas.addEventListener('pointerup', (event) => this._previewPointerUp(event));
+    this.canvas.addEventListener('pointercancel', (event) => this._previewPointerUp(event));
+    this.canvas.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        this._resetPreview(true);
       }
+    });
+    preview.append(this.canvas);
+    this.previewHint = element('p', 'pet-settings-preview-hint', '拖动桌宠并松手，立即感受当前参数');
+    preview.append(this.previewHint);
+    body.append(preview);
+    this.panel.append(body);
 
-      yOffset += 8; // section gap
+    const footer = element('footer', 'pet-settings-footer');
+    this.resetButton = element('button', 'pet-settings-reset', '恢复默认');
+    this.resetButton.type = 'button';
+    this.resetButton.addEventListener('click', () => this._reset());
+    footer.append(this.resetButton);
+    const actions = element('div', 'pet-settings-actions');
+    this.cancelButton = element('button', 'pet-settings-cancel', '取消');
+    this.cancelButton.type = 'button';
+    this.cancelButton.addEventListener('click', () => this._cancel());
+    this.saveButton = element('button', 'pet-settings-save', '应用设置');
+    this.saveButton.type = 'button';
+    this.saveButton.addEventListener('click', () => this._save());
+    actions.append(this.cancelButton, this.saveButton);
+    footer.append(actions);
+    this.panel.append(footer);
+    document.body.appendChild(this.root);
+
+    this.root.addEventListener('mousedown', (event) => {
+      if (event.target === this.root) this._cancel();
+    });
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && this._open) this._cancel();
+    });
+
+    this._previewImage = new Image();
+    this._previewImage.decoding = 'async';
+    this._previewImage.src = new URL('./assets/sprites/idle.png', window.location.href).href;
+    this._previewImage.addEventListener('load', () => this._drawPreview());
+    this._renderSection();
+    this._syncUi();
+  }
+
+  _setSection(sectionId) {
+    if (!PET_SETTING_SECTIONS.some((section) => section.id === sectionId)) return;
+    this._section = sectionId;
+    this._renderSection();
+    this._syncUi();
+  }
+
+  _renderSection() {
+    const section = PET_SETTING_SECTIONS.find((item) => item.id === this._section) || PET_SETTING_SECTIONS[0];
+    this.workspace.replaceChildren();
+    const heading = element('div', 'pet-settings-section-head');
+    heading.append(element('div', 'pet-settings-kicker', section.id === 'quick' ? 'START HERE' : 'PRECISE CONTROL'));
+    heading.append(element('h3', '', section.label));
+    heading.append(element('p', '', section.description));
+    this.workspace.append(heading);
+
+    if (section.id === 'quick') this._renderQuickControls();
+    else this._renderPreciseControls(section.id);
+  }
+
+  _renderQuickControls() {
+    const presetBlock = element('section', 'pet-settings-block');
+    const label = element('div', 'pet-settings-block-label', '选择一个起点');
+    label.append(element('span', '', '随后仍可精确调整'));
+    presetBlock.append(label);
+    const presets = element('div', 'pet-settings-presets');
+    for (const [id, preset] of Object.entries(PET_SETTINGS_PRESETS)) {
+      const button = element('button', 'pet-settings-preset');
+      button.type = 'button';
+      button.dataset.preset = id;
+      button.innerHTML = `<strong>${preset.label}</strong><small>${preset.description}</small>`;
+      button.addEventListener('click', () => {
+        this._applyValues(applyPetSettingsPreset(this._values, id));
+      });
+      presets.append(button);
     }
+    presetBlock.append(presets);
+    this.workspace.append(presetBlock);
 
-    // ── Buttons (fixed at bottom, outside scroll) ─────────────────
-    this._buttonsContainer = new PIXI.Container();
-    this._buttonsContainer.x = PADDING;
-    this._buttonsContainer.y = PANEL_HEIGHT - PADDING - 40;
-    this.container.addChild(this._buttonsContainer);
-
-    const btnW = 120;
-    const btnH = 32;
-    const btnGap = 16;
-    const totalBtnW = btnW * 3 + btnGap * 2;
-    const btnStartX = (PANEL_WIDTH - PADDING * 2 - totalBtnW) / 2;
-
-    this._saveBtn = this._createButton('保存', btnStartX, 0, btnW, btnH, BTN_SAVE_BG, () => this._save());
-    this._resetBtn = this._createButton('重置', btnStartX + btnW + btnGap, 0, btnW, btnH, BTN_RESET_BG, () => this._reset());
-    this._cancelBtn = this._createButton('取消', btnStartX + (btnW + btnGap) * 2, 0, btnW, btnH, BTN_CANCEL_BG, () => this._cancel());
-
-    this._buttonsContainer.addChild(this._saveBtn.container);
-    this._buttonsContainer.addChild(this._resetBtn.container);
-    this._buttonsContainer.addChild(this._cancelBtn.container);
-
-    // Store total content height for scroll
-    this._contentHeight = yOffset;
-    this._scrollOffset = 0;
-    this._maxScroll = Math.max(0, this._contentHeight - (PANEL_HEIGHT - PADDING * 2 - 60));
-
-    // Mouse wheel scrolling
-    this.container.eventMode = 'static';
-    this.container.on('wheel', (e) => {
-      this._scrollOffset = Math.max(0, Math.min(this._maxScroll, this._scrollOffset + e.deltaY * 0.5));
-      this._content.y = PADDING - this._scrollOffset;
-    });
-  }
-
-  // ── Create a single slider ─────────────────────────────────────
-
-  _createSlider(label, hint, min, max, step, defaultValue, unit, key) {
-    const container = new PIXI.Container();
-
-    // Label text
-    const labelText = makeText(label, 13, LABEL_COLOR, false, true);
-    labelText.x = 0;
-    labelText.y = 0;
-    container.addChild(labelText);
-
-    // Hint text
-    const hintText = makeText(hint, 10, HINT_COLOR, false, true);
-    hintText.x = 0;
-    hintText.y = 16;
-    container.addChild(hintText);
-
-    // Value display (right-aligned)
-    const valueStr = formatValue(defaultValue, step) + (unit ? ` ${unit}` : '');
-    const valueText = makeText(valueStr, 13, VALUE_COLOR, true);
-    valueText.anchor.set(1, 0);
-    valueText.x = SLIDER_WIDTH + 80;
-    valueText.y = 0;
-    container.addChild(valueText);
-
-    // Slider track background
-    const trackY = 36;
-    const trackG = new PIXI.Graphics();
-
-    // Track groove (MC inset style)
-    trackG.beginFill(SLIDER_TRACK_COLOR, 0.8);
-    trackG.drawRect(0, trackY, SLIDER_WIDTH, SLIDER_HEIGHT);
-    trackG.endFill();
-
-    // Track 3D inset
-    trackG.beginFill(BORDER_SHADOW, 0.5);
-    trackG.drawRect(0, trackY, SLIDER_WIDTH, 1);
-    trackG.drawRect(0, trackY, 1, SLIDER_HEIGHT);
-    trackG.endFill();
-    trackG.beginFill(INNER_HIGHLIGHT, 0.3);
-    trackG.drawRect(0, trackY + SLIDER_HEIGHT - 1, SLIDER_WIDTH, 1);
-    trackG.drawRect(SLIDER_WIDTH - 1, trackY, 1, SLIDER_HEIGHT);
-    trackG.endFill();
-
-    container.addChild(trackG);
-
-    // Slider fill (colored portion)
-    const fillG = new PIXI.Graphics();
-    container.addChild(fillG);
-
-    // Knob (MC pixel style)
-    const knobG = new PIXI.Graphics();
-    knobG.eventMode = 'static';
-    knobG.cursor = 'pointer';
-    container.addChild(knobG);
-
-    // Make the whole track area interactive for click-to-set
-    const hitArea = new PIXI.Graphics();
-    hitArea.beginFill(0xffffff, 0.001);
-    hitArea.drawRect(-8, trackY - 8, SLIDER_WIDTH + 16, SLIDER_HEIGHT + 16);
-    hitArea.endFill();
-    hitArea.eventMode = 'static';
-    hitArea.cursor = 'pointer';
-    container.addChild(hitArea);
-
-    const slider = {
-      container,
-      labelText,
-      hintText,
-      valueText,
-      trackG,
-      fillG,
-      knobG,
-      hitArea,
-      min,
-      max,
-      step,
-      unit,
-      key,
-      value: defaultValue,
-      trackY,
-      trackWidth: SLIDER_WIDTH,
-    };
-
-    // Initial draw
-    this._drawSlider(slider);
-
-    // Knob drag
-    knobG.on('pointerdown', (e) => {
-      e.stopPropagation();
-      this._activeSlider = slider;
-      knobG.alpha = 0.8;
-    });
-
-    // Click on track to set value
-    hitArea.on('pointerdown', (e) => {
-      const localX = e.getLocalPosition(container).x;
-      const pct = Math.max(0, Math.min(1, localX / SLIDER_WIDTH));
-      const raw = min + pct * (max - min);
-      const snapped = Math.round(raw / step) * step;
-      slider.value = Math.max(min, Math.min(max, snapped));
-      this._values[key] = slider.value;
-      this._drawSlider(slider);
-      this._activeSlider = slider;
-    });
-
-    return slider;
-  }
-
-  // ── Draw slider (fill + knob) ──────────────────────────────────
-
-  _drawSlider(slider) {
-    const { fillG, knobG, min, max, step, value, trackY, trackWidth, unit, valueText } = slider;
-    const pct = (value - min) / (max - min);
-
-    // Fill
-    fillG.clear();
-    const fillW = pct * trackWidth;
-    fillG.beginFill(SLIDER_FILL_COLOR, 0.9);
-    fillG.drawRect(0, trackY, fillW, SLIDER_HEIGHT);
-    fillG.endFill();
-
-    // Fill highlight (top edge)
-    fillG.beginFill(0xffffff, 0.2);
-    fillG.drawRect(0, trackY, fillW, 1);
-    fillG.endFill();
-
-    // Fill pixel stripe
-    for (let sx = 0; sx < fillW; sx += 4) {
-      const stripeAlpha = (sx % 8 === 0) ? 0.1 : 0.05;
-      fillG.beginFill(0xffffff, stripeAlpha);
-      fillG.drawRect(sx, trackY + 1, 2, SLIDER_HEIGHT - 2);
-      fillG.endFill();
+    const tuningBlock = element('section', 'pet-settings-block pet-settings-tuning-block');
+    tuningBlock.append(element('div', 'pet-settings-block-label', '调整整体手感'));
+    const values = deriveQuickTunings(this._values);
+    for (const [key, definition] of Object.entries(QUICK_TUNING_DEFS)) {
+      tuningBlock.append(this._createRangeControl({
+        key: `quick:${key}`,
+        label: definition.label,
+        hint: definition.hint,
+        min: 0,
+        max: 100,
+        step: 1,
+        value: values[key],
+        low: definition.low,
+        high: definition.high,
+        formatter: (value) => `${Math.round(value)}%`,
+        onInput: (value) => this._applyValues(applyQuickTuning(this._values, key, value), false),
+      }));
     }
-
-    // Knob
-    knobG.clear();
-    const knobX = pct * trackWidth;
-    const knobY = trackY + SLIDER_HEIGHT / 2;
-    const kHalf = SLIDER_KNOB / 2;
-
-    // Knob shadow
-    knobG.beginFill(0x000000, 0.3);
-    knobG.drawRect(knobX - kHalf + 1, knobY - kHalf + 1, SLIDER_KNOB, SLIDER_KNOB);
-    knobG.endFill();
-
-    // Knob body (MC button style with 3D edges)
-    knobG.beginFill(SLIDER_KNOB_COLOR, 1);
-    knobG.drawRect(knobX - kHalf, knobY - kHalf, SLIDER_KNOB, SLIDER_KNOB);
-    knobG.endFill();
-
-    // Knob highlight (top-left)
-    knobG.beginFill(0xffffff, 0.4);
-    knobG.drawRect(knobX - kHalf, knobY - kHalf, SLIDER_KNOB, 2);
-    knobG.drawRect(knobX - kHalf, knobY - kHalf, 2, SLIDER_KNOB);
-    knobG.endFill();
-
-    // Knob shadow (bottom-right)
-    knobG.beginFill(0x000000, 0.3);
-    knobG.drawRect(knobX - kHalf, knobY + kHalf - 2, SLIDER_KNOB, 2);
-    knobG.drawRect(knobX + kHalf - 2, knobY - kHalf, 2, SLIDER_KNOB);
-    knobG.endFill();
-
-    // Knob center dot (MC pixel feel)
-    knobG.beginFill(0xffffff, 0.6);
-    knobG.drawRect(knobX - 1, knobY - 1, 2, 2);
-    knobG.endFill();
-
-    // Update value text
-    const valueStr = formatValue(value, step) + (unit ? ` ${unit}` : '');
-    valueText.text = valueStr;
+    this.workspace.append(tuningBlock);
   }
 
-  // ── Pointer handlers for slider drag ───────────────────────────
-
-  _onPointerMove(e) {
-    if (!this._activeSlider) return;
-
-    const slider = this._activeSlider;
-    const container = slider.container;
-
-    // Convert global mouse to local slider coordinates
-    const globalX = e.clientX;
-    const globalY = e.clientY;
-
-    // Get the container's global position
-    const bounds = container.getBounds();
-    const localX = globalX - bounds.x;
-    const pct = Math.max(0, Math.min(1, localX / slider.trackWidth));
-
-    const raw = slider.min + pct * (slider.max - slider.min);
-    const snapped = Math.round(raw / slider.step) * slider.step;
-    slider.value = Math.max(slider.min, Math.min(slider.max, snapped));
-    this._values[slider.key] = slider.value;
-    this._drawSlider(slider);
+  _renderPreciseControls(sectionId) {
+    const fields = Object.entries(PET_SETTING_FIELDS).filter(([, field]) => field.section === sectionId);
+    const list = element('section', 'pet-settings-block pet-settings-field-list');
+    for (const [key, field] of fields) {
+      if (field.type === 'boolean') list.append(this._createSwitchControl(key, field));
+      else list.append(this._createRangeControl({
+        key,
+        ...field,
+        value: this._values[key],
+        formatter: (value) => formatValue(value, field),
+        onInput: (value) => this._applyValues({ ...this._values, [key]: value }, false),
+      }));
+    }
+    this.workspace.append(list);
   }
 
-  _onPointerUp() {
-    if (this._activeSlider) {
-      this._activeSlider.knobG.alpha = 1;
-      this._activeSlider = null;
+  _createRangeControl(options) {
+    const row = element('div', 'pet-settings-range');
+    row.dataset.control = options.key;
+    const copy = element('div', 'pet-settings-control-copy');
+    copy.append(element('strong', '', options.label));
+    copy.append(element('small', '', options.hint));
+    row.append(copy);
+    const output = element('output', 'pet-settings-value', options.formatter(options.value));
+    row.append(output);
+    const rangeWrap = element('div', 'pet-settings-range-wrap');
+    if (options.low) rangeWrap.append(element('span', '', options.low));
+    const input = element('input');
+    input.type = 'range';
+    input.min = String(options.min);
+    input.max = String(options.max);
+    input.step = String(options.step);
+    input.value = String(options.value);
+    input.setAttribute('aria-label', options.label);
+    input.addEventListener('input', () => {
+      const value = Number(input.value);
+      output.textContent = options.formatter(value);
+      options.onInput(value);
+    });
+    rangeWrap.append(input);
+    if (options.high) rangeWrap.append(element('span', '', options.high));
+    row.append(rangeWrap);
+    return row;
+  }
+
+  _createSwitchControl(key, field) {
+    const label = element('label', 'pet-settings-switch');
+    const copy = element('span', 'pet-settings-control-copy');
+    copy.append(element('strong', '', field.label));
+    copy.append(element('small', '', field.hint));
+    label.append(copy);
+    const input = element('input');
+    input.type = 'checkbox';
+    input.checked = Boolean(this._values[key]);
+    input.addEventListener('change', () => this._applyValues({ ...this._values, [key]: input.checked }));
+    label.append(input);
+    label.append(element('i', ''));
+    return label;
+  }
+
+  _applyValues(values, rerender = true) {
+    this._values = this._draft.update(values);
+    this._syncPreviewSettings();
+    if (rerender) this._renderSection();
+    this._syncUi();
+  }
+
+  _syncUi() {
+    const dirty = this._draft.dirty;
+    this.status.textContent = dirty ? '有未应用更改' : '设置已同步';
+    this.status.dataset.dirty = String(dirty);
+    this.saveButton.disabled = !dirty;
+    this.saveButton.textContent = dirty ? '应用设置' : '已应用';
+    const preset = detectPetSettingsPreset(this._values);
+    for (const button of this.nav.querySelectorAll('.pet-settings-nav-button')) {
+      const selected = button.dataset.section === this._section;
+      button.dataset.active = String(selected);
+      button.setAttribute('aria-current', selected ? 'page' : 'false');
+    }
+    for (const button of this.workspace.querySelectorAll('.pet-settings-preset')) {
+      const selected = button.dataset.preset === preset;
+      button.dataset.active = String(selected);
+      button.setAttribute('aria-pressed', String(selected));
     }
   }
-
-  // ── Create a MC-style button ────────────────────────────────────
-
-  _createButton(label, x, y, w, h, bgColor, onClick) {
-    const container = new PIXI.Container();
-    container.x = x;
-    container.y = y;
-    container.eventMode = 'static';
-    container.cursor = 'pointer';
-
-    const bg = new PIXI.Graphics();
-
-    const drawBtn = (color, hover = false) => {
-      bg.clear();
-
-      // Shadow
-      bg.beginFill(0x000000, 0.4);
-      bg.drawRect(2, 2, w, h);
-      bg.endFill();
-
-      // Body
-      bg.beginFill(color, 0.9);
-      bg.drawRect(0, 0, w, h);
-      bg.endFill();
-
-      // Highlight (top-left)
-      bg.beginFill(0xffffff, hover ? 0.35 : 0.2);
-      bg.drawRect(0, 0, w, 2);
-      bg.drawRect(0, 0, 2, h);
-      bg.endFill();
-
-      // Shadow (bottom-right)
-      bg.beginFill(0x000000, hover ? 0.2 : 0.3);
-      bg.drawRect(0, h - 2, w, 2);
-      bg.drawRect(w - 2, 0, 2, h);
-      bg.endFill();
-
-      // Inner pixel accent
-      bg.beginFill(0xffffff, 0.08);
-      bg.drawRect(4, 4, w - 8, 1);
-      bg.endFill();
-    };
-
-    drawBtn(bgColor);
-    container.addChild(bg);
-
-    const text = makeText(label, 14, TEXT_COLOR, true);
-    text.anchor.set(0.5);
-    text.x = w / 2;
-    text.y = h / 2;
-    container.addChild(text);
-
-    container.on('pointerover', () => drawBtn(bgColor, true));
-    container.on('pointerout', () => drawBtn(bgColor, false));
-    container.on('pointerdown', (e) => {
-      e.stopPropagation();
-      if (onClick) onClick();
-    });
-
-    return { container, bg, text, drawBtn, bgColor };
-  }
-
-  // ── Load settings from main process ─────────────────────────────
 
   async _loadSettings() {
     try {
-      if (window.electronAPI && window.electronAPI.settings && window.electronAPI.settings.get) {
-        const saved = await window.electronAPI.settings.get();
-        if (saved) {
-          for (const key of Object.keys(DEFAULTS)) {
-            if (saved[key] !== undefined) {
-              this._values[key] = saved[key];
-            }
-          }
-          // ── 向后兼容：旧 ropeElasticity 是浮点数(0.001~2.0)，新版是档位(1~12) ──
-          if (saved.ropeElasticity !== undefined) {
-            const v = saved.ropeElasticity;
-            if (v < 1 || v > 12 || !Number.isInteger(v)) {
-              // 旧格式：找最近的档位
-              let nearest = 5;
-              let minDist = Infinity;
-              for (let i = 0; i < ROPE_ELASTICITY_STEPS.length; i++) {
-                const dist = Math.abs(v - ROPE_ELASTICITY_STEPS[i]);
-                if (dist < minDist) { minDist = dist; nearest = i + 1; }
-              }
-              this._values.ropeElasticity = nearest;
-              console.log(`[Settings] Migrated ropeElasticity: ${v} → step ${nearest}`);
-            }
-          }
-          this._updateAllSliders();
-        }
-      }
-    } catch (err) {
-      console.warn('[Settings] Failed to load settings:', err);
+      const saved = await window.electronAPI?.settings?.get?.();
+      if (!saved) return;
+      this._values = normalizePetSettings(saved);
+      this._originalValues = { ...this._values };
+      this._draft = new PetSettingsDraft(this._values);
+      this._renderSection();
+      this._syncPreviewSettings(true);
+      this._syncUi();
+    } catch (error) {
+      console.warn('[Settings] Failed to load settings:', error);
     }
   }
-
-  // ── Update all slider visuals from current values ───────────────
-
-  _updateAllSliders() {
-    for (const [key, slider] of Object.entries(this._sliders)) {
-      slider.value = this._values[key];
-      this._drawSlider(slider);
-    }
-  }
-
-  // ── Save settings ──────────────────────────────────────────────
 
   async _save() {
-    try {
-      if (window.electronAPI && window.electronAPI.settings && window.electronAPI.settings.save) {
-        // Set all values first
-        for (const [key, val] of Object.entries(this._values)) {
-          await window.electronAPI.settings.set(key, val);
-        }
-        await window.electronAPI.settings.save();
-        console.log('[Settings] Saved:', JSON.stringify(this._values));
-      }
-      this._originalValues = { ...this._values };
+    if (!this._draft.dirty) {
       this.close();
-    } catch (err) {
-      console.error('[Settings] Save failed:', err);
+      return;
+    }
+    this.saveButton.disabled = true;
+    this.saveButton.textContent = '正在应用…';
+    try {
+      for (const [key, value] of Object.entries(this._values)) {
+        window.electronAPI?.settings?.set?.(key, value);
+      }
+      window.electronAPI?.settings?.save?.();
+      this._values = this._draft.commit();
+      this._originalValues = { ...this._values };
+      this._syncUi();
+      this.close();
+    } catch (error) {
+      console.error('[Settings] Save failed:', error);
+      this.status.textContent = '应用失败，请重试';
+      this.status.dataset.dirty = 'error';
+      this.saveButton.disabled = false;
+      this.saveButton.textContent = '重新应用';
     }
   }
-
-  // ── Reset to defaults ──────────────────────────────────────────
 
   _reset() {
-    this._values = { ...DEFAULTS };
-    this._updateAllSliders();
-    console.log('[Settings] Reset to defaults');
+    this._applyValues(PET_SETTINGS_DEFAULTS);
+    this.status.textContent = '默认值已载入，应用后生效';
   }
-
-  // ── Cancel (restore original values) ───────────────────────────
 
   _cancel() {
-    this._values = { ...this._originalValues };
-    this._updateAllSliders();
+    this._values = this._draft.cancel();
+    this._originalValues = { ...this._values };
+    this._renderSection();
+    this._syncPreviewSettings(true);
+    this._syncUi();
     this.close();
-    console.log('[Settings] Cancelled');
   }
 
-  // ── Positioning ────────────────────────────────────────────────
-
-  setPosition(cx, cy) {
-    this.container.x = cx - PANEL_WIDTH / 2;
-    this.container.y = cy - PANEL_HEIGHT / 2;
+  _syncPreviewSettings(reset = false) {
+    const physics = this._previewPhysics;
+    physics.gravity = this._values.gravity;
+    physics.damping = this._values.damping;
+    physics.pulleyFriction = this._values.pulleyFriction;
+    physics.ropeStiffness = this._values.ropeStiffness;
+    physics.ropeDamping = this._values.ropeDamping;
+    physics.ropeBounceRest = this._values.bounceRestitution;
+    physics.airDamping = this._values.airDamping;
+    physics.ropeElasticity = ROPE_ELASTICITY_STEPS[this._values.ropeElasticity - 1];
+    if (reset || !Number.isFinite(physics.turtle.x) || physics.turtle.x === 0) {
+      this._resetPreview(false);
+    } else {
+      const { height } = this._previewSize();
+      const ropeLength = scalePreviewRopeLength(this._values.ropeLength, height);
+      if (Math.abs(physics.restRopeLength - ropeLength) > 0.5) {
+        const dx = physics.turtle.x - physics.pulley.x;
+        const dy = physics.turtle.y - physics.pulley.y;
+        const angle = Math.atan2(dx, dy);
+        physics.restRopeLength = ropeLength;
+        physics.ropeLength = ropeLength;
+        physics.turtle.x = physics.pulley.x + Math.sin(angle) * ropeLength;
+        physics.turtle.y = physics.pulley.y + Math.cos(angle) * ropeLength;
+      }
+    }
+    this._drawPreview();
   }
 
-  // ── Open / Close with animation ────────────────────────────────
+  _previewSize() {
+    const bounds = this.canvas.getBoundingClientRect();
+    return {
+      width: Math.max(180, Math.round(bounds.width || 240)),
+      height: Math.max(220, Math.round(bounds.height || 330)),
+    };
+  }
+
+  _resetPreview(announce = false) {
+    const { width, height } = this._previewSize();
+    const physics = this._previewPhysics;
+    const ropeLength = scalePreviewRopeLength(this._values.ropeLength, height);
+    physics.reset();
+    physics.restRopeLength = ropeLength;
+    physics.ropeLength = ropeLength;
+    physics.screenAnchorX = 0.5;
+    physics.pulley.x = width / 2;
+    physics.pulley.y = 35;
+    physics.turtle.x = width / 2 + Math.min(42, width * 0.14);
+    physics.turtle.y = Math.min(height - 42, physics.pulley.y + ropeLength - 8);
+    physics.turtle.vx = announce && !this._reducedMotion ? 115 : 0;
+    physics.turtle.vy = announce && !this._reducedMotion ? -35 : 0;
+    physics.setContext({ state: 'PULLEY_PHYSICS', windowWidth: width, windowHeight: height, turtleSize: Math.min(84, Math.max(46, this._values.turtleSize * 0.65)) });
+    this._previewDragging = false;
+    this._previewReleasedAt = performance.now();
+    if (announce) this.previewHint.textContent = '已重新释放桌宠，观察回弹和收敛';
+    this._syncPreviewSettings(false);
+  }
+
+  _previewPointerDown(event) {
+    const point = eventPoint(this.canvas, event);
+    this.canvas.setPointerCapture?.(event.pointerId);
+    this._previewPhysics.setContext({ state: 'PULLEY_DRAG' });
+    this._previewPhysics.startDrag(point.x, point.y);
+    this._previewDragging = true;
+    this.previewHint.textContent = '正在拖动：移动快一点，松手后效果更明显';
+    this._drawPreview();
+  }
+
+  _previewPointerMove(event) {
+    if (!this._previewDragging) return;
+    const point = eventPoint(this.canvas, event);
+    this._previewPhysics.updateDrag(point.x, point.y, 1 / 60);
+    this._drawPreview();
+  }
+
+  _previewPointerUp(event) {
+    if (!this._previewDragging) return;
+    this.canvas.releasePointerCapture?.(event.pointerId);
+    this._previewPhysics.release();
+    this._previewPhysics.setContext({ state: 'PULLEY_PHYSICS' });
+    this._previewDragging = false;
+    this._previewReleasedAt = performance.now();
+    this.previewHint.textContent = '观察当前回弹；可再次拖动测试';
+  }
+
+  _startPreviewLoop() {
+    const tick = (now) => {
+      const dt = Math.min(0.033, Math.max(0, (now - this._previewLastAt) / 1000));
+      this._previewLastAt = now;
+      if (this._open && !this._previewDragging && !this._reducedMotion) {
+        this._previewPhysics.updatePulleyPhysics(dt);
+      }
+      if (this._open) this._drawPreview();
+      this._previewFrame = requestAnimationFrame(tick);
+    };
+    this._previewFrame = requestAnimationFrame(tick);
+  }
+
+  _drawPreview() {
+    if (!this.canvas?.isConnected) return;
+    const { width, height } = this._previewSize();
+    const dpr = Math.max(1, window.devicePixelRatio || 1);
+    if (this.canvas.width !== Math.round(width * dpr) || this.canvas.height !== Math.round(height * dpr)) {
+      this.canvas.width = Math.round(width * dpr);
+      this.canvas.height = Math.round(height * dpr);
+      this._previewPhysics.setContext({ windowWidth: width, windowHeight: height });
+    }
+    const context = this.canvas.getContext('2d');
+    context.setTransform(dpr, 0, 0, dpr, 0, 0);
+    context.clearRect(0, 0, width, height);
+    context.fillStyle = '#0b1016';
+    context.fillRect(0, 0, width, height);
+    context.strokeStyle = 'rgba(102, 227, 138, 0.075)';
+    context.lineWidth = 1;
+    for (let x = 12; x < width; x += 16) {
+      context.beginPath(); context.moveTo(x, 0); context.lineTo(x, height); context.stroke();
+    }
+    for (let y = 12; y < height; y += 16) {
+      context.beginPath(); context.moveTo(0, y); context.lineTo(width, y); context.stroke();
+    }
+    context.fillStyle = '#17212b';
+    context.fillRect(16, 18, width - 32, 8);
+    context.fillStyle = '#66e38a';
+    context.fillRect(Math.round(this._previewPhysics.pulley.x) - 9, 17, 18, 10);
+
+    const physics = this._previewPhysics;
+    context.strokeStyle = '#9eb0bd';
+    context.lineWidth = 2;
+    context.beginPath();
+    context.moveTo(physics.pulley.x, physics.pulley.y);
+    context.lineTo(physics.turtle.x, physics.turtle.y);
+    context.stroke();
+
+    const size = Math.min(84, Math.max(46, this._values.turtleSize * 0.65));
+    context.imageSmoothingEnabled = false;
+    if (this._previewImage.complete && this._previewImage.naturalWidth > 0) {
+      context.drawImage(this._previewImage, physics.turtle.x - size / 2, physics.turtle.y - size / 2, size, size);
+    } else {
+      context.fillStyle = '#2f8f53';
+      context.fillRect(physics.turtle.x - size * 0.34, physics.turtle.y - size * 0.25, size * 0.68, size * 0.5);
+      context.fillStyle = '#66e38a';
+      context.fillRect(physics.turtle.x - size * 0.22, physics.turtle.y - size * 0.36, size * 0.44, size * 0.72);
+    }
+    context.fillStyle = 'rgba(203, 215, 226, 0.7)';
+    context.font = '10px Consolas, monospace';
+    context.fillText(`L ${Math.round(this._values.ropeLength)} PX`, 12, height - 13);
+    context.textAlign = 'center';
+    context.fillText(`G ${Math.round(this._values.gravity)}`, width / 2, height - 13);
+    context.textAlign = 'right';
+    context.fillText(`K ${Math.round(this._values.ropeStiffness)}`, width - 12, height - 13);
+    context.textAlign = 'left';
+  }
+
+  setPosition() {
+    // The DOM panel is viewport-centered and responsive by design.
+  }
 
   open() {
+    clearTimeout(this._closeTimer);
     this._originalValues = { ...this._values };
-    this._animDirection = 1;
-    this._animProgress = 0;
+    this._draft = new PetSettingsDraft(this._values);
+    this._open = true;
     this._animating = true;
-    this.container.visible = true;
-    this.container.alpha = 0;
-    this.container.scale.set(0.3);
-
-    // Disable click-through while open
-    if (window.electronAPI && window.electronAPI.setIgnoreMouseEvents) {
-      window.electronAPI.setIgnoreMouseEvents(false);
-    }
+    this.root.hidden = false;
+    this.root.setAttribute('aria-hidden', 'false');
+    this._renderSection();
+    this._syncUi();
+    this._syncPreviewSettings(true);
+    requestAnimationFrame(() => {
+      this.root.classList.add('is-open');
+      this._animating = false;
+      this.panel.focus({ preventScroll: true });
+    });
+    window.electronAPI?.setIgnoreMouseEvents?.(false);
   }
 
   close() {
-    this._animDirection = -1;
-    this._animProgress = 1;
+    if (!this._open && !this._animating) return;
+    this._open = false;
     this._animating = true;
+    this.root.classList.remove('is-open');
+    this.root.setAttribute('aria-hidden', 'true');
+    clearTimeout(this._closeTimer);
+    this._closeTimer = setTimeout(() => {
+      this.root.hidden = true;
+      this._animating = false;
+      window.electronAPI?.setIgnoreMouseEvents?.(true);
+    }, this._reducedMotion ? 0 : 180);
   }
 
   settleForRefresh() {
-    this._activeSlider = null;
-    if (!this._animating) return this.isOpen;
-    const opening = this._animDirection >= 0;
+    clearTimeout(this._closeTimer);
     this._animating = false;
-    this._animCallback = null;
-    this._animProgress = opening ? 1 : 0;
-    this.container.visible = opening;
-    this.container.alpha = opening ? 1 : 0;
-    this.container.scale.set(opening ? 1 : 0.3);
-    return opening;
+    this.root.hidden = !this._open;
+    this.root.classList.toggle('is-open', this._open);
+    this.root.setAttribute('aria-hidden', String(!this._open));
+    return this._open;
   }
 
-  updateAnimation(dt) {
-    if (!this._animating) return;
-
-    const speed = 1 / ANIM_DURATION;
-    this._animProgress += this._animDirection * speed * dt;
-    this._animProgress = Math.max(0, Math.min(1, this._animProgress));
-
-    const t = this._animDirection === 1
-      ? easeOutBack(this._animProgress)
-      : easeInQuad(this._animProgress);
-
-    this.container.alpha = this._animProgress;
-
-    const scaleBase = 0.3 + 0.7 * t;
-    this.container.scale.set(scaleBase);
-
-    if (this._animDirection === 1 && this._animProgress >= 1) {
-      this._animating = false;
-      this.container.alpha = 1;
-      this.container.scale.set(1);
-    } else if (this._animDirection === -1 && this._animProgress <= 0) {
-      this._animating = false;
-      this.container.visible = false;
-      this.container.alpha = 0;
-
-      // Re-enable click-through when closed
-      if (window.electronAPI && window.electronAPI.setIgnoreMouseEvents) {
-        window.electronAPI.setIgnoreMouseEvents(true);
-      }
-    }
+  updateAnimation() {
+    // CSS owns the panel transition; the preview has an isolated animation loop.
   }
 
-  // ── Public getters ─────────────────────────────────────────────
+  containsPoint(x, y) {
+    if (!this._open) return false;
+    const bounds = this.panel.getBoundingClientRect();
+    return x >= bounds.left && x <= bounds.right && y >= bounds.top && y <= bounds.bottom;
+  }
+
+  setPreviewImage(source) {
+    const value = String(source || '').trim();
+    if (!value) return;
+    const url = new URL(value, window.location.href).href;
+    if (this._previewImage.src === url) return;
+    this._previewImage.src = url;
+  }
 
   get isAnimating() { return this._animating; }
-
-  get isOpen() {
-    return this.container.visible && this.container.alpha >= 1 && !this._animating;
-  }
-
-  get width() { return PANEL_WIDTH; }
-  get height() { return PANEL_HEIGHT; }
-
-  /** Get a specific setting value */
-  getValue(key) {
-    return this._values[key] ?? DEFAULTS[key];
-  }
-
-  /** Get all current values */
-  getValues() {
-    return { ...this._values };
-  }
+  get isOpen() { return this._open; }
+  get width() { return this.panel.getBoundingClientRect().width || PANEL_WIDTH; }
+  get height() { return this.panel.getBoundingClientRect().height || PANEL_HEIGHT; }
+  getValue(key) { return this._values[key] ?? PET_SETTINGS_DEFAULTS[key]; }
+  getValues() { return { ...this._values }; }
 }

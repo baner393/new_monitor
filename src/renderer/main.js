@@ -19,6 +19,7 @@ import { ROPE_ELASTICITY_STEPS } from './settings.js';
 import { SkinSelector } from './skin-selector.js';
 import { CodexCompanion } from './codex-companion.js';
 import { CodexMotionController, codexStatusSymbol } from './codex-motion.js';
+import { PANEL_DRAG_CONTEXT, resolvePanelDragContext, resolvePanelDragSettledState } from './panel-drag-context.js';
 import { CODEX_ACTIVITY } from '../shared/codex-integration.js';
 
 // ── Font loading gate ─────────────────────────────────────────────────
@@ -293,17 +294,19 @@ window.addEventListener('beforeunload', () => codexCompanion.destroy());
 
 // ── Settings Panel ─────────────────────────────────────────────────────
 const settingsPanel = new SettingsPanel();
-pixiApp.stage.addChild(settingsPanel.container);
 
 // Listen for open-settings from context menu
-window.electronAPI.onOpenSettings(() => {
+function openSettingsPanel() {
   console.log('[Settings] Opening settings panel from context menu');
   if (!settingsPanel.isOpen && !settingsPanel.isAnimating) {
     // Position at center of screen
     settingsPanel.setPosition(window.innerWidth / 2, window.innerHeight / 2);
     settingsPanel.open();
   }
-});
+}
+
+window.electronAPI.onOpenSettings(openSettingsPanel);
+if (import.meta.env.DEV) window.__openSettingsPanelForDiagnostics = openSettingsPanel;
 
 // Listen for settings-changed (applied from main process)
 window.electronAPI.onSettingsChanged((settings) => {
@@ -351,6 +354,7 @@ skinSelector.onSkinChange = async (skinId, skinConfig) => {
   console.log(`[Skin] Switching to: ${skinId}`, skinConfig);
   const frames = skinConfig.frames || skinConfig.sprites;
   if (frames) {
+    settingsPanel.setPreviewImage(frames.idle);
     const revision = ++skinLoadRevision;
     let textures;
     try {
@@ -460,19 +464,7 @@ function applySettings(settings) {
 document.addEventListener('mousedown', (e) => {
   if (!settingsPanel.isOpen) return;
 
-  const c = settingsPanel.container;
-  const px = c.x;
-  const py = c.y;
-  const pw = settingsPanel.width;
-  const ph = settingsPanel.height;
-
-  const insidePanel =
-    e.clientX >= px &&
-    e.clientX <= px + pw &&
-    e.clientY >= py &&
-    e.clientY <= py + ph;
-
-  if (!insidePanel) {
+  if (!settingsPanel.containsPoint(e.clientX, e.clientY)) {
     console.log('[Settings] Click outside → closing');
     settingsPanel._cancel(); // Cancel with restore
   }
@@ -623,7 +615,7 @@ if (window.electronAPI?.onSoftRefresh) {
         setSpriteTextureForState(recoveredState);
         bounceStartPos = null;
         ropeReturnActive = false;
-        _panelDragActive = false;
+        restoreAttachedPanelDragPhysics();
       }
 
       window.electronAPI.requestSystemData();
@@ -710,10 +702,20 @@ function updateRopeReturn(dt) {
   }
 }
 
-// ── Panel drag state (step 6: right-drag while system panel is open) ─
-let _panelDragActive = false;     // panel was open when right-drag started
+// ── Attached-panel drag state (system monitor or Codex conversation) ─
+let _panelDragContext = null;
+let _panelDragStableApplied = false;
 let _savedRopeStiffness = 500;    // restore after panel drag
 let _savedAirDamping = 0.98;      // restore after panel drag
+
+function restoreAttachedPanelDragPhysics() {
+  if (_panelDragStableApplied) {
+    physics.ropeStiffness = _savedRopeStiffness;
+    physics.airDamping = _savedAirDamping;
+  }
+  _panelDragContext = null;
+  _panelDragStableApplied = false;
+}
 
 // ── Idle animation state (breathing + blinking) ─────────────────────
 let breathTime = 0;
@@ -852,35 +854,36 @@ function onStateChange() {
     console.log(`[MOMENTUM→IDLE] Starting rope return`);
   }
 
-  // PULLEY_DRAG from panel state → save panel context, apply stable physics
-  if (newState === 'PULLEY_DRAG' && (prevState === 'PANEL_OPEN' || prevState === 'EXPANDING' || prevState === 'HAPPY' || prevState === 'COLLAPSING')) {
-    _panelDragActive = true;
+  // PULLEY_DRAG with an attached panel → retain its return state and apply stable physics.
+  if (newState === 'PULLEY_DRAG') {
+    const monitorPanelOpen = ['PANEL_OPEN', 'EXPANDING', 'HAPPY', 'COLLAPSING'].includes(prevState);
+    _panelDragContext = resolvePanelDragContext({
+      monitorPanelOpen,
+      codexConversationOpen: codexCompanion.isConversationOpen,
+    });
+  }
+  if (_panelDragContext && newState === 'PULLEY_DRAG') {
     if (settingsPanel.getValue('panelMoveStable')) {
       _savedRopeStiffness = physics.ropeStiffness;
       _savedAirDamping = physics.airDamping;
       physics.ropeStiffness = 100;
       physics.airDamping = 0.9;
-      console.log(`[PanelDrag] Started, stable params: stiffness=100, damping=0.9`);
+      _panelDragStableApplied = true;
+      console.log(`[PanelDrag] ${_panelDragContext} attached, stable params: stiffness=100, damping=0.9`);
     } else {
-      // Stable mode disabled → apply current physics settings (from right-click props)
-      console.log(`[PanelDrag] Started, using current physics settings (stable mode off)`);
+      console.log(`[PanelDrag] ${_panelDragContext} attached, using current physics settings (stable mode off)`);
     }
   }
 
-  // PULLEY_PHYSICS settled → PANEL_OPEN (panel drag) or IDLE (normal throw)
-  if (_panelDragActive && prevState === 'PULLEY_DRAG' && newState === 'PULLEY_PHYSICS') {
-    console.log(`[PanelDrag] Physics started, panel follows turtle`);
+  if (_panelDragContext && prevState === 'PULLEY_DRAG' && newState === 'PULLEY_PHYSICS') {
+    console.log(`[PanelDrag] Physics started with ${_panelDragContext} attached`);
   }
-  if (_panelDragActive && prevState === 'PULLEY_PHYSICS' && newState === 'PANEL_OPEN') {
-    // Restore normal physics if stable mode was enabled
-    if (settingsPanel.getValue('panelMoveStable')) {
-      physics.ropeStiffness = _savedRopeStiffness;
-      physics.airDamping = _savedAirDamping;
-    }
-    _panelDragActive = false;
-    // Re-enable mouse events for panel interaction
+  if (_panelDragContext && prevState === 'PULLEY_PHYSICS'
+      && newState === resolvePanelDragSettledState(_panelDragContext)) {
+    const settledContext = _panelDragContext;
+    restoreAttachedPanelDragPhysics();
     window.electronAPI.setIgnoreMouseEvents(false);
-    console.log(`[PanelDrag] Returned to PANEL_OPEN, physics restored`);
+    console.log(`[PanelDrag] ${settledContext} settled, physics restored`);
   }
 
   // Log pulley state transitions
@@ -1042,7 +1045,7 @@ pixiApp.ticker.add((delta) => {
     sprite.y = physics.turtle.y;
 
     // Panel follow: keep panel at turtle position during panel drag
-    if (_panelDragActive && panel.isOpen) {
+    if (_panelDragContext === PANEL_DRAG_CONTEXT.MONITOR && panel.isOpen) {
       panel.setPosition(physics.pulley.x, sprite.y + 80);
     }
 
@@ -1055,16 +1058,17 @@ pixiApp.ticker.add((delta) => {
     sprite.y = physics.turtle.y;
 
     // Panel follow during panel drag physics
-    if (_panelDragActive && panel.isOpen) {
+    if (_panelDragContext === PANEL_DRAG_CONTEXT.MONITOR && panel.isOpen) {
       panel.setPosition(physics.pulley.x, sprite.y + 80);
     }
 
     // Check if physics has settled
     if (totalEnergy !== undefined && totalEnergy < THROW_SETTLE_THRESHOLD) {
-      if (_panelDragActive) {
-        // Panel drag mode → return to PANEL_OPEN (not IDLE)
-        stateMachine.reset('PANEL_OPEN');
-        console.log('[PanelDrag] Settled → PANEL_OPEN');
+      if (_panelDragContext) {
+        const settledState = resolvePanelDragSettledState(_panelDragContext);
+        if (settledState === 'PANEL_OPEN') stateMachine.reset(settledState);
+        else stateMachine.transition('PHYSICS_SETTLED');
+        console.log(`[PanelDrag] ${_panelDragContext} settled → ${settledState}`);
       } else {
         console.log('[THROW] Settled, transitioning to IDLE');
         stateMachine.transition('PHYSICS_SETTLED');

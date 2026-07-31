@@ -19,6 +19,15 @@ function eventFor(snapshot, eventId) {
   return (snapshot?.unread || []).find((event) => event.id === eventId) || null;
 }
 
+function currentEvent(event, task) {
+  if (!event || !task) return event;
+  return {
+    ...event,
+    title: task.title || event.title,
+    project: task.project || event.project,
+  };
+}
+
 function taskEvent(task, previous = null) {
   if (!task) return previous;
   return {
@@ -59,7 +68,7 @@ export function reconcileCodexViewState(state, snapshot, { allowNotification = t
     const current = eventFor(snapshot, state.eventId);
     return {
       ...state,
-      event: current || taskEvent(task, state.event),
+      event: currentEvent(current, task) || taskEvent(task, state.event),
     };
   }
   if (state?.mode === 'notification' && state.threadId) {
@@ -67,16 +76,17 @@ export function reconcileCodexViewState(state, snapshot, { allowNotification = t
     const current = eventFor(snapshot, state.eventId);
     return {
       ...state,
-      event: current || taskEvent(task, state.event),
+      event: currentEvent(current, task) || taskEvent(task, state.event),
     };
   }
   if (!allowNotification) return state || createCodexViewState();
   const alert = snapshot?.alerts?.[0];
   if (!alert) return state || createCodexViewState();
+  const task = taskFor(snapshot, String(alert.threadId || ''));
   return {
     threadId: String(alert.threadId || ''),
     eventId: String(alert.id || ''),
     mode: 'notification',
-    event: alert,
+    event: currentEvent(alert, task),
   };
 }

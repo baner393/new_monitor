@@ -411,6 +411,7 @@ export class CodexCompanion {
   }
 
   get capturesOutsideClicks() { return this.configOpen || this.trayOpen; }
+  get isConversationOpen() { return !this.bubble.hidden && this.viewState.mode !== 'closed'; }
   get pausesPetMotion() {
     return this.configOpen
       || this.trayOpen
@@ -536,7 +537,7 @@ export class CodexCompanion {
     const task = this.#currentTask();
     this.bubble.dataset.activity = event.activity || task?.activity || CODEX_ACTIVITY.SILENT;
     this.bubble.querySelector('.codex-bubble-project').textContent = event.project || task?.project || 'Codex';
-    this.bubble.querySelector('.codex-bubble-title').textContent = event.title || task?.title || 'Codex';
+    this.bubble.querySelector('.codex-bubble-title').textContent = task?.title || event.title || 'Codex';
     this.bubble.querySelector('.codex-bubble-state').textContent = this.#statusLabel(event.activity || task?.activity);
     this.bubble.querySelector('.codex-inline-error').textContent = this.inlineError;
     const textarea = this.bubble.querySelector('textarea');
@@ -826,7 +827,7 @@ export class CodexCompanion {
   }
 
   async #openInCodex() {
-    try { await window.electronAPI.codex.openApp(this.viewState.threadId, this.viewState.event?.title); }
+    try { await window.electronAPI.codex.openApp(this.viewState.threadId, this.#currentTask()?.title || this.viewState.event?.title); }
     catch (error) { this.#showBubbleError(error?.message || String(error)); }
   }
 

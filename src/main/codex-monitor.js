@@ -39,6 +39,33 @@ function parseLine(line) {
   try { return JSON.parse(line); } catch { return null; }
 }
 
+export function parseCodexSessionIndex(text) {
+  const titles = new Map();
+  for (const line of String(text || '').split(/\r?\n/)) {
+    const row = parseLine(line);
+    const id = String(row?.id || '').trim();
+    const rawTitle = String(row?.thread_name || '').trim();
+    if (!id || !rawTitle) continue;
+    const updatedAtMs = finiteTimestamp(row.updated_at, 0);
+    const previous = titles.get(id);
+    if (previous && previous.updatedAtMs > updatedAtMs) continue;
+    titles.set(id, {
+      title: sanitizeTaskTitle(rawTitle, 500),
+      updatedAtMs,
+    });
+  }
+  return titles;
+}
+
+async function readCodexSessionIndex(codexHome) {
+  try {
+    const text = await fs.promises.readFile(path.join(codexHome, 'session_index.jsonl'), 'utf8');
+    return parseCodexSessionIndex(text);
+  } catch {
+    return new Map();
+  }
+}
+
 function textFromMessageContent(content) {
   if (!Array.isArray(content)) return '';
   return content
@@ -778,6 +805,7 @@ export class CodexMonitor {
         || [...desiredIds].some((id) => file.path.includes(id)))
       .slice(0, MAX_SESSION_FILES);
     const readIds = new Set(this.config.readEventIds);
+    const indexedTitles = await readCodexSessionIndex(codexHome);
     const nextTasks = new Map();
     const unread = [];
     const livePaths = new Set(files.map((file) => file.path));
@@ -795,13 +823,18 @@ export class CodexMonitor {
         if (force) console.warn('[Codex] Session read failed:', error.message);
       }
     }
-    this.tasks = new Map(this.catalogTasks);
+    this.tasks = new Map([...this.catalogTasks].map(([id, task]) => {
+      const indexed = indexedTitles.get(id);
+      return [id, indexed ? { ...task, title: indexed.title, hasSavedName: true } : task];
+    }));
     for (const [id, task] of nextTasks) {
       const catalog = this.catalogTasks.get(id);
+      const indexed = indexedTitles.get(id);
       this.tasks.set(id, {
         ...task,
         ...catalog,
-        title: catalog?.hasSavedName ? catalog.title : task.title,
+        title: indexed?.title || (catalog?.hasSavedName ? catalog.title : task.title),
+        hasSavedName: Boolean(indexed || catalog?.hasSavedName),
         messages: catalog?.messages?.length ? catalog.messages : task.messages,
         historyComplete: catalog?.messages?.length ? true : task.historyComplete,
         updatedAtMs: Math.max(Number(catalog?.updatedAtMs || 0), Number(task.updatedAtMs || 0)),
