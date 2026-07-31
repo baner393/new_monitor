@@ -292,6 +292,7 @@ const codexCompanion = new CodexCompanion({
 });
 await codexCompanion.initialize();
 window.addEventListener('beforeunload', () => codexCompanion.destroy());
+if (import.meta.env.DEV) window.__codexCompanionForDiagnostics = codexCompanion;
 
 // ── Settings Panel ─────────────────────────────────────────────────────
 const settingsPanel = new SettingsPanel();
@@ -942,7 +943,7 @@ pixiApp.ticker.add((delta) => {
 
   physics.ambientSwingEnabled = resolveAmbientSwingEnabled(
     petBehaviorSettings,
-    codexCompanion.isReadingConversationOpen,
+    codexCompanion.isConversationOpen,
   );
 
   // Update physics (skipped during PULLING and BOUNCING)

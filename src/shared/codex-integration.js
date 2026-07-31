@@ -23,6 +23,11 @@ export const CODEX_REPLY_TRANSPORT = Object.freeze({
   DESKTOP: 'desktop',
 });
 
+export const CODEX_NEW_MESSAGE_VIEW = Object.freeze({
+  CONVERSATION: 'conversation',
+  TASK_ACTIVITY: 'tasks',
+});
+
 export const DEFAULT_CODEX_INTEGRATION_CONFIG = Object.freeze({
   version: CODEX_INTEGRATION_CONFIG_VERSION,
   enabled: false,
@@ -30,6 +35,7 @@ export const DEFAULT_CODEX_INTEGRATION_CONFIG = Object.freeze({
   manualHome: '',
   managedReplies: true,
   replyTransport: CODEX_REPLY_TRANSPORT.DIRECT,
+  newMessageView: CODEX_NEW_MESSAGE_VIEW.CONVERSATION,
   enabledAtMs: 0,
   notificationMode: 'important',
   localeMode: 'codex',
@@ -70,6 +76,9 @@ export function normalizeCodexIntegrationConfig(value = {}) {
     replyTransport: value.replyTransport === CODEX_REPLY_TRANSPORT.DESKTOP
       ? CODEX_REPLY_TRANSPORT.DESKTOP
       : CODEX_REPLY_TRANSPORT.DIRECT,
+    newMessageView: value.newMessageView === CODEX_NEW_MESSAGE_VIEW.TASK_ACTIVITY
+      ? CODEX_NEW_MESSAGE_VIEW.TASK_ACTIVITY
+      : CODEX_NEW_MESSAGE_VIEW.CONVERSATION,
     enabledAtMs: enabled && enabledAtMs <= 0 ? Date.now() : enabledAtMs,
     notificationMode: 'important',
     localeMode: 'codex',

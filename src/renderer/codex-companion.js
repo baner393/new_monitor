@@ -1,6 +1,7 @@
 import {
   CODEX_ACTIVITY,
   CODEX_CONNECTION,
+  CODEX_NEW_MESSAGE_VIEW,
   codexMoodForActivity,
   compactCodexTechnicalPreview,
   normalizeCodexLocale,
@@ -34,6 +35,9 @@ const TEXT = {
     dataLocation: '对话数据位置', selectHome: '选择其他目录', restoreAuto: '恢复自动检测', advanced: '高级设置',
     allowControl: '允许气泡回复与批准', allowControlNote: '开启后，可在任务气泡中发送消息并处理 Codex 的确认请求。',
     replyTransport: '回复通道', replyDirect: 'Monitor 直连', replyDesktop: 'Codex 客户端兼容',
+    newMessageView: '新消息展示', newMessageConversation: '完整对话', newMessageTasks: '任务动态',
+    newMessageConversationNote: '新消息到达时直接打开完整对话，可立即阅读和回复。',
+    newMessageTasksNote: '新消息到达时打开任务动态，先查看全部任务再选择对话。',
     replyDirectNote: '消息发送后留在当前窗口，继续查看 Codex 的回复。',
     replyDesktopNote: '兼容模式不启动 Monitor 的第二 App Server。回复会复制到剪贴板并打开 Codex 的同一任务，请在客户端粘贴发送，以保持单一上下文。',
     localOnly: '数据只在本机读取，不需要 API Key。未连接的任务仍会提醒，并可准确跳转到 Codex。',
@@ -56,6 +60,9 @@ const TEXT = {
     dataLocation: 'Conversation data location', selectHome: 'Choose another folder', restoreAuto: 'Use automatic detection', advanced: 'Advanced settings',
     allowControl: 'Allow bubble replies and approvals', allowControlNote: 'Send messages and handle Codex confirmation requests from a task bubble.',
     replyTransport: 'Reply channel', replyDirect: 'Monitor direct', replyDesktop: 'Codex client compatible',
+    newMessageView: 'New message view', newMessageConversation: 'Full conversation', newMessageTasks: 'Task activity',
+    newMessageConversationNote: 'Open the full conversation when a new message arrives, ready to read and reply.',
+    newMessageTasksNote: 'Open task activity first, then choose which conversation to read.',
     replyDirectNote: 'Stay in this window after sending and continue reading Codex replies here.',
     replyDesktopNote: 'Compatible mode does not start Monitor\'s second App Server. It copies the reply and opens the same Codex task; paste and send there to preserve one context.',
     localOnly: 'Data stays on this computer and needs no API key. Unconnected tasks can still notify and open in Codex.',
@@ -183,6 +190,7 @@ export class CodexCompanion {
       </div>
       <details class="codex-advanced"><summary></summary>
         <label class="codex-switch-row"><span><strong class="codex-control-setting-label"></strong><small class="codex-control-setting-note"></small></span><input class="codex-managed" type="checkbox"><i></i></label>
+        <label class="codex-select-row"><span><strong class="codex-new-message-view-label"></strong><small class="codex-new-message-view-note"></small></span><select class="codex-new-message-view"><option value="conversation"></option><option value="tasks"></option></select></label>
         <label class="codex-select-row"><span><strong class="codex-reply-transport-label"></strong><small class="codex-reply-transport-note"></small></span><select class="codex-reply-transport"><option value="direct"></option><option value="desktop"></option></select></label>
         <div class="codex-config-note"></div>
       </details>
@@ -243,6 +251,7 @@ export class CodexCompanion {
     this.configPanel.querySelector('.codex-connect-button').addEventListener('click', () => this.#commitConfig({ enabled: true }));
     this.configPanel.querySelector('.codex-disconnect-button').addEventListener('click', () => this.#commitConfig({ enabled: false }));
     this.configPanel.querySelector('.codex-managed').addEventListener('change', () => this.#commitConfig({ enabled: this.config?.enabled === true }));
+    this.configPanel.querySelector('.codex-new-message-view').addEventListener('change', () => this.#commitConfig({ enabled: this.config?.enabled === true }));
     this.configPanel.querySelector('.codex-reply-transport').addEventListener('change', () => this.#commitConfig({ enabled: this.config?.enabled === true }));
     this.configPanel.querySelector('.codex-advanced').addEventListener('toggle', () => this.updatePosition(true));
     this.configPanel.querySelector('.codex-config-refresh').addEventListener('click', async () => {
@@ -277,6 +286,9 @@ export class CodexCompanion {
     this.configPanel.querySelector('.codex-advanced summary').textContent = this.t('advanced');
     this.configPanel.querySelector('.codex-control-setting-label').textContent = this.t('allowControl');
     this.configPanel.querySelector('.codex-control-setting-note').textContent = this.t('allowControlNote');
+    this.configPanel.querySelector('.codex-new-message-view-label').textContent = this.t('newMessageView');
+    this.configPanel.querySelector('.codex-new-message-view option[value="conversation"]').textContent = this.t('newMessageConversation');
+    this.configPanel.querySelector('.codex-new-message-view option[value="tasks"]').textContent = this.t('newMessageTasks');
     this.configPanel.querySelector('.codex-reply-transport-label').textContent = this.t('replyTransport');
     this.configPanel.querySelector('.codex-reply-transport option[value="direct"]').textContent = this.t('replyDirect');
     this.configPanel.querySelector('.codex-reply-transport option[value="desktop"]').textContent = this.t('replyDesktop');
@@ -293,15 +305,7 @@ export class CodexCompanion {
       this.locale = nextLocale;
       this.#localizeStatic();
     }
-    const previousEventId = this.viewState.eventId;
-    this.viewState = reconcileCodexViewState(this.viewState, snapshot, {
-      allowNotification: !this.configOpen && !this.bubblesSuppressed,
-    });
-    if (this.viewState.mode === 'notification' && this.viewState.eventId
-      && this.viewState.eventId !== previousEventId) {
-      this.alertFreshUntil = Date.now() + 6000;
-      this.#markNotified(this.viewState.eventId);
-    }
+    this.#presentNewMessages(!this.configOpen && !this.bubblesSuppressed);
     this.#renderBadge();
     this.#renderTaskTray();
     this.#renderConfigStatus();
@@ -336,12 +340,9 @@ export class CodexCompanion {
     this.configOpen = false;
     this.configPanel.hidden = true;
     this.#renderBadge();
-    this.viewState = reconcileCodexViewState(this.viewState, this.snapshot, { allowNotification: true });
-    if (this.viewState.mode === 'notification' && this.viewState.eventId) {
-      this.alertFreshUntil = Date.now() + 6000;
-      this.#markNotified(this.viewState.eventId);
-    }
-    if (this.viewState.mode !== 'closed') this.#renderBubble();
+    this.#presentNewMessages(true);
+    if (this.trayOpen) this.#renderTaskTray();
+    else if (this.viewState.mode !== 'closed') this.#renderBubble();
     this.onInteractionChange?.();
     if (notify) this.onConfigClosed?.();
   }
@@ -360,11 +361,7 @@ export class CodexCompanion {
       this.bubble.hidden = true;
       this.taskTray.hidden = true;
     } else if (!this.configOpen) {
-      this.viewState = reconcileCodexViewState(this.viewState, this.snapshot, { allowNotification: true });
-      if (this.viewState.mode === 'notification' && this.viewState.eventId) {
-        this.alertFreshUntil = Date.now() + 6000;
-        this.#markNotified(this.viewState.eventId);
-      }
+      this.#presentNewMessages(true);
       if (this.trayOpen) this.#renderTaskTray();
       else if (this.viewState.mode !== 'closed') this.#renderBubble();
     }
@@ -384,6 +381,28 @@ export class CodexCompanion {
     this.updatePosition(true);
   }
 
+  #presentNewMessages(allowPresentation) {
+    const previousEventId = this.viewState.eventId;
+    const useTaskActivity = this.config?.newMessageView === CODEX_NEW_MESSAGE_VIEW.TASK_ACTIVITY;
+    if (useTaskActivity && this.viewState.mode === 'notification') this.viewState = closeCodexTask();
+    this.viewState = reconcileCodexViewState(this.viewState, this.snapshot, {
+      allowNotification: allowPresentation && !useTaskActivity,
+    });
+    if (!allowPresentation || this.viewState.mode === 'manual') return;
+    if (useTaskActivity && this.snapshot?.alerts?.length) {
+      this.trayOpen = true;
+      this.bubble.hidden = true;
+      this.alertFreshUntil = Date.now() + 6000;
+      for (const alert of this.snapshot.alerts) this.#markNotified(alert.id);
+      return;
+    }
+    if (this.viewState.mode === 'notification' && this.viewState.eventId
+      && this.viewState.eventId !== previousEventId) {
+      this.alertFreshUntil = Date.now() + 6000;
+      this.#markNotified(this.viewState.eventId);
+    }
+  }
+
   #place(node, x, y, force = false) {
     const key = `${Math.round(x)},${Math.round(y)}`;
     if (!force && this.positionKeys.get(node) === key) return;
@@ -399,7 +418,7 @@ export class CodexCompanion {
     const bubbleHeight = this.sizes.get(this.bubble)?.height || 430;
     const configHeight = this.sizes.get(this.configPanel)?.height || 560;
     const trayHeight = this.sizes.get(this.taskTray)?.height || 300;
-    const readingStable = this.readingStabilityEnabled && this.isReadingConversationOpen;
+    const readingStable = this.readingStabilityEnabled && this.isConversationOpen;
     if (!readingStable) this.pinnedConversationPosition = null;
     if (readingStable && !this.pinnedConversationPosition) {
       this.pinnedConversationPosition = {
@@ -861,6 +880,12 @@ export class CodexCompanion {
   #fillConfig() {
     const config = this.config || {};
     this.configPanel.querySelector('.codex-managed').checked = config.managedReplies !== false;
+    const newMessageView = config.newMessageView === CODEX_NEW_MESSAGE_VIEW.TASK_ACTIVITY
+      ? CODEX_NEW_MESSAGE_VIEW.TASK_ACTIVITY : CODEX_NEW_MESSAGE_VIEW.CONVERSATION;
+    this.configPanel.querySelector('.codex-new-message-view').value = newMessageView;
+    this.configPanel.querySelector('.codex-new-message-view-note').textContent = this.t(
+      newMessageView === CODEX_NEW_MESSAGE_VIEW.TASK_ACTIVITY ? 'newMessageTasksNote' : 'newMessageConversationNote',
+    );
     const replyTransport = config.replyTransport === 'desktop' ? 'desktop' : 'direct';
     this.configPanel.querySelector('.codex-reply-transport').value = replyTransport;
     this.configPanel.querySelector('.codex-reply-transport-note').textContent = this.t(replyTransport === 'desktop' ? 'replyDesktopNote' : 'replyDirectNote');
@@ -895,6 +920,7 @@ export class CodexCompanion {
         ...this.config,
         enabled,
         managedReplies: this.configPanel.querySelector('.codex-managed').checked,
+        newMessageView: this.configPanel.querySelector('.codex-new-message-view').value,
         replyTransport: this.configPanel.querySelector('.codex-reply-transport').value,
         homeMode: this.configPanel.dataset.mode,
         manualHome: this.configPanel.dataset.manualHome || '',

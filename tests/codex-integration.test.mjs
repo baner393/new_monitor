@@ -16,6 +16,7 @@ import { InputManager } from '../src/renderer/input.js';
 import {
   CODEX_ACTIVITY,
   CODEX_CONNECTION,
+  CODEX_NEW_MESSAGE_VIEW,
   buildCodexVisibleTasks,
   cleanCodexUserMessage,
   compactCodexTechnicalPreview,
@@ -62,10 +63,13 @@ test('Codex config is portable, versioned and bounds persisted read events', () 
   assert.equal(normalized.homeMode, 'manual');
   assert.equal(normalized.manualHome, 'C:\\Users\\demo\\.codex');
   assert.equal(normalized.replyTransport, 'direct');
+  assert.equal(normalized.newMessageView, CODEX_NEW_MESSAGE_VIEW.CONVERSATION);
   assert.equal(normalized.readEventIds.length, 1024);
   assert.ok(normalized.enabledAtMs > 0);
   assert.equal(normalizeCodexIntegrationConfig({ replyTransport: 'desktop' }).replyTransport, 'desktop');
   assert.equal(normalizeCodexIntegrationConfig({ replyTransport: 'unknown' }).replyTransport, 'direct');
+  assert.equal(normalizeCodexIntegrationConfig({ newMessageView: 'tasks' }).newMessageView, CODEX_NEW_MESSAGE_VIEW.TASK_ACTIVITY);
+  assert.equal(normalizeCodexIntegrationConfig({ newMessageView: 'unknown' }).newMessageView, CODEX_NEW_MESSAGE_VIEW.CONVERSATION);
 });
 
 test('unread Codex events follow needs-input, blocked, ready priority', () => {
