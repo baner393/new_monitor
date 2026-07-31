@@ -18,6 +18,7 @@ import { SettingsPanel } from './settings.js';
 import { ROPE_ELASTICITY_STEPS } from './settings.js';
 import { SkinSelector } from './skin-selector.js';
 import { CodexCompanion } from './codex-companion.js';
+import { CodexMotionController, codexStatusSymbol } from './codex-motion.js';
 
 // ── Font loading gate ─────────────────────────────────────────────────
 async function waitForFonts() {
@@ -147,6 +148,76 @@ const bodySprite = new PIXI.Sprite(idleTexture);
 bodySprite.anchor.set(0.5, 0.5);
 bodySprite.scale.set(2.5);
 turtleContainer.addChild(bodySprite);
+
+const codexMotion = new CodexMotionController();
+const codexParticleGraphics = new PIXI.Graphics();
+const codexStatusGraphics = new PIXI.Graphics();
+pixiApp.stage.addChild(codexParticleGraphics);
+pixiApp.stage.addChild(codexStatusGraphics);
+const codexParticles = [];
+const reducedMotionQuery = window.matchMedia?.('(prefers-reduced-motion: reduce)');
+
+function spawnCodexParticles(kind, count, x, y) {
+  if (reducedMotionQuery?.matches) return;
+  const palette = {
+    running: 0x66c9ff,
+    needsInput: 0xffd166,
+    ready: 0x69e0aa,
+    blocked: 0xff6f70,
+  };
+  const color = palette[kind];
+  if (!color) return;
+  for (let index = 0; index < count; index++) {
+    const angle = -Math.PI * (0.2 + Math.random() * 0.6);
+    const speed = kind === 'ready' ? 24 + Math.random() * 28 : 10 + Math.random() * 18;
+    codexParticles.push({
+      x: Math.round(x + (Math.random() - 0.5) * 12),
+      y: Math.round(y - 18 + (Math.random() - 0.5) * 8),
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      life: kind === 'ready' ? 0.9 : 0.7,
+      maxLife: kind === 'ready' ? 0.9 : 0.7,
+      color,
+      size: Math.random() > 0.55 ? 3 : 2,
+    });
+  }
+  if (codexParticles.length > 20) codexParticles.splice(0, codexParticles.length - 20);
+}
+
+function updateCodexParticles(dt) {
+  codexParticleGraphics.clear();
+  for (let index = codexParticles.length - 1; index >= 0; index--) {
+    const particle = codexParticles[index];
+    particle.life -= dt;
+    if (particle.life <= 0) {
+      codexParticles.splice(index, 1);
+      continue;
+    }
+    particle.x += particle.vx * dt;
+    particle.y += particle.vy * dt;
+    particle.vy += 12 * dt;
+    codexParticleGraphics.beginFill(particle.color, Math.max(0, particle.life / particle.maxLife));
+    codexParticleGraphics.drawRect(Math.round(particle.x), Math.round(particle.y), particle.size, particle.size);
+    codexParticleGraphics.endFill();
+  }
+}
+
+function drawCodexStatus(activity, frame, x, y) {
+  codexStatusGraphics.clear();
+  const symbol = codexStatusSymbol(activity, frame);
+  if (!symbol.pixels.length) return;
+  const pixel = 3;
+  const originX = Math.round(x + 25);
+  const originY = Math.round(y - 42);
+  codexStatusGraphics.beginFill(0x0d1420, 0.9);
+  codexStatusGraphics.drawRect(originX - 3, originY - 3, 21, 21);
+  codexStatusGraphics.endFill();
+  codexStatusGraphics.beginFill(symbol.color, 1);
+  for (const [px, py] of symbol.pixels) {
+    codexStatusGraphics.drawRect(originX + px * pixel, originY + py * pixel, pixel, pixel);
+  }
+  codexStatusGraphics.endFill();
+}
 
 // Blink uses texture swap (blinkTexture has squinting eyes built in)
 // No overlay needed
@@ -385,6 +456,7 @@ document.addEventListener('mousedown', (event) => {
     return;
   }
   if (!insideCodex && codexCompanion.capturesOutsideClicks) {
+    codexCompanion.closeTaskTray();
     document.activeElement?.blur?.();
     requestAnimationFrame(() => synchronizeMousePassthroughFromSystem(true));
   }
@@ -622,6 +694,7 @@ let _wasOverSprite = false;  // Hover tracking
 let _painCooldown = 0;      // Collision cooldown to prevent spam
 let _showPainTimer = 0;     // Pain texture overlay (seconds remaining)
 let blinkProgress = 0;
+let codexMotionWasEnabled = false;
 const BLINK_DURATION = 0.15; // 150ms
 
 function startBounce(fromX, fromY) {
@@ -1027,6 +1100,39 @@ pixiApp.ticker.add((delta) => {
     sprite.x = pendulumX;
     sprite.y = pendulumY;
   }
+
+  const codexMotionEnabled = (state === 'IDLE' || state === 'HOVER')
+    && !settingsPanel.isOpen
+    && !settingsPanel.isAnimating
+    && !skinSelector.isOpen;
+  if (!codexMotionEnabled && codexMotionWasEnabled) codexMotion.cancelSequence();
+  codexMotionWasEnabled = codexMotionEnabled;
+  codexMotion.setState(codexCompanion.activity, codexCompanion.motionEventKey);
+  const petBounds = bodySprite.getBounds();
+  const motionFrame = codexMotion.update(dt, {
+    enabled: codexMotionEnabled,
+    reducedMotion: reducedMotionQuery?.matches === true,
+    petHeight: petBounds.height || TURTLE_SIZE,
+    baseY: sprite.y,
+    viewportHeight: window.innerHeight,
+  });
+  if (codexMotionEnabled) {
+    const baseDx = sprite.x - anchorX;
+    const baseDy = sprite.y - anchorY;
+    const baseLength = Math.sqrt(baseDx * baseDx + baseDy * baseDy);
+    const displayAngle = Math.atan2(baseDx, baseDy) + motionFrame.angleOffset;
+    const displayLength = Math.max(1, baseLength + motionFrame.lengthOffset);
+    sprite.x = anchorX + Math.sin(displayAngle) * displayLength;
+    sprite.y = anchorY + Math.cos(displayAngle) * displayLength;
+    bodySprite.rotation = motionFrame.rotation;
+  } else {
+    bodySprite.rotation = 0;
+  }
+  for (const emission of codexMotion.drainEmissions()) {
+    spawnCodexParticles(emission.kind, emission.count, sprite.x, sprite.y);
+  }
+  updateCodexParticles(dt);
+  drawCodexStatus(motionFrame.activity, motionFrame.symbolFrame, sprite.x, sprite.y);
 
   const suppressCodexBubbles = [
     'EXPANDING', 'HAPPY', 'PANEL_OPEN', 'COLLAPSING',

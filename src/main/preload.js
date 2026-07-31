@@ -72,7 +72,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     markRead: (eventId) => ipcRenderer.invoke('codex-mark-read', eventId),
     reply: (threadId, text) => ipcRenderer.invoke('codex-reply', { threadId, text }),
     respond: (requestId, response) => ipcRenderer.invoke('codex-respond', { requestId, response }),
-    openApp: () => ipcRenderer.invoke('codex-open-app'),
+    openApp: (threadId, title) => ipcRenderer.invoke('codex-open-app', { threadId, title }),
     onStatus: (callback) => {
       const listener = (_event, snapshot) => callback(snapshot);
       ipcRenderer.on('codex-status', listener);

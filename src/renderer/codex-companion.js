@@ -29,7 +29,9 @@ export class CodexCompanion {
     this.config = null;
     this.snapshot = null;
     this.currentEvent = null;
+    this.currentThreadId = '';
     this.currentPinned = false;
+    this.trayOpen = false;
     this.configOpen = false;
     this.bubblesSuppressed = false;
     this.anchor = { x: window.innerWidth / 2, y: 180 };
@@ -37,6 +39,8 @@ export class CodexCompanion {
     this.lastMood = 'idle';
     this.unsubscribe = null;
     this.readInFlight = new Set();
+    this.autoCloseTimer = null;
+    this.initializedSnapshot = false;
     this.#build();
   }
 
@@ -48,6 +52,7 @@ export class CodexCompanion {
   }
 
   destroy() {
+    if (this.autoCloseTimer) clearTimeout(this.autoCloseTimer);
     this.unsubscribe?.();
     this.root.remove();
   }
@@ -56,15 +61,30 @@ export class CodexCompanion {
     this.root = element('div', 'codex-companion-root');
     this.root.setAttribute('aria-live', 'polite');
 
-    this.badge = element('div', 'codex-pet-signal');
+    this.badge = element('button', 'codex-pet-signal');
+    this.badge.type = 'button';
+    this.badge.setAttribute('aria-label', '展开 Codex 任务');
     this.badge.hidden = true;
     this.root.appendChild(this.badge);
+
+    this.taskTray = element('section', 'codex-task-tray');
+    this.taskTray.hidden = true;
+    this.taskTray.innerHTML = `
+      <header class="codex-tray-head">
+        <div><div class="codex-config-kicker">LIVE TASKS</div><strong>Codex 动态</strong></div>
+        <button class="codex-icon-button codex-tray-close" type="button" aria-label="收起任务列表">×</button>
+      </header>
+      <div class="codex-task-list"></div>
+      <div class="codex-task-empty">目前没有运行中或未读任务</div>
+    `;
+    this.root.appendChild(this.taskTray);
 
     this.bubble = element('section', 'codex-message-bubble');
     this.bubble.hidden = true;
     this.bubble.innerHTML = `
       <header class="codex-bubble-head">
         <div class="codex-bubble-signal"></div>
+        <button class="codex-icon-button codex-task-back" type="button" aria-label="返回任务列表">‹</button>
         <div class="codex-bubble-heading">
           <div class="codex-bubble-project"></div>
           <div class="codex-bubble-title"></div>
@@ -93,27 +113,56 @@ export class CodexCompanion {
     this.configPanel.hidden = true;
     this.configPanel.innerHTML = `
       <header class="codex-config-head">
-        <div><div class="codex-config-kicker">PET LINK / CODEX</div><h2>Codex 接入</h2></div>
+        <div><div class="codex-config-kicker">PET LINK / CODEX</div><h2>连接 Codex</h2></div>
         <button class="codex-icon-button codex-config-close" type="button" aria-label="关闭配置">×</button>
       </header>
-      <p class="codex-config-intro">同步本机对话。只有未读回复、等待操作和错误会自动弹出气泡。</p>
-      <div class="codex-config-status"><span class="codex-status-light"></span><div><strong>正在检查</strong><small></small></div></div>
-      <label class="codex-switch-row"><span><strong>启用对话同步</strong><small>运行过程保持安静，新消息才弹出</small></span><input class="codex-enabled" type="checkbox"><i></i></label>
-      <div class="codex-config-section">
-        <div class="codex-section-label">数据位置</div>
-        <div class="codex-mode-buttons"><button type="button" data-mode="auto">自动检测</button><button type="button" data-mode="manual">手动选择</button></div>
-        <div class="codex-path-line"><span class="codex-path-value">自动寻找当前用户的 .codex</span><button class="codex-select-home" type="button">选择目录</button></div>
+      <p class="codex-config-intro">连接后，桌宠只在 Codex 有新回复、等待操作或遇到问题时提醒你。</p>
+      <div class="codex-link-rail" aria-hidden="true"><span>PET</span><i></i><span>CODEX</span></div>
+      <div class="codex-config-status" data-state="checking"><span class="codex-status-light"></span><div><strong>正在寻找本机 Codex</strong><small>检查对话目录与连接状态</small></div></div>
+      <div class="codex-capability-grid">
+        <div><span>消息同步</span><strong class="codex-sync-state">等待检测</strong></div>
+        <div><span>气泡回复与批准</span><strong class="codex-reply-state">等待检测</strong></div>
       </div>
-      <label class="codex-switch-row"><span><strong>允许气泡回复与审批</strong><small>完成后的继续对话将由宠物托管</small></span><input class="codex-managed" type="checkbox"><i></i></label>
-      <div class="codex-config-note">接入只读取本机 Codex 文件，不需要 API Key，也不会修改 Codex 设置。</div>
-      <footer class="codex-config-actions"><button class="codex-quiet-button codex-config-refresh" type="button">重新检测</button><button class="codex-save-button" type="button">保存接入</button></footer>
+      <div class="codex-connect-actions">
+        <button class="codex-save-button codex-connect-button" type="button">启用并连接 Codex</button>
+        <button class="codex-quiet-button codex-disconnect-button" type="button" hidden>断开同步</button>
+      </div>
+      <div class="codex-location-card">
+        <div class="codex-section-label">对话数据位置</div>
+        <div class="codex-path-value">当前用户的 .codex（自动检测）</div>
+        <div class="codex-location-actions"><button class="codex-select-home" type="button">选择其他目录</button><button class="codex-quiet-button codex-use-auto" type="button" hidden>恢复自动检测</button></div>
+      </div>
+      <details class="codex-advanced">
+        <summary>高级设置</summary>
+        <label class="codex-switch-row"><span><strong>允许气泡回复与批准</strong><small>需要时连接本机 Codex，不影响消息读取</small></span><input class="codex-managed" type="checkbox"><i></i></label>
+        <div class="codex-config-note">数据只在本机读取，不需要 API Key。关闭回复权限后，桌宠仍会显示未读消息。</div>
+      </details>
+      <footer class="codex-config-actions"><button class="codex-quiet-button codex-config-refresh" type="button">重新检测</button></footer>
       <div class="codex-config-error" role="status"></div>
     `;
     this.root.appendChild(this.configPanel);
     document.body.appendChild(this.root);
 
+    this.badge.addEventListener('click', () => this.toggleTaskTray());
+    this.taskTray.querySelector('.codex-tray-close').addEventListener('click', () => this.closeTaskTray());
+    this.bubble.querySelector('.codex-task-back').addEventListener('click', () => {
+      this.bubble.hidden = true;
+      this.trayOpen = true;
+      this.#renderTaskTray();
+      this.updatePosition();
+      this.onInteractionChange?.();
+    });
     this.bubble.querySelector('.codex-bubble-close').addEventListener('click', () => this.closeCurrent(true));
-    this.bubble.querySelector('.codex-open-app').addEventListener('click', () => window.electronAPI.codex.openApp());
+    this.bubble.querySelector('.codex-open-app').addEventListener('click', async () => {
+      const task = this.#currentTask();
+      const result = await window.electronAPI.codex.openApp(
+        task?.threadId || this.currentEvent?.threadId,
+        task?.title || this.currentEvent?.title,
+      );
+      if (result?.copiedThread) {
+        this.bubble.querySelector('.codex-page-status').textContent = '已打开 Codex，并复制任务信息';
+      }
+    });
     this.bubble.querySelector('.codex-page-up').addEventListener('click', () => this.#page(-1));
     this.bubble.querySelector('.codex-page-down').addEventListener('click', () => this.#page(1));
     this.bubble.querySelector('.codex-send-button').addEventListener('click', () => this.#sendText());
@@ -124,13 +173,22 @@ export class CodexCompanion {
       }
     });
     this.bubble.querySelector('.codex-bubble-scroll').addEventListener('scroll', () => this.#onScroll());
+    this.bubble.addEventListener('pointerenter', () => this.#cancelAutoClose());
+    this.bubble.addEventListener('focusin', () => this.#cancelAutoClose());
 
     this.configPanel.querySelector('.codex-config-close').addEventListener('click', () => this.closeConfig());
-    this.configPanel.querySelectorAll('[data-mode]').forEach((button) => {
-      button.addEventListener('click', () => this.#setPendingMode(button.dataset.mode));
-    });
     this.configPanel.querySelector('.codex-select-home').addEventListener('click', () => this.#selectHome());
-    this.configPanel.querySelector('.codex-save-button').addEventListener('click', () => this.#saveConfig());
+    this.configPanel.querySelector('.codex-use-auto').addEventListener('click', async () => {
+      this.#setPendingMode('auto');
+      await this.#commitConfig({ enabled: true });
+    });
+    this.configPanel.querySelector('.codex-connect-button').addEventListener('click', () => this.#commitConfig({ enabled: true }));
+    this.configPanel.querySelector('.codex-disconnect-button').addEventListener('click', () => this.#commitConfig({ enabled: false }));
+    this.configPanel.querySelector('.codex-managed').addEventListener('change', () => this.#commitConfig({ enabled: this.config?.enabled === true }));
+    this.configPanel.querySelector('.codex-advanced').addEventListener('toggle', () => {
+      this.updatePosition();
+      this.onInteractionChange?.();
+    });
     this.configPanel.querySelector('.codex-config-refresh').addEventListener('click', async () => {
       this.#setConfigBusy(true);
       try { this.update(await window.electronAPI.codex.refresh()); }
@@ -140,20 +198,30 @@ export class CodexCompanion {
 
   update(snapshot) {
     if (!snapshot) return;
+    const previousUnreadIds = new Set(this.snapshot?.unread?.map((event) => event.id) || []);
     const previousId = this.currentEvent?.id;
     this.snapshot = snapshot;
-    if (!this.currentPinned) {
-      this.currentEvent = snapshot.unread?.find((event) => event.id === previousId)
-        || snapshot.unread?.[0]
-        || null;
-    }
-    if (this.currentEvent && this.currentEvent.id !== previousId) {
-      this.alertFreshUntil = Date.now() + (this.currentEvent.activity === CODEX_ACTIVITY.READY ? 5000 : 3000);
+    const newEvent = snapshot.unread?.find((event) => !previousUnreadIds.has(event.id));
+    const persistedEvent = snapshot.unread?.find((event) => event.id === previousId);
+    if (this.currentPinned && this.currentEvent) {
+      this.currentEvent = { ...this.currentEvent, ...(persistedEvent || {}) };
+    } else if (persistedEvent) {
+      this.currentEvent = persistedEvent;
+    } else if (newEvent || (!this.initializedSnapshot && snapshot.unread?.length)) {
+      this.currentEvent = newEvent || snapshot.unread[0];
+      this.currentThreadId = this.currentEvent.threadId;
+      this.trayOpen = false;
+      this.alertFreshUntil = Date.now() + (this.currentEvent.activity === CODEX_ACTIVITY.READY ? 6000 : 3000);
       this.#renderBubble();
-    } else if (!this.currentEvent) {
+      this.#scheduleAutoClose(this.currentEvent);
+    } else if (previousId) {
+      this.currentEvent = null;
+      this.currentThreadId = '';
       this.bubble.hidden = true;
     }
+    this.initializedSnapshot = true;
     this.#renderBadge();
+    this.#renderTaskTray();
     this.#renderConfigStatus();
     this.#emitMood();
     this.updatePosition();
@@ -164,6 +232,7 @@ export class CodexCompanion {
     this.configOpen = true;
     this.configPanel.hidden = false;
     this.bubble.hidden = true;
+    this.closeTaskTray();
     this.#renderBadge();
     this.#fillConfig();
     this.updatePosition();
@@ -190,7 +259,11 @@ export class CodexCompanion {
     const next = suppressed === true;
     if (next === this.bubblesSuppressed) return;
     this.bubblesSuppressed = next;
-    if (next) this.bubble.hidden = true;
+    if (next) {
+      this.bubble.hidden = true;
+      this.taskTray.hidden = true;
+    }
+    else if (this.trayOpen && !this.configOpen) this.#renderTaskTray();
     else if (this.currentEvent && !this.configOpen) this.#renderBubble();
     this.#renderBadge();
     this.#emitMood();
@@ -220,10 +293,13 @@ export class CodexCompanion {
     this.configPanel.style.top = `${clamp(this.anchor.y + 58, 62, window.innerHeight - Math.min(620, this.configPanel.offsetHeight || 520) - 12)}px`;
     this.badge.style.left = `${this.anchor.x + 24}px`;
     this.badge.style.top = `${this.anchor.y - 38}px`;
+    this.taskTray.dataset.side = preferRight ? 'right' : 'left';
+    this.taskTray.style.left = `${clamp(bubbleLeft, 12, window.innerWidth - 360 - 12)}px`;
+    this.taskTray.style.top = `${clamp(this.anchor.y - 70, 62, window.innerHeight - Math.min(420, this.taskTray.offsetHeight || 280) - 12)}px`;
   }
 
   containsPoint(x, y) {
-    return [this.configPanel, this.bubble].some((node) => {
+    return [this.configPanel, this.bubble, this.taskTray, this.badge].some((node) => {
       if (node.hidden) return false;
       const bounds = node.getBoundingClientRect();
       return x >= bounds.left && x <= bounds.right && y >= bounds.top && y <= bounds.bottom;
@@ -231,12 +307,29 @@ export class CodexCompanion {
   }
 
   get capturesOutsideClicks() {
-    return this.configOpen || (!this.bubble.hidden && this.bubble.contains(document.activeElement));
+    return this.configOpen || this.trayOpen || (!this.bubble.hidden && this.bubble.contains(document.activeElement));
+  }
+
+  get activity() {
+    if (this.config?.enabled !== true) return CODEX_ACTIVITY.SILENT;
+    return this.currentEvent?.activity || this.snapshot?.activity || CODEX_ACTIVITY.SILENT;
+  }
+
+  get motionEventKey() {
+    if (this.currentEvent?.id) return this.currentEvent.id;
+    if (this.activity === CODEX_ACTIVITY.RUNNING) {
+      return (this.snapshot?.visibleTasks || [])
+        .filter((task) => task.activity === CODEX_ACTIVITY.RUNNING)
+        .map((task) => task.threadId || task.id)
+        .sort()
+        .join('|');
+    }
+    return this.activity;
   }
 
   get mood() {
     if (this.bubblesSuppressed || this.configOpen) return 'idle';
-    const activity = this.currentEvent?.activity || this.snapshot?.activity || CODEX_ACTIVITY.SILENT;
+    const activity = this.activity;
     const alertFresh = activity === CODEX_ACTIVITY.NEEDS_INPUT || Date.now() < this.alertFreshUntil;
     return codexMoodForActivity(activity, { alertFresh });
   }
@@ -249,11 +342,110 @@ export class CodexCompanion {
   }
 
   #renderBadge() {
-    const count = Number(this.snapshot?.unreadCount || 0);
+    const unreadCount = Number(this.snapshot?.unreadTaskCount ?? this.snapshot?.unreadCount ?? 0);
+    const runningCount = Number(this.snapshot?.runningCount
+      ?? this.snapshot?.tasks?.filter((task) => task.activity === CODEX_ACTIVITY.RUNNING).length
+      ?? 0);
+    const count = unreadCount > 0 ? unreadCount : runningCount;
     this.badge.hidden = count <= 0 || this.configOpen || this.bubblesSuppressed;
     if (this.badge.hidden) return;
     this.badge.textContent = count > 9 ? '9+' : String(count);
-    this.badge.dataset.activity = this.snapshot?.activity || CODEX_ACTIVITY.READY;
+    this.badge.dataset.mode = unreadCount > 0 ? 'unread' : 'running';
+    this.badge.dataset.activity = unreadCount > 0
+      ? (this.snapshot?.activity || CODEX_ACTIVITY.READY)
+      : CODEX_ACTIVITY.RUNNING;
+    this.badge.setAttribute('aria-label', unreadCount > 0
+      ? `${unreadCount} 个未读或待处理任务，点击展开`
+      : `${runningCount} 个任务运行中，点击展开`);
+  }
+
+  toggleTaskTray() {
+    if (this.configOpen || this.bubblesSuppressed) return;
+    this.trayOpen = !this.trayOpen;
+    this.taskTray.hidden = !this.trayOpen;
+    if (this.trayOpen) {
+      this.bubble.hidden = true;
+      this.#cancelAutoClose();
+      this.#renderTaskTray();
+    }
+    this.updatePosition();
+    this.onInteractionChange?.();
+  }
+
+  closeTaskTray() {
+    this.trayOpen = false;
+    this.taskTray.hidden = true;
+    this.onInteractionChange?.();
+  }
+
+  #renderTaskTray() {
+    if (!this.taskTray) return;
+    this.taskTray.hidden = !this.trayOpen || this.configOpen || this.bubblesSuppressed;
+    const host = this.taskTray.querySelector('.codex-task-list');
+    const tasks = this.snapshot?.visibleTasks || [];
+    host.replaceChildren();
+    for (const task of tasks) {
+      const button = element('button', 'codex-task-item');
+      button.type = 'button';
+      button.dataset.activity = task.activity || CODEX_ACTIVITY.SILENT;
+      button.innerHTML = `
+        <span class="codex-task-state" aria-hidden="true"></span>
+        <span class="codex-task-copy"><strong></strong><small></small></span>
+        <span class="codex-task-count"></span>
+      `;
+      button.querySelector('strong').textContent = task.title || 'Codex 任务';
+      button.querySelector('small').textContent = `${task.project || 'Codex'} · ${statusLabel(task.activity)}`;
+      const count = button.querySelector('.codex-task-count');
+      count.textContent = task.unreadCount > 0 ? String(task.unreadCount) : 'RUN';
+      count.dataset.mode = task.unreadCount > 0 ? 'unread' : 'running';
+      button.addEventListener('click', () => this.#openTask(task));
+      host.appendChild(button);
+    }
+    this.taskTray.querySelector('.codex-task-empty').hidden = tasks.length > 0;
+  }
+
+  #openTask(task) {
+    const event = task.events?.[0] || {
+      id: `task:${task.threadId || task.id}`,
+      threadId: task.threadId || task.id,
+      title: task.title,
+      project: task.project,
+      activity: task.activity,
+      kind: 'task',
+      message: task.activity === CODEX_ACTIVITY.RUNNING ? 'Codex 正在处理这个任务。' : '',
+      canReply: task.canReply === true,
+      createdAtMs: task.updatedAtMs,
+    };
+    this.currentEvent = event;
+    this.currentThreadId = task.threadId || task.id;
+    this.currentPinned = false;
+    this.trayOpen = false;
+    this.taskTray.hidden = true;
+    this.#renderBubble();
+    this.updatePosition();
+    this.onInteractionChange?.();
+  }
+
+  #currentTask() {
+    const id = this.currentThreadId || this.currentEvent?.threadId;
+    return this.snapshot?.visibleTasks?.find((task) => (task.threadId || task.id) === id) || null;
+  }
+
+  #scheduleAutoClose(event) {
+    this.#cancelAutoClose();
+    if (!event || event.activity !== CODEX_ACTIVITY.READY) return;
+    this.autoCloseTimer = setTimeout(() => {
+      this.autoCloseTimer = null;
+      if (this.bubble.contains(document.activeElement) || this.bubble.matches(':hover')) return;
+      this.bubble.hidden = true;
+      this.currentPinned = false;
+      this.onInteractionChange?.();
+    }, 6000);
+  }
+
+  #cancelAutoClose() {
+    if (this.autoCloseTimer) clearTimeout(this.autoCloseTimer);
+    this.autoCloseTimer = null;
   }
 
   #renderBubble() {
@@ -264,7 +456,11 @@ export class CodexCompanion {
     this.bubble.querySelector('.codex-bubble-project').textContent = event.project || 'Codex';
     this.bubble.querySelector('.codex-bubble-title').textContent = event.title || 'Codex 任务';
     this.bubble.querySelector('.codex-bubble-state').textContent = statusLabel(event.activity);
-    this.bubble.querySelector('.codex-bubble-message').textContent = event.message || '';
+    const task = this.#currentTask();
+    const messages = task?.messages || [];
+    this.bubble.querySelector('.codex-bubble-message').textContent = messages.length
+      ? messages.map((item) => `${item.role === 'user' ? '你' : 'Codex'}\n${item.message}`).join('\n\n')
+      : (event.message || '暂时还没有可显示的回复。');
     this.bubble.querySelector('.codex-inline-error').textContent = '';
     const compose = this.bubble.querySelector('.codex-bubble-compose');
     const questions = this.bubble.querySelector('.codex-bubble-questions');
@@ -277,9 +473,8 @@ export class CodexCompanion {
       this.#renderQuestions(event, questions);
     } else if (event.requestId) {
       this.#renderApprovalActions(event, actions);
-    } else if (event.canReply) {
+    } else if (event.canReply || task?.canReply) {
       compose.hidden = false;
-      compose.querySelector('textarea').value = '';
     }
     requestAnimationFrame(() => {
       const scroller = this.bubble.querySelector('.codex-bubble-scroll');
@@ -366,10 +561,11 @@ export class CodexCompanion {
     const event = this.currentEvent;
     const textarea = this.bubble.querySelector('textarea');
     const text = textarea.value.trim();
-    if (!event || !text) return;
+    const threadId = this.currentThreadId || event?.threadId;
+    if (!threadId || !text) return;
     this.#setBubbleBusy(true);
     try {
-      await window.electronAPI.codex.reply(event.threadId, text);
+      await window.electronAPI.codex.reply(threadId, text);
       textarea.value = '';
       await this.#markRead(event.id);
       this.closeCurrent(false);
@@ -383,16 +579,13 @@ export class CodexCompanion {
   async closeCurrent(markRead) {
     const event = this.currentEvent;
     if (!event) return;
-    if (markRead) await this.#markRead(event.id);
+    if (markRead) await this.#markThreadRead(event.threadId);
+    this.#cancelAutoClose();
     this.currentEvent = null;
+    this.currentThreadId = '';
     this.currentPinned = false;
     if (this.bubble.contains(document.activeElement)) document.activeElement.blur();
     this.bubble.hidden = true;
-    const next = this.snapshot?.unread?.find((item) => item.id !== event.id);
-    if (next) {
-      this.currentEvent = next;
-      this.#renderBubble();
-    }
     this.#emitMood();
     this.onInteractionChange?.();
   }
@@ -408,11 +601,16 @@ export class CodexCompanion {
     }
   }
 
+  async #markThreadRead(threadId) {
+    const events = this.snapshot?.unread?.filter((event) => event.threadId === threadId) || [];
+    await Promise.all(events.map((event) => this.#markRead(event.id)));
+  }
+
   #onScroll() {
     this.#updatePageStatus();
     const scroller = this.bubble.querySelector('.codex-bubble-scroll');
     if (scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 4 && this.currentEvent) {
-      this.#markRead(this.currentEvent.id);
+      this.#markThreadRead(this.currentEvent.threadId);
     }
   }
 
@@ -430,7 +628,6 @@ export class CodexCompanion {
 
   #fillConfig() {
     const config = this.config || {};
-    this.configPanel.querySelector('.codex-enabled').checked = config.enabled === true;
     this.configPanel.querySelector('.codex-managed').checked = config.managedReplies !== false;
     this.configPanel.dataset.mode = config.homeMode || 'auto';
     this.configPanel.dataset.manualHome = config.manualHome || '';
@@ -440,14 +637,11 @@ export class CodexCompanion {
 
   #setPendingMode(mode) {
     this.configPanel.dataset.mode = mode === 'manual' ? 'manual' : 'auto';
-    this.configPanel.querySelectorAll('[data-mode]').forEach((button) => {
-      button.classList.toggle('active', button.dataset.mode === this.configPanel.dataset.mode);
-    });
     const manual = this.configPanel.dataset.mode === 'manual';
-    this.configPanel.querySelector('.codex-select-home').hidden = !manual;
     this.configPanel.querySelector('.codex-path-value').textContent = manual
       ? (this.configPanel.dataset.manualHome || '尚未选择目录')
-      : '自动寻找当前用户的 .codex';
+      : '当前用户的 .codex（自动检测）';
+    this.configPanel.querySelector('.codex-use-auto').hidden = !manual;
   }
 
   async #selectHome() {
@@ -455,20 +649,22 @@ export class CodexCompanion {
     if (!selected) return;
     this.configPanel.dataset.manualHome = selected;
     this.#setPendingMode('manual');
+    await this.#commitConfig({ enabled: true });
   }
 
-  async #saveConfig() {
+  async #commitConfig({ enabled = this.config?.enabled === true } = {}) {
     this.#setConfigBusy(true);
     this.configPanel.querySelector('.codex-config-error').textContent = '';
     try {
       this.config = await window.electronAPI.codex.saveConfig({
         ...this.config,
-        enabled: this.configPanel.querySelector('.codex-enabled').checked,
+        enabled,
         managedReplies: this.configPanel.querySelector('.codex-managed').checked,
         homeMode: this.configPanel.dataset.mode,
         manualHome: this.configPanel.dataset.manualHome || '',
       });
       this.update(await window.electronAPI.codex.refresh());
+      this.#fillConfig();
     } catch (error) {
       this.configPanel.querySelector('.codex-config-error').textContent = error?.message || String(error);
     } finally {
@@ -481,13 +677,28 @@ export class CodexCompanion {
     const strong = this.configPanel.querySelector('.codex-config-status strong');
     const small = this.configPanel.querySelector('.codex-config-status small');
     const light = this.configPanel.querySelector('.codex-status-light');
-    const connected = this.snapshot.connected;
-    light.dataset.connected = connected ? 'true' : 'false';
-    strong.textContent = connected ? 'Codex 已同步' : (this.snapshot.enabled ? '等待连接' : '尚未启用');
+    const connected = this.snapshot.connected === true;
+    const enabled = this.config?.enabled === true;
+    const state = connected ? 'connected' : enabled ? 'attention' : 'ready';
+    this.configPanel.querySelector('.codex-config-status').dataset.state = state;
+    light.dataset.state = state;
+    strong.textContent = connected ? 'Codex 已连接' : enabled ? '接入需要处理' : '已准备好连接';
     const active = this.snapshot.tasks?.filter((task) => task.activity === CODEX_ACTIVITY.RUNNING).length || 0;
     small.textContent = connected
       ? `${this.snapshot.homeLabel} · ${active} 个运行中 · ${this.snapshot.unreadCount || 0} 条未读`
-      : (this.snapshot.reason || '保存后开始同步');
+      : enabled
+        ? (this.snapshot.reason || '正在等待 Codex 返回本地状态')
+        : '程序会自动寻找当前用户的 .codex';
+    this.configPanel.querySelector('.codex-sync-state').textContent = connected
+      ? '同步正常'
+      : enabled ? '等待连接' : '尚未启用';
+    this.configPanel.querySelector('.codex-reply-state').textContent = !this.config?.managedReplies
+      ? '已关闭'
+      : connected ? '已允许 · 按需连接' : enabled ? '已允许 · 等待连接' : '连接后可用';
+    const connectButton = this.configPanel.querySelector('.codex-connect-button');
+    connectButton.hidden = connected;
+    connectButton.textContent = enabled ? '重新连接 Codex' : '启用并连接 Codex';
+    this.configPanel.querySelector('.codex-disconnect-button').hidden = !enabled;
   }
 
   #setBubbleBusy(busy) {

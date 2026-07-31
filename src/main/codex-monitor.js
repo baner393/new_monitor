@@ -6,6 +6,7 @@ import path from 'path';
 import readline from 'readline';
 import {
   CODEX_ACTIVITY,
+  buildCodexVisibleTasks,
   normalizeCodexIntegrationConfig,
   resolveCodexActivity,
   sanitizeProjectName,
@@ -63,6 +64,19 @@ export function parseCodexRollout(text, {
   let lastActivityAtMs = modifiedAtMs;
   let lastTurnId = '';
   let lastFinishKind = '';
+  const messages = [];
+  const messageKeys = new Set();
+
+  const appendMessage = (role, value, timestamp) => {
+    const message = String(value || '').trim();
+    if (!message) return;
+    const createdAtMs = finiteTimestamp(timestamp, modifiedAtMs);
+    const key = `${role}:${createdAtMs}:${message}`;
+    if (messageKeys.has(key)) return;
+    messageKeys.add(key);
+    messages.push({ id: key.slice(0, 240), role, message, createdAtMs });
+    if (messages.length > 64) messages.shift();
+  };
 
   for (const rawLine of String(text || '').split(/\r?\n/)) {
     const row = parseLine(rawLine);
@@ -82,10 +96,12 @@ export function parseCodexRollout(text, {
       continue;
     }
     if (row.type === 'event_msg') {
-      if (payload.type === 'user_message' && !title) {
-        title = String(payload.message || '').trim();
+      if (payload.type === 'user_message') {
+        if (!title) title = String(payload.message || '').trim();
+        appendMessage('user', payload.message, timestamp);
       } else if (payload.type === 'agent_message') {
         lastAgentMessage = String(payload.message || lastAgentMessage || '').trim();
+        appendMessage('assistant', payload.message, timestamp);
       } else if (payload.type === 'task_started') {
         lastStartedAtMs = Math.max(lastStartedAtMs, finiteTimestamp(payload.started_at, timestamp));
         lastTurnId = String(payload.turn_id || lastTurnId || '');
@@ -105,6 +121,7 @@ export function parseCodexRollout(text, {
       const messageText = textFromMessageContent(payload.content);
       if (payload.role === 'user' && !title) title = messageText;
       if (payload.role === 'assistant' && messageText) lastAgentMessage = messageText;
+      appendMessage(payload.role === 'assistant' ? 'assistant' : 'user', messageText, timestamp);
     }
   }
 
@@ -122,6 +139,7 @@ export function parseCodexRollout(text, {
     activity: running ? CODEX_ACTIVITY.RUNNING : CODEX_ACTIVITY.SILENT,
     updatedAtMs: Math.max(lastActivityAtMs, lastFinishedAtMs, lastStartedAtMs, modifiedAtMs),
     managed: false,
+    messages,
   };
 
   let unread = null;
@@ -537,12 +555,16 @@ export class CodexMonitor {
       }
       this.tasks = nextTasks;
       for (const [id, task] of this.managedTasks) this.tasks.set(id, { ...this.tasks.get(id), ...task });
-      const allUnread = [...unread, ...this.managedUnread.values()]
-        .filter((event) => !readIds.has(event.id));
-      const tasks = [...this.tasks.values()]
+      const unreadById = new Map([...unread, ...this.managedUnread.values()]
+        .filter((event) => !readIds.has(event.id))
+        .map((event) => [event.id, event]));
+      const allUnread = [...unreadById.values()];
+      const allTasks = [...this.tasks.values()];
+      const tasks = allTasks
         .filter((task) => task.activity !== CODEX_ACTIVITY.SILENT)
         .sort((left, right) => right.updatedAtMs - left.updatedAtMs);
       const sortedUnread = sortCodexUnreadEvents(allUnread);
+      const taskSummary = buildCodexVisibleTasks(allTasks, sortedUnread);
       this.lastSnapshot = {
         configured: true,
         enabled: true,
@@ -553,6 +575,7 @@ export class CodexMonitor {
         tasks,
         unread: sortedUnread,
         unreadCount: sortedUnread.length,
+        ...taskSummary,
         updatedAtMs: Date.now(),
         reason: '',
       };
@@ -812,6 +835,9 @@ export class CodexMonitor {
       tasks: [],
       unread: [],
       unreadCount: 0,
+      runningCount: 0,
+      unreadTaskCount: 0,
+      visibleTasks: [],
       updatedAtMs: Date.now(),
       reason: 'Codex 接入尚未启用',
     };

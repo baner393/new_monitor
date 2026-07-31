@@ -80,6 +80,66 @@ export function resolveCodexActivity({ connected = true, tasks = [], unread = []
   return CODEX_ACTIVITY.SILENT;
 }
 
+export function buildCodexVisibleTasks(tasks = [], unread = []) {
+  const grouped = new Map();
+  for (const task of tasks || []) {
+    if (!task?.id) continue;
+    grouped.set(String(task.id), {
+      ...task,
+      threadId: String(task.id),
+      messages: Array.isArray(task.messages) ? [...task.messages] : [],
+      events: [],
+      unreadCount: 0,
+      canReply: task.canReply === true,
+      canApprove: false,
+      canOpenThread: true,
+    });
+  }
+  for (const event of sortCodexUnreadEvents(unread)) {
+    const threadId = String(event?.threadId || '');
+    if (!threadId) continue;
+    const current = grouped.get(threadId) || {
+      id: threadId,
+      threadId,
+      title: event.title,
+      project: event.project,
+      activity: event.activity,
+      updatedAtMs: event.createdAtMs,
+      messages: [],
+      events: [],
+      unreadCount: 0,
+      canReply: false,
+      canApprove: false,
+      canOpenThread: true,
+    };
+    current.title ||= event.title;
+    current.project ||= event.project;
+    current.updatedAtMs = Math.max(Number(current.updatedAtMs || 0), Number(event.createdAtMs || 0));
+    if (activityPriority(event.activity) < activityPriority(current.activity)) current.activity = event.activity;
+    current.events.push(event);
+    current.unreadCount += 1;
+    current.canReply ||= event.canReply === true;
+    current.canApprove ||= Boolean(event.requestId);
+    grouped.set(threadId, current);
+  }
+
+  const visibleTasks = [...grouped.values()]
+    .filter((task) => task.unreadCount > 0
+      || task.activity === CODEX_ACTIVITY.RUNNING
+      || task.activity === CODEX_ACTIVITY.NEEDS_INPUT
+      || task.activity === CODEX_ACTIVITY.BLOCKED)
+    .sort((left, right) => {
+      const priority = activityPriority(left.activity) - activityPriority(right.activity);
+      if (priority !== 0) return priority;
+      return Number(right.updatedAtMs || 0) - Number(left.updatedAtMs || 0);
+    });
+  return {
+    visibleTasks,
+    runningCount: visibleTasks.filter((task) => task.activity === CODEX_ACTIVITY.RUNNING).length,
+    unreadTaskCount: visibleTasks.filter((task) => task.unreadCount > 0).length,
+  };
+}
+
 export function codexMoodForActivity(activity, { alertFresh = true } = {}) {
   switch (activity) {
     case CODEX_ACTIVITY.NEEDS_INPUT:

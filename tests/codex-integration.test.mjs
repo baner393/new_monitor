@@ -8,11 +8,13 @@ import { CodexMonitor, parseCodexRollout, resolveCodexHome } from '../src/main/c
 import { StateMachine } from '../src/renderer/state-machine.js';
 import {
   CODEX_ACTIVITY,
+  buildCodexVisibleTasks,
   codexMoodForActivity,
   normalizeCodexIntegrationConfig,
   resolveCodexActivity,
   sortCodexUnreadEvents,
 } from '../src/shared/codex-integration.js';
+import { CodexMotionController, codexDropLength, codexStatusSymbol } from '../src/renderer/codex-motion.js';
 
 function rollout(lines) {
   return lines.map((line) => JSON.stringify(line)).join('\n');
@@ -59,12 +61,64 @@ test('completed rollout keeps the full reply and only emits one unread event', (
   assert.equal(parsed.unread.activity, CODEX_ACTIVITY.READY);
   assert.equal(parsed.unread.message, '完整回复第一段\n完整回复第二段');
   assert.equal(parsed.unread.canReply, true);
+  assert.equal(parsed.task.messages.at(-1).message, '完整回复第一段\n完整回复第二段');
 
   const read = parseCodexRollout(text, {
     enabledAtMs: Date.parse('2026-07-30T09:00:00Z'),
     readEventIds: new Set([parsed.unread.id]),
   });
   assert.equal(read.unread, null);
+});
+
+test('visible Codex tasks group unread events by thread and keep running count separate', () => {
+  const summary = buildCodexVisibleTasks([
+    { id: 'running-a', activity: CODEX_ACTIVITY.RUNNING, updatedAtMs: 4 },
+    { id: 'ready-a', activity: CODEX_ACTIVITY.SILENT, updatedAtMs: 3 },
+  ], [
+    { id: 'one', threadId: 'ready-a', activity: CODEX_ACTIVITY.READY, createdAtMs: 2 },
+    { id: 'two', threadId: 'ready-a', activity: CODEX_ACTIVITY.READY, createdAtMs: 3 },
+  ]);
+  assert.equal(summary.runningCount, 1);
+  assert.equal(summary.unreadTaskCount, 1);
+  assert.equal(summary.visibleTasks.length, 2);
+  assert.equal(summary.visibleTasks.find((task) => task.threadId === 'ready-a').unreadCount, 2);
+});
+
+test('Codex blocked motion drops, rebounds, climbs and returns without mutating a rope setting', () => {
+  const motion = new CodexMotionController();
+  motion.setState(CODEX_ACTIVITY.BLOCKED, 'blocked-event-1');
+  const options = { enabled: true, petHeight: 64, baseY: 150, viewportHeight: 600 };
+  const lengths = [];
+  for (let index = 0; index < 110; index++) lengths.push(motion.update(0.05, options).lengthOffset);
+  assert.ok(Math.max(...lengths) >= 40);
+  assert.ok(lengths.slice(28, 86).some((value, index, values) => index > 0 && value < values[index - 1]));
+  assert.equal(lengths.at(-1), 0);
+  assert.equal(motion.update(0.05, options).sequence, '');
+  assert.equal(codexDropLength({ petHeight: 200, baseY: 570, viewportHeight: 600 }), 0);
+});
+
+test('Codex blocked motion does not restart while the aggregate state remains blocked', () => {
+  const motion = new CodexMotionController();
+  const options = { enabled: true, petHeight: 64, baseY: 150, viewportHeight: 600 };
+  motion.setState(CODEX_ACTIVITY.BLOCKED, 'blocked-a');
+  for (let index = 0; index < 100; index++) motion.update(0.05, options);
+  assert.equal(motion.update(0.05, options).sequence, '');
+  motion.setState(CODEX_ACTIVITY.BLOCKED, 'blocked-b');
+  assert.equal(motion.update(0.05, options).sequence, '');
+  motion.setState(CODEX_ACTIVITY.SILENT, 'clear');
+  motion.setState(CODEX_ACTIVITY.BLOCKED, 'blocked-c');
+  assert.equal(motion.update(0.05, options).sequence, 'blocked');
+});
+
+test('Codex status symbols use distinct pixel silhouettes', () => {
+  const signatures = [
+    CODEX_ACTIVITY.RUNNING,
+    CODEX_ACTIVITY.NEEDS_INPUT,
+    CODEX_ACTIVITY.READY,
+    CODEX_ACTIVITY.BLOCKED,
+    CODEX_ACTIVITY.DISCONNECTED,
+  ].map((activity) => JSON.stringify(codexStatusSymbol(activity, 0).pixels));
+  assert.equal(new Set(signatures).size, signatures.length);
 });
 
 test('running and aborted rollouts map to quiet running and blocked unread states', () => {
