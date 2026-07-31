@@ -18,12 +18,18 @@ export const CODEX_CONNECTION = Object.freeze({
   ERROR: 'error',
 });
 
+export const CODEX_REPLY_TRANSPORT = Object.freeze({
+  DIRECT: 'direct',
+  DESKTOP: 'desktop',
+});
+
 export const DEFAULT_CODEX_INTEGRATION_CONFIG = Object.freeze({
   version: CODEX_INTEGRATION_CONFIG_VERSION,
   enabled: false,
   homeMode: 'auto',
   manualHome: '',
   managedReplies: true,
+  replyTransport: CODEX_REPLY_TRANSPORT.DIRECT,
   enabledAtMs: 0,
   notificationMode: 'important',
   localeMode: 'codex',
@@ -61,6 +67,9 @@ export function normalizeCodexIntegrationConfig(value = {}) {
     homeMode: value.homeMode === 'manual' ? 'manual' : 'auto',
     manualHome: cleanText(value.manualHome, 1024),
     managedReplies: value.managedReplies !== false,
+    replyTransport: value.replyTransport === CODEX_REPLY_TRANSPORT.DESKTOP
+      ? CODEX_REPLY_TRANSPORT.DESKTOP
+      : CODEX_REPLY_TRANSPORT.DIRECT,
     enabledAtMs: enabled && enabledAtMs <= 0 ? Date.now() : enabledAtMs,
     notificationMode: 'important',
     localeMode: 'codex',
@@ -221,6 +230,17 @@ export function cleanCodexUserMessage(value) {
   text = text.trim();
   if (/^(?:<developer|<system|\[MODE:|You are Codex\b)/i.test(text)) return '';
   return text;
+}
+
+export function compactCodexTechnicalPreview(value, maxLength = 110) {
+  const limit = Math.max(24, Number(maxLength) || 110);
+  const text = cleanText(value, 100_000).replace(/\s+/g, ' ').trim();
+  if (!text) return '—';
+  return text.length > limit ? `${text.slice(0, limit - 1)}…` : text;
+}
+
+export function shouldShowCodexConnectionList(_replyTransport, taskCount) {
+  return Number(taskCount) > 0;
 }
 
 export function normalizeCodexLocale(value, fallback = 'zh-CN') {

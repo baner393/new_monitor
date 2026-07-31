@@ -13,9 +13,11 @@ import {
   CODEX_CONNECTION,
   buildCodexVisibleTasks,
   cleanCodexUserMessage,
+  compactCodexTechnicalPreview,
   codexMoodForActivity,
   normalizeCodexIntegrationConfig,
   resolveCodexActivity,
+  shouldShowCodexConnectionList,
   sortCodexUnreadEvents,
 } from '../src/shared/codex-integration.js';
 import { CodexMotionController, codexDropLength, codexStatusSymbol } from '../src/renderer/codex-motion.js';
@@ -25,6 +27,20 @@ import {
   openCodexTask,
   reconcileCodexViewState,
 } from '../src/renderer/codex-view-state.js';
+
+test('technical message previews collapse whitespace and bound the summary line', () => {
+  assert.equal(compactCodexTechnicalPreview('  tool\n  call\tresult  '), 'tool call result');
+  assert.equal(compactCodexTechnicalPreview('', 30), '—');
+  const preview = compactCodexTechnicalPreview('x'.repeat(80), 30);
+  assert.equal(preview.length, 30);
+  assert.ok(preview.endsWith('…'));
+});
+
+test('task connection list remains visible in desktop compatible mode', () => {
+  assert.equal(shouldShowCodexConnectionList('direct', 1), true);
+  assert.equal(shouldShowCodexConnectionList('desktop', 1), true);
+  assert.equal(shouldShowCodexConnectionList('desktop', 0), false);
+});
 
 function rollout(lines) {
   return lines.map((line) => JSON.stringify(line)).join('\n');
@@ -40,8 +56,11 @@ test('Codex config is portable, versioned and bounds persisted read events', () 
   assert.equal(normalized.version, 2);
   assert.equal(normalized.homeMode, 'manual');
   assert.equal(normalized.manualHome, 'C:\\Users\\demo\\.codex');
+  assert.equal(normalized.replyTransport, 'direct');
   assert.equal(normalized.readEventIds.length, 1024);
   assert.ok(normalized.enabledAtMs > 0);
+  assert.equal(normalizeCodexIntegrationConfig({ replyTransport: 'desktop' }).replyTransport, 'desktop');
+  assert.equal(normalizeCodexIntegrationConfig({ replyTransport: 'unknown' }).replyTransport, 'direct');
 });
 
 test('unread Codex events follow needs-input, blocked, ready priority', () => {
@@ -146,6 +165,49 @@ test('running and aborted rollouts map to quiet running and blocked unread state
   ]), { enabledAtMs: Date.parse('2026-07-30T09:00:00Z') });
   assert.equal(aborted.unread.activity, CODEX_ACTIVITY.BLOCKED);
   assert.equal(aborted.unread.canReply, false);
+});
+
+test('second-based Codex timestamps remain ordered after an aborted turn', () => {
+  const enabledAtMs = Date.parse('2026-07-31T06:15:00Z');
+  const base = [
+    { timestamp: '2026-07-31T06:10:00Z', type: 'session_meta', payload: { id: 'seconds-thread', cwd: 'C:\\work\\app' } },
+    { timestamp: '2026-07-31T06:11:00Z', type: 'event_msg', payload: { type: 'task_started', turn_id: 'old', started_at: 1785478260 } },
+    { timestamp: '2026-07-31T06:12:00Z', type: 'event_msg', payload: { type: 'turn_aborted', turn_id: 'old' } },
+    { timestamp: '2026-07-31T06:19:45Z', type: 'event_msg', payload: { type: 'task_started', turn_id: 'current', started_at: 1785478785 } },
+  ];
+  const running = parseCodexRollout(rollout(base), {
+    modifiedAtMs: Date.parse('2026-07-31T06:20:00Z'),
+    nowMs: Date.parse('2026-07-31T06:20:00Z'),
+    enabledAtMs,
+  });
+  assert.equal(running.task.activity, CODEX_ACTIVITY.RUNNING);
+
+  const completed = parseCodexRollout(rollout([...base, {
+    timestamp: '2026-07-31T06:25:00Z',
+    type: 'event_msg',
+    payload: { type: 'task_complete', turn_id: 'current', completed_at: 1785479100, last_agent_message: '最终总结' },
+  }]), { modifiedAtMs: Date.parse('2026-07-31T06:25:00Z'), enabledAtMs });
+  assert.equal(completed.unread?.message, '最终总结');
+  assert.equal(completed.unread?.createdAtMs, 1785479100000);
+});
+
+test('Codex rollout keeps tool calls and tool results in chronological messages', () => {
+  const parsed = parseCodexRollout(rollout([
+    { timestamp: '2026-07-31T01:00:00Z', type: 'session_meta', payload: { id: 'tools-thread', cwd: 'C:\\work\\app' } },
+    { timestamp: '2026-07-31T01:00:01Z', type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: '准备检查' }] } },
+    { timestamp: '2026-07-31T01:00:02Z', type: 'response_item', payload: { type: 'custom_tool_call', name: 'exec', input: '{"command":"npm test"}' } },
+    { timestamp: '2026-07-31T01:00:03Z', type: 'response_item', payload: { type: 'custom_tool_call_output', output: [{ type: 'input_text', text: '94 tests passed' }] } },
+    { timestamp: '2026-07-31T01:00:04Z', type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: '最终总结' }] } },
+  ]));
+  assert.deepEqual(parsed.task.messages.map(({ role, kind }) => [role, kind]), [
+    ['assistant', 'message'],
+    ['tool', 'tool-call'],
+    ['tool', 'tool-result'],
+    ['assistant', 'message'],
+  ]);
+  assert.match(parsed.task.messages[1].message, /npm test/);
+  assert.match(parsed.task.messages[2].message, /94 tests passed/);
+  assert.equal(parsed.task.messages.at(-1).message, '最终总结');
 });
 
 test('Codex home resolution honors manual mode and uses a portable user-home fallback', () => {
@@ -253,9 +315,11 @@ test('internal Codex approval-review tasks never become user conversations', () 
   assert.equal(parsed, null);
 });
 
-test('manually opened Codex detail survives fifty snapshots and only explicit close clears it', () => {
+test('a zero-unread task opened from the connection list survives refreshes until explicitly closed', () => {
   const task = { id: 'thread-stable', title: '稳定详情', project: 'app', activity: CODEX_ACTIVITY.RUNNING };
   let view = openCodexTask(createCodexViewState(), task);
+  assert.equal(view.eventId, 'task:thread-stable');
+  assert.equal(view.event.kind, 'task');
   for (let index = 0; index < 50; index++) {
     view = reconcileCodexViewState(view, {
       tasks: [{ ...task, activity: index > 20 ? CODEX_ACTIVITY.SILENT : CODEX_ACTIVITY.RUNNING }],
@@ -367,11 +431,22 @@ test('Codex monitor reuses unchanged files, reads only appended bytes and pagina
   }
 });
 
-test('existing running task waits for idle before a managed connection can resume it', async () => {
+test('existing running task accepts a window reply through turn steer when its active turn is known', async () => {
   class FakeAppServer extends EventEmitter {
+    calls = [];
     async connect() {}
-    async request(method) {
-      if (method === 'thread/resume') return { thread: { status: { type: 'idle' }, name: 'Connected task' } };
+    async request(method, params) {
+      this.calls.push({ method, params });
+      if (method === 'thread/list') return { data: [], nextCursor: null };
+      if (method === 'thread/resume') return {
+        thread: {
+          id: 'running-connect',
+          status: { type: 'active' },
+          name: 'Connected task',
+          turns: [{ id: 'turn-live', status: { type: 'inProgress' }, items: [] }],
+        },
+      };
+      if (method === 'turn/steer') return {};
       return {};
     }
     stop() {}
@@ -383,14 +458,124 @@ test('existing running task waits for idle before a managed connection can resum
     { timestamp: new Date().toISOString(), type: 'session_meta', payload: { id: 'running-connect', cwd: root } },
     { timestamp: new Date().toISOString(), type: 'event_msg', payload: { type: 'task_started', turn_id: 'turn-live' } },
   ])}\n`);
+  const server = new FakeAppServer();
   const monitor = new CodexMonitor({
     config: { version: 2, enabled: true, homeMode: 'manual', manualHome: root },
-    appServerFactory: () => new FakeAppServer(),
+    appServerFactory: () => server,
   });
   try {
     await monitor.scan(true);
     await monitor.connectThread('running-connect');
-    assert.equal(monitor.getSnapshot().tasks[0].connectionState, CODEX_CONNECTION.WAITING_IDLE);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(monitor.getSnapshot().tasks[0].connectionState, CODEX_CONNECTION.CONNECTED);
+    const result = await monitor.reply('running-connect', '追加说明');
+    assert.equal(result.mode, 'steer');
+    assert.equal(server.calls.find((call) => call.method === 'turn/steer')?.params.expectedTurnId, 'turn-live');
+    assert.equal(server.calls.find((call) => call.method === 'turn/steer')?.params.input[0].text, '追加说明');
+  } finally {
+    monitor.stop();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('desktop reply transport never writes through a second App Server', async () => {
+  class FakeAppServer extends EventEmitter {
+    calls = [];
+    async connect() {}
+    async request(method, params) {
+      this.calls.push({ method, params });
+      if (method === 'thread/list') return { data: [], nextCursor: null };
+      return {};
+    }
+    stop() {}
+  }
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'new-monitor-codex-desktop-reply-'));
+  const sessions = path.join(root, 'sessions');
+  fs.mkdirSync(sessions);
+  fs.writeFileSync(path.join(sessions, 'desktop.jsonl'), `${rollout([
+    { timestamp: new Date().toISOString(), type: 'session_meta', payload: { id: 'desktop-reply', cwd: root } },
+    { timestamp: new Date().toISOString(), type: 'event_msg', payload: { type: 'agent_message', message: 'ready' } },
+  ])}\n`);
+  const server = new FakeAppServer();
+  let factoryCalls = 0;
+  const monitor = new CodexMonitor({
+    config: {
+      version: 2,
+      enabled: true,
+      homeMode: 'manual',
+      manualHome: root,
+      managedReplies: true,
+      replyTransport: 'desktop',
+      desiredThreadIds: ['desktop-reply'],
+    },
+    appServerFactory: () => {
+      factoryCalls += 1;
+      return server;
+    },
+  });
+  try {
+    await monitor.scan(true);
+    monitor.start();
+    assert.equal(factoryCalls, 0);
+    assert.equal(monitor.clientRetryTimer, null);
+    const task = monitor.getSnapshot().tasks.find((item) => item.id === 'desktop-reply');
+    assert.equal(task?.capabilities.reply, true);
+    const result = await monitor.reply('desktop-reply', '客户端发送这条消息');
+    assert.deepEqual(result, {
+      accepted: true,
+      mode: 'desktop-submit',
+      openDesktop: true,
+      threadId: 'desktop-reply',
+    });
+    assert.deepEqual(server.calls, []);
+    assert.equal(monitor.getSnapshot().tasks.find((item) => item.id === 'desktop-reply')?.connectionState, CODEX_CONNECTION.DISCONNECTED);
+  } finally {
+    monitor.stop();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('saved running connections automatically recover an active turn after startup', async () => {
+  class FakeAppServer extends EventEmitter {
+    async connect() {}
+    async request(method) {
+      if (method === 'thread/list') return {
+        data: [{ id: 'running-auto', updatedAt: Date.now(), status: { type: 'active' } }],
+        nextCursor: null,
+      };
+      if (method === 'thread/resume') return {
+        thread: {
+          id: 'running-auto',
+          status: { type: 'active' },
+          turns: [{ id: 'turn-auto', status: { type: 'inProgress' }, items: [] }],
+        },
+      };
+      return {};
+    }
+    stop() {}
+  }
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'new-monitor-codex-auto-connect-'));
+  fs.mkdirSync(path.join(root, 'sessions'));
+  const monitor = new CodexMonitor({
+    config: {
+      version: 2,
+      enabled: true,
+      homeMode: 'manual',
+      manualHome: root,
+      managedReplies: true,
+      desiredThreadIds: ['running-auto'],
+    },
+    appServerFactory: () => new FakeAppServer(),
+  });
+  try {
+    monitor.start();
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      if (monitor.getSnapshot().tasks.find((task) => task.id === 'running-auto')?.connectionState === CODEX_CONNECTION.CONNECTED) break;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    const task = monitor.getSnapshot().tasks.find((item) => item.id === 'running-auto');
+    assert.equal(task?.connectionState, CODEX_CONNECTION.CONNECTED);
+    assert.equal(task?.activity, CODEX_ACTIVITY.RUNNING);
   } finally {
     monitor.stop();
     fs.rmSync(root, { recursive: true, force: true });
@@ -476,6 +661,45 @@ test('App Server catalog adds older tasks and hydrates their messages only on de
     assert.ok(monitor.getSnapshot().tasks.some((task) => task.id === 'catalog-only' && task.title === 'Older named task'));
     const page = await monitor.getMessages('catalog-only', { limit: 50 });
     assert.deepEqual(page.messages.map((message) => message.message), ['历史问题', '历史回答']);
+  } finally {
+    monitor.stop();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('App Server active state stays authoritative over an idle local rollout', async () => {
+  class FakeAppServer extends EventEmitter {
+    async connect() {}
+    async request(method) {
+      if (method === 'thread/list') return {
+        data: [{ id: 'overlap', name: 'Live task', updatedAt: 1785479000, status: { type: 'active' } }],
+        nextCursor: null,
+      };
+      if (method === 'thread/resume') return { thread: { id: 'overlap', status: { type: 'active' } } };
+      if (method === 'thread/read') return { thread: { id: 'overlap', status: { type: 'active' }, turns: [] } };
+      return {};
+    }
+    stop() {}
+  }
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'new-monitor-codex-overlap-'));
+  const sessions = path.join(root, 'sessions');
+  fs.mkdirSync(sessions);
+  fs.writeFileSync(path.join(sessions, 'overlap.jsonl'), `${rollout([
+    { timestamp: '2026-07-31T06:10:00Z', type: 'session_meta', payload: { id: 'overlap', cwd: root } },
+    { timestamp: '2026-07-31T06:11:00Z', type: 'event_msg', payload: { type: 'task_started', turn_id: 'done' } },
+    { timestamp: '2026-07-31T06:12:00Z', type: 'event_msg', payload: { type: 'task_complete', turn_id: 'done' } },
+  ])}\n`);
+  const monitor = new CodexMonitor({
+    config: { version: 2, enabled: true, homeMode: 'manual', manualHome: root },
+    appServerFactory: () => new FakeAppServer(),
+  });
+  try {
+    await monitor.scan(true);
+    await monitor.connectThread('overlap');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const task = monitor.getSnapshot().tasks.find((item) => item.id === 'overlap');
+    assert.equal(task.activity, CODEX_ACTIVITY.RUNNING);
+    assert.equal(monitor.getSnapshot().runningCount, 1);
   } finally {
     monitor.stop();
     fs.rmSync(root, { recursive: true, force: true });

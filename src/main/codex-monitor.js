@@ -7,6 +7,7 @@ import readline from 'readline';
 import {
   CODEX_ACTIVITY,
   CODEX_CONNECTION,
+  CODEX_REPLY_TRANSPORT,
   buildCodexVisibleTasks,
   cleanCodexUserMessage,
   normalizeCodexIntegrationConfig,
@@ -18,6 +19,8 @@ import {
 } from '../shared/codex-integration.js';
 
 const MAX_SESSION_FILES = 120;
+const RECENT_SESSION_FILES = 32;
+const MAX_INITIAL_FILE_BYTES = 4 * 1024 * 1024;
 const DISCOVERY_INTERVAL_MS = 30_000;
 const WATCH_DEBOUNCE_MS = 250;
 const RUNNING_STALE_MS = 5 * 60 * 1000;
@@ -25,7 +28,9 @@ const CLIENT_RETRY_DELAYS = [1000, 2000, 5000, 10_000, 30_000];
 
 function finiteTimestamp(value, fallback = 0) {
   const numeric = Number(value);
-  if (Number.isFinite(numeric) && numeric > 0) return numeric;
+  if (Number.isFinite(numeric) && numeric > 0) {
+    return numeric < 10_000_000_000 ? numeric * 1000 : numeric;
+  }
   const parsed = Date.parse(String(value || ''));
   return Number.isFinite(parsed) ? parsed : fallback;
 }
@@ -54,15 +59,23 @@ function messagesFromThread(thread) {
   for (const [turnIndex, turn] of (thread?.turns || []).entries()) {
     for (const [itemIndex, item] of (turn?.items || []).entries()) {
       const type = String(item?.type || '');
-      const role = type === 'userMessage' ? 'user' : type === 'agentMessage' ? 'assistant' : '';
+      const role = type === 'userMessage' ? 'user'
+        : type === 'agentMessage' ? 'assistant'
+          : /tool|command/i.test(type) ? 'tool' : '';
       if (!role) continue;
       const message = role === 'user'
         ? cleanCodexUserMessage(textFromMessageContent(item.content) || item.text || item.message)
-        : String(item.text || item.message || textFromMessageContent(item.content) || '').trim();
+        : role === 'assistant'
+          ? String(item.text || item.message || textFromMessageContent(item.content) || '').trim()
+          : [
+            String(item.name || item.tool || item.command || type).trim(),
+            stringifyToolValue(item.output ?? item.result ?? item.content ?? item.arguments),
+          ].filter(Boolean).join('\n');
       if (!message) continue;
       messages.push({
         id: String(item.id || `app-server:${thread.id}:${messages.length}`),
         role,
+        kind: role === 'tool' ? type : 'message',
         message,
         createdAtMs: (timestampToMs(item.createdAt || turn.startedAt || turn.completedAt || thread.updatedAt)
           || turnIndex * 1000) + itemIndex,
@@ -72,12 +85,25 @@ function messagesFromThread(thread) {
   return messages;
 }
 
+function activeTurnIdFromThread(thread) {
+  const turns = thread?.turns || [];
+  for (let index = turns.length - 1; index >= 0; index -= 1) {
+    const turn = turns[index];
+    const status = String(turn?.status?.type || turn?.status || '').toLowerCase();
+    if (['active', 'inprogress', 'running'].includes(status)) return String(turn.id || '');
+  }
+  const threadStatus = String(thread?.status?.type || thread?.status || '').toLowerCase();
+  if (['active', 'inprogress', 'running'].includes(threadStatus)) return String(turns.at(-1)?.id || '');
+  return '';
+}
+
 function createRolloutState(filePath = '', modifiedAtMs = 0) {
+  const fileThreadId = path.basename(filePath || '').match(/([0-9a-f]{8}-[0-9a-f-]{27,})\.jsonl$/i)?.[1] || '';
   return {
     filePath,
     modifiedAtMs,
     partial: '',
-    threadId: '',
+    threadId: fileThreadId,
     parentThreadId: '',
     cwd: '',
     name: '',
@@ -91,28 +117,54 @@ function createRolloutState(filePath = '', modifiedAtMs = 0) {
     lastFinishKind: '',
     messages: [],
     messageKeys: new Set(),
+    historyComplete: true,
   };
 }
 
-function appendMessage(state, role, value, timestamp) {
+function appendMessage(state, role, value, timestamp, kind = 'message') {
   const message = role === 'user'
     ? cleanCodexUserMessage(value)
     : String(value || '').trim();
-  if (!message || (role !== 'user' && role !== 'assistant')) return;
+  if (!message || !['user', 'assistant', 'tool'].includes(role)) return;
   const createdAtMs = finiteTimestamp(timestamp, state.modifiedAtMs);
   const normalizedMessage = message.replace(/\s+/g, ' ').trim();
   const timeBucket = Math.floor(createdAtMs / 10_000);
-  const keys = [-1, 0, 1].map((offset) => `${role}:${timeBucket + offset}:${normalizedMessage}`);
+  const keys = [-1, 0, 1].map((offset) => `${role}:${kind}:${timeBucket + offset}:${normalizedMessage}`);
   if (keys.some((key) => state.messageKeys.has(key))) return;
-  state.messageKeys.add(`${role}:${timeBucket}:${normalizedMessage}`);
+  state.messageKeys.add(`${role}:${kind}:${timeBucket}:${normalizedMessage}`);
   state.messages.push({
     id: `${state.threadId || 'thread'}:${state.messages.length}:${createdAtMs}`,
     role,
+    kind,
     message,
     createdAtMs,
   });
   if (role === 'user' && !state.title) state.title = message;
   if (role === 'assistant') state.lastAgentMessage = message;
+}
+
+function stringifyToolValue(value, maxLength = 24_000) {
+  let text = '';
+  if (typeof value === 'string') text = value;
+  else if (Array.isArray(value)) text = textFromMessageContent(value) || JSON.stringify(value, null, 2);
+  else if (value !== undefined && value !== null) {
+    try { text = JSON.stringify(value, null, 2); }
+    catch { text = String(value); }
+  }
+  text = String(text || '').trim();
+  return text.length > maxLength
+    ? `${text.slice(0, maxLength)}\n… 工具内容过长，已显示前 ${maxLength} 个字符`
+    : text;
+}
+
+function toolCallText(payload) {
+  const name = String(payload?.name || payload?.tool || 'tool');
+  const input = stringifyToolValue(payload?.input ?? payload?.arguments);
+  return input ? `${name}\n${input}` : name;
+}
+
+function toolOutputText(payload) {
+  return stringifyToolValue(payload?.output ?? payload?.result ?? payload?.content);
 }
 
 function applyRolloutRow(state, row) {
@@ -157,6 +209,10 @@ function applyRolloutRow(state, row) {
   if (row.type === 'response_item' && payload.type === 'message'
     && (payload.role === 'user' || payload.role === 'assistant')) {
     appendMessage(state, payload.role, textFromMessageContent(payload.content), timestamp);
+  } else if (row.type === 'response_item' && payload.type === 'custom_tool_call') {
+    appendMessage(state, 'tool', toolCallText(payload), timestamp, 'tool-call');
+  } else if (row.type === 'response_item' && payload.type === 'custom_tool_call_output') {
+    appendMessage(state, 'tool', toolOutputText(payload), timestamp, 'tool-result');
   }
 }
 
@@ -194,6 +250,7 @@ function snapshotRolloutState(state, { enabledAtMs = 0, readEventIds = new Set()
     updatedAtMs,
     managed: false,
     messages: state.messages,
+    historyComplete: state.historyComplete,
   };
   let unread = null;
   if (!running && state.lastFinishKind && state.lastFinishedAtMs >= enabledAtMs) {
@@ -558,13 +615,24 @@ export class CodexMonitor {
       const homeChanged = previousConfig.homeMode !== this.config.homeMode
         || previousConfig.manualHome !== this.config.manualHome;
       const controlDisabled = previousConfig.managedReplies && !this.config.managedReplies;
-      if (this.client && (homeChanged || controlDisabled)) {
+      const desktopCompatibilityEnabled = previousConfig.replyTransport !== CODEX_REPLY_TRANSPORT.DESKTOP
+        && this.config.replyTransport === CODEX_REPLY_TRANSPORT.DESKTOP;
+      if (this.client && (homeChanged || controlDisabled || desktopCompatibilityEnabled)) {
         this.client.stop();
         this.client = null;
         this.clientReady = false;
         this.catalogSynced = false;
       }
-      if (!this.config.managedReplies) this.connectionStates.clear();
+      if (!this.config.managedReplies || this.config.replyTransport === CODEX_REPLY_TRANSPORT.DESKTOP) {
+        if (this.clientRetryTimer) clearTimeout(this.clientRetryTimer);
+        this.clientRetryTimer = null;
+        this.connectionStates.clear();
+        this.catalogTasks.clear();
+        this.managedTasks.clear();
+        this.managedMessages.clear();
+        this.managedUnread.clear();
+        this.pendingRequests.clear();
+      }
       if (this.running) this.#startClientLifecycle();
     }
     this.scan(true);
@@ -575,7 +643,9 @@ export class CodexMonitor {
 
   async getMessages(threadId, { cursor = null, limit = 50 } = {}) {
     const id = String(threadId || '');
-    if (!(this.tasks.get(id)?.messages?.length) && this.clientReady && this.catalogTasks.has(id)) {
+    const task = this.tasks.get(id);
+    if (this.clientReady && this.catalogTasks.has(id)
+      && (!(task?.messages?.length) || task?.historyComplete === false)) {
       await this.#hydrateThreadMessages(id);
     }
     const fileMessages = this.tasks.get(id)?.messages || [];
@@ -700,8 +770,12 @@ export class CodexMonitor {
         }
       }));
     }
+    const desiredIds = new Set(this.config.desiredThreadIds);
     const files = [...this.knownFiles.values()]
       .sort((left, right) => right.modifiedAtMs - left.modifiedAtMs)
+      .filter((file, index) => index < RECENT_SESSION_FILES
+        || file.modifiedAtMs >= this.config.enabledAtMs
+        || [...desiredIds].some((id) => file.path.includes(id)))
       .slice(0, MAX_SESSION_FILES);
     const readIds = new Set(this.config.readEventIds);
     const nextTasks = new Map();
@@ -725,9 +799,12 @@ export class CodexMonitor {
     for (const [id, task] of nextTasks) {
       const catalog = this.catalogTasks.get(id);
       this.tasks.set(id, {
-        ...catalog,
         ...task,
+        ...catalog,
         title: catalog?.hasSavedName ? catalog.title : task.title,
+        messages: catalog?.messages?.length ? catalog.messages : task.messages,
+        historyComplete: catalog?.messages?.length ? true : task.historyComplete,
+        updatedAtMs: Math.max(Number(catalog?.updatedAtMs || 0), Number(task.updatedAtMs || 0)),
       });
     }
     await this.#reconcileDesiredConnections();
@@ -737,11 +814,19 @@ export class CodexMonitor {
   async #readCachedRollout(file, readIds) {
     let cached = this.fileCache.get(file.path);
     if (!cached || file.size < cached.offset) {
-      cached = { offset: 0, modifiedAtMs: 0, state: createRolloutState(file.path, file.modifiedAtMs) };
+      const offset = Math.max(0, file.size - MAX_INITIAL_FILE_BYTES);
+      const state = createRolloutState(file.path, file.modifiedAtMs);
+      state.historyComplete = offset === 0;
+      cached = { offset, modifiedAtMs: 0, state, skipFirstLine: offset > 0 };
     }
     if (file.size > cached.offset) {
-      const chunk = await readRange(file.path, cached.offset, file.size - cached.offset);
+      let chunk = await readRange(file.path, cached.offset, file.size - cached.offset);
       this.bytesRead += Buffer.byteLength(chunk);
+      if (cached.skipFirstLine) {
+        const newline = chunk.indexOf('\n');
+        chunk = newline >= 0 ? chunk.slice(newline + 1) : '';
+        cached.skipFirstLine = false;
+      }
       cached.state.modifiedAtMs = file.modifiedAtMs;
       applyRolloutChunk(cached.state, chunk);
       cached.offset = file.size;
@@ -782,20 +867,27 @@ export class CodexMonitor {
       this.#persistConfig();
     }
 
-    const desired = new Set(this.config.managedReplies ? this.config.desiredThreadIds : []);
+    const desired = new Set(
+      this.config.managedReplies && this.config.replyTransport === CODEX_REPLY_TRANSPORT.DIRECT
+        ? this.config.desiredThreadIds
+        : [],
+    );
     const allTasks = [...this.tasks.values()].map((task) => {
       const runtime = this.connectionStates.get(task.id);
       const connectionState = runtime?.state
         || (desired.has(task.id) ? CODEX_CONNECTION.CONNECTING : CODEX_CONNECTION.DISCONNECTED);
       const pending = [...this.pendingRequests.values()].some((request) => request.threadId === task.id);
+      const canReply = this.config.managedReplies === true
+        && (this.config.replyTransport === CODEX_REPLY_TRANSPORT.DESKTOP
+          || connectionState === CODEX_CONNECTION.CONNECTED);
       return {
         ...task,
         connectionState,
         connectionError: runtime?.error || '',
         hasOwnedRequest: pending,
-        canReply: connectionState === CODEX_CONNECTION.CONNECTED,
+        canReply,
         capabilities: {
-          reply: connectionState === CODEX_CONNECTION.CONNECTED,
+          reply: canReply,
           approve: connectionState === CODEX_CONNECTION.CONNECTED && pending,
           jump: true,
         },
@@ -894,6 +986,7 @@ export class CodexMonitor {
     const id = String(threadId || '').trim();
     if (!id || !this.tasks.has(id)) throw new Error('没有找到这个 Codex 任务');
     if (!this.config.managedReplies) throw new Error('请先开启“允许气泡回复与批准”');
+    if (this.config.replyTransport === CODEX_REPLY_TRANSPORT.DESKTOP) return this.getSnapshot();
     this.config = normalizeCodexIntegrationConfig({
       ...this.config,
       desiredThreadIds: [...this.config.desiredThreadIds, id],
@@ -929,19 +1022,22 @@ export class CodexMonitor {
   }
 
   async #reconcileDesiredConnections() {
-    if (!this.config.managedReplies) return;
+    if (!this.config.managedReplies || this.config.replyTransport === CODEX_REPLY_TRANSPORT.DESKTOP) return;
     for (const id of this.config.desiredThreadIds) {
       const task = this.tasks.get(id);
       if (!task) continue;
       const current = this.connectionStates.get(id)?.state;
       const ownedActive = Boolean(this.managedTasks.get(id)?.activeTurnId);
       if (task.activity === CODEX_ACTIVITY.RUNNING && !ownedActive) {
-        this.connectionStates.set(id, {
-          state: current === CODEX_CONNECTION.CONNECTED
-            ? CODEX_CONNECTION.TEMPORARY_READ_ONLY
-            : CODEX_CONNECTION.WAITING_IDLE,
-          error: '',
-        });
+        const connectionState = current === CODEX_CONNECTION.CONNECTED
+          ? CODEX_CONNECTION.TEMPORARY_READ_ONLY
+          : current || CODEX_CONNECTION.WAITING_IDLE;
+        this.connectionStates.set(id, { state: connectionState, error: '' });
+        if (this.clientReady
+          && ![CODEX_CONNECTION.CONNECTING, CODEX_CONNECTION.TEMPORARY_READ_ONLY].includes(connectionState)) {
+          this.connectionStates.set(id, { state: CODEX_CONNECTION.CONNECTING, error: '' });
+          void this.#connectDesiredThread(id);
+        }
       } else if (this.clientReady && current !== CODEX_CONNECTION.CONNECTED) {
         void this.#connectDesiredThread(id);
       } else if (!this.clientReady && current !== CODEX_CONNECTION.ERROR) {
@@ -951,13 +1047,8 @@ export class CodexMonitor {
   }
 
   async #connectDesiredThread(threadId) {
+    if (this.config.replyTransport === CODEX_REPLY_TRANSPORT.DESKTOP) return;
     if (!this.config.desiredThreadIds.includes(threadId)) return;
-    const task = this.tasks.get(threadId);
-    if (task?.activity === CODEX_ACTIVITY.RUNNING && !this.managedTasks.get(threadId)?.activeTurnId) {
-      this.connectionStates.set(threadId, { state: CODEX_CONNECTION.WAITING_IDLE, error: '' });
-      this.#rebuildSnapshot();
-      return;
-    }
     try {
       await this.#ensureClient();
       this.connectionStates.set(threadId, { state: CODEX_CONNECTION.CONNECTING, error: '' });
@@ -965,10 +1056,25 @@ export class CodexMonitor {
       const resumed = await this.client.request('thread/resume', { threadId }, 15_000);
       const status = resumed?.thread?.status?.type;
       const active = status === 'active' || status === 'inProgress';
-      this.connectionStates.set(threadId, {
-        state: active ? CODEX_CONNECTION.TEMPORARY_READ_ONLY : CODEX_CONNECTION.CONNECTED,
-        error: active ? '任务正在 Codex 中运行，空闲后会自动恢复连接' : '',
-      });
+      let thread = resumed?.thread || null;
+      let activeTurnId = activeTurnIdFromThread(thread);
+      if (active && !activeTurnId) {
+        thread = await this.#hydrateThreadMessages(threadId);
+        activeTurnId = activeTurnIdFromThread(thread);
+      }
+      if (active && activeTurnId) {
+        this.#setManagedTask(threadId, {
+          activity: CODEX_ACTIVITY.RUNNING,
+          activeTurnId,
+          updatedAtMs: Date.now(),
+        });
+        this.connectionStates.set(threadId, { state: CODEX_CONNECTION.CONNECTED, error: '' });
+      } else {
+        this.connectionStates.set(threadId, {
+          state: active ? CODEX_CONNECTION.TEMPORARY_READ_ONLY : CODEX_CONNECTION.CONNECTED,
+          error: active ? '任务正在 Codex 中运行，但暂未取得可追加消息的 turn 标识' : '',
+        });
+      }
       if (resumed?.thread?.name) {
         const base = this.tasks.get(threadId) || {};
         this.tasks.set(threadId, { ...base, title: sanitizeTaskTitle(resumed.thread.name) });
@@ -983,28 +1089,33 @@ export class CodexMonitor {
     const message = String(text || '').trim();
     if (!message) throw new Error('请输入要发送的内容');
     const id = String(threadId || '');
+    const openDesktop = this.config.replyTransport === CODEX_REPLY_TRANSPORT.DESKTOP;
+    if (!this.tasks.has(id)) throw new Error('没有找到这个 Codex 任务');
+    if (openDesktop) return { accepted: true, mode: 'desktop-submit', openDesktop: true, threadId: id };
     if (this.connectionStates.get(id)?.state !== CODEX_CONNECTION.CONNECTED) {
       throw new Error('这个任务还没有建立可回复连接，请先连接或前往 Codex 处理');
     }
     await this.#ensureClient();
     const existing = this.managedTasks.get(id);
-    this.#appendManagedMessage(id, 'user', message);
     if (existing?.activeTurnId) {
       await this.client.request('turn/steer', {
         threadId: id,
         expectedTurnId: existing.activeTurnId,
         input: [{ type: 'text', text: message }],
       });
-      return { accepted: true, mode: 'steer' };
+      this.#appendManagedMessage(id, 'user', message);
+      this.#rebuildSnapshot();
+      return { accepted: true, mode: 'steer', openDesktop, threadId: id };
     }
     const result = await this.client.request('turn/start', {
       threadId: id,
       input: [{ type: 'text', text: message }],
     });
     const activeTurnId = result?.turn?.id || '';
+    this.#appendManagedMessage(id, 'user', message);
     this.#setManagedTask(id, { activity: CODEX_ACTIVITY.RUNNING, activeTurnId, updatedAtMs: Date.now() });
     this.#rebuildSnapshot();
-    return { accepted: true, mode: 'turn', turnId: activeTurnId };
+    return { accepted: true, mode: 'turn', turnId: activeTurnId, openDesktop, threadId: id };
   }
 
   async respond(requestId, response = {}) {
@@ -1040,6 +1151,7 @@ export class CodexMonitor {
       this.client.on('notification', (message) => this.#handleNotification(message));
       this.client.on('server-request', (message) => this.#handleServerRequest(message));
       this.client.on('disconnect', (error) => this.#handleClientDisconnect(error));
+      this.client.on('diagnostic', (message) => console.warn('[Codex App Server]', message));
     }
     await this.client.connect();
     this.clientReady = true;
@@ -1095,9 +1207,12 @@ export class CodexMonitor {
       const task = this.tasks.get(id);
       if (!task) this.tasks.set(id, catalogTask);
       else this.tasks.set(id, {
-        ...catalogTask,
         ...task,
+        ...catalogTask,
         title: catalogTask.hasSavedName ? catalogTask.title : task.title,
+        messages: catalogTask.messages?.length ? catalogTask.messages : task.messages,
+        historyComplete: catalogTask.messages?.length ? true : task.historyComplete,
+        updatedAtMs: Math.max(Number(catalogTask.updatedAtMs || 0), Number(task.updatedAtMs || 0)),
       });
     }
   }
@@ -1106,18 +1221,21 @@ export class CodexMonitor {
     try {
       const result = await this.client.request('thread/read', { threadId, includeTurns: true }, 15_000);
       const messages = messagesFromThread(result?.thread);
-      if (!messages.length) return;
+      if (!messages.length) return result?.thread || null;
       const catalog = this.catalogTasks.get(threadId);
-      if (catalog) this.catalogTasks.set(threadId, { ...catalog, messages });
+      if (catalog) this.catalogTasks.set(threadId, { ...catalog, messages, historyComplete: true });
       const task = this.tasks.get(threadId);
-      if (task) this.tasks.set(threadId, { ...task, messages });
+      if (task) this.tasks.set(threadId, { ...task, messages, historyComplete: true });
+      return result?.thread || null;
     } catch {
       // History viewing stays available from local rollout data when App Server is busy.
+      return null;
     }
   }
 
   #startClientLifecycle() {
-    if (!this.running || !this.config.enabled || this.clientReady) return;
+    if (!this.running || !this.config.enabled || !this.config.managedReplies
+      || this.config.replyTransport === CODEX_REPLY_TRANSPORT.DESKTOP || this.clientReady) return;
     if (this.clientRetryTimer) return;
     this.clientRetryTimer = setTimeout(async () => {
       this.clientRetryTimer = null;
@@ -1147,7 +1265,7 @@ export class CodexMonitor {
     }
     for (const task of this.managedTasks.values()) task.activeTurnId = '';
     this.#rebuildSnapshot();
-    this.#startClientLifecycle();
+    if (this.config.replyTransport !== CODEX_REPLY_TRANSPORT.DESKTOP) this.#startClientLifecycle();
   }
 
   #setManagedTask(threadId, patch) {

@@ -62,7 +62,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     requestElevation: () => ipcRenderer.invoke('monitor-request-elevation'),
   },
 
-  /** Local Codex conversation sync and optional app-server managed replies. */
+  /** Local Codex sync, direct App Server replies, or desktop-compatible draft handoff. */
   codex: {
     getConfig: () => ipcRenderer.invoke('codex-config-get'),
     saveConfig: (config) => ipcRenderer.invoke('codex-config-set', config),
@@ -77,6 +77,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     reply: (threadId, text) => ipcRenderer.invoke('codex-reply', { threadId, text }),
     respond: (requestId, response) => ipcRenderer.invoke('codex-respond', { requestId, response }),
     openApp: (threadId, title) => ipcRenderer.invoke('codex-open-app', { threadId, title }),
+    openLink: (href) => ipcRenderer.invoke('codex-open-link', href),
     onStatus: (callback) => {
       const listener = (_event, snapshot) => callback(snapshot);
       ipcRenderer.on('codex-status', listener);

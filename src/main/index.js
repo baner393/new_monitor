@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Menu, dialog, powerMonitor, screen, shell } from 'electron';
+import { app, BrowserWindow, clipboard, ipcMain, Menu, dialog, powerMonitor, screen, shell } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import { SystemMonitor } from './system-monitor.js';
@@ -16,6 +16,7 @@ import {
   SoftRefreshCoordinator,
 } from './window-lifecycle.js';
 import { CodexMonitor, resolveCodexHome } from './codex-monitor.js';
+import { submitCodexDesktopClipboard, waitForCodexDesktopUserMessage } from './codex-desktop-bridge.js';
 import {
   DEFAULT_CODEX_INTEGRATION_CONFIG,
   normalizeCodexIntegrationConfig,
@@ -183,13 +184,51 @@ ipcMain.handle('codex-mark-read', (_event, eventId) => codexMonitor?.markRead(ev
 ipcMain.handle('codex-mark-notified', (_event, eventId) => codexMonitor?.markNotified(eventId) || null);
 ipcMain.handle('codex-thread-connect', (_event, threadId) => codexMonitor?.connectThread(threadId));
 ipcMain.handle('codex-thread-disconnect', (_event, threadId) => codexMonitor?.disconnectThread(threadId));
-ipcMain.handle('codex-reply', (_event, payload) => codexMonitor?.reply(payload?.threadId, payload?.text));
+ipcMain.handle('codex-reply', async (_event, payload) => {
+  const submittedAtMs = Date.now();
+  const result = await codexMonitor?.reply(payload?.threadId, payload?.text);
+  if (!result?.openDesktop) return result;
+  clipboard.writeText(String(payload?.text || ''));
+  try {
+    await shell.openExternal(`codex://threads/${encodeURIComponent(result.threadId)}`);
+  } catch (error) {
+    return {
+      ...result,
+      copied: true,
+      opened: false,
+      submitted: false,
+      openError: error?.message || String(error),
+    };
+  }
+  try {
+    const submitted = await submitCodexDesktopClipboard({ text: payload?.text });
+    const recorded = await waitForCodexDesktopUserMessage({
+      text: payload?.text,
+      sinceMs: submittedAtMs,
+      readMessages: async () => {
+        await codexMonitor?.scan(true);
+        const page = await codexMonitor?.getMessages(result.threadId, { limit: 100 });
+        return page?.messages || [];
+      },
+    });
+    if (!recorded) throw new Error('Codex client did not record the submitted message');
+    return { ...result, copied: true, opened: true, submitted: true, desktopProcessId: submitted.processId };
+  } catch (error) {
+    return { ...result, copied: true, opened: true, submitted: false, submitError: error?.message || String(error) };
+  }
+});
 ipcMain.handle('codex-respond', (_event, payload) => codexMonitor?.respond(payload?.requestId, payload?.response));
 ipcMain.handle('codex-open-app', async (_event, payload = {}) => {
   const threadId = String(payload.threadId || '').trim();
   const target = threadId ? `codex://threads/${encodeURIComponent(threadId)}` : 'codex://';
   await shell.openExternal(target);
   return { opened: true, exact: Boolean(threadId), copiedThread: false };
+});
+ipcMain.handle('codex-open-link', async (_event, value) => {
+  const target = new URL(String(value || '').trim());
+  if (!['http:', 'https:', 'mailto:'].includes(target.protocol)) throw new Error('Unsupported Codex message link');
+  await shell.openExternal(target.href);
+  return { opened: true };
 });
 
 ipcMain.on('monitor-panel-config-set', (_event, config) => {

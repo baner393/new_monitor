@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "status": "Confirmed",
+  "evidence": ["package.json", "electron-builder.config.js", "scripts/verify-artifacts.mjs", "AGENTS.md"],
+  "selector": "VITE_EDITION",
+  "editions": {
+    "free": {
+      "start": "npm run start:free",
+      "sourceBuild": "npm run build:free",
+      "package": "npm run dist:free",
+      "appId": "com.turtlemonitor.app",
+      "productName": "Turtle Monitor",
+      "executableName": "TurtleMonitorFree",
+      "sponsorCustomEntry": false
+    },
+    "sponsor": {
+      "start": "npm run start:sponsor",
+      "sourceBuild": "npm run build:sponsor",
+      "package": "npm run dist:sponsor",
+      "appId": "com.turtlemonitor.sponsor",
+      "productName": "Turtle Monitor Sponsor",
+      "executableName": "TurtleMonitorSponsor",
+      "sponsorCustomEntry": true
+    }
+  },
+  "shared": ["pet", "monitoring", "monitor manager", "Codex integration", "skins shipped with the edition"],
+  "packagingRule": "Run package commands only after an explicit user request in the current turn."
+}

@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "CodexIntegrationConfigV2",
+  "title": "CodexIntegrationConfigV2",
+  "type": "object",
+  "required": ["version", "enabled", "homeMode", "manualHome", "managedReplies", "replyTransport", "enabledAtMs", "notificationMode", "localeMode", "desiredThreadIds", "readEventIds", "notifiedEventIds"],
+  "properties": {
+    "version": { "const": 2 },
+    "enabled": { "type": "boolean", "default": false },
+    "homeMode": { "enum": ["auto", "manual"], "default": "auto" },
+    "manualHome": { "type": "string", "maxLength": 1024 },
+    "managedReplies": { "type": "boolean", "default": true },
+    "replyTransport": { "enum": ["direct", "desktop"], "default": "direct" },
+    "enabledAtMs": { "type": "number", "minimum": 0 },
+    "notificationMode": { "const": "important" },
+    "localeMode": { "const": "codex" },
+    "desiredThreadIds": { "$ref": "#/$defs/idList" },
+    "readEventIds": { "$ref": "#/$defs/eventList" },
+    "notifiedEventIds": { "$ref": "#/$defs/eventList" }
+  },
+  "$defs": {
+    "idList": { "type": "array", "items": { "type": "string", "maxLength": 240 }, "maxItems": 128, "uniqueItems": true },
+    "eventList": { "type": "array", "items": { "type": "string", "maxLength": 240 }, "maxItems": 1024, "uniqueItems": true }
+  },
+  "x-status": "Confirmed",
+  "x-evidence": "src/shared/codex-integration.js"
+}

@@ -1,0 +1,758 @@
+{
+    "schema":  1,
+    "created_at":  "2026-07-31T09:03:43.376066+00:00",
+    "git_revision":  "f4645457d231f621d459115a493e0725698ac03b",
+    "git_dirty":  true,
+    "files":  [
+                  {
+                      "path":  ".gitignore",
+                      "bytes":  125,
+                      "sha256":  "2628f9bea1dadeedd25d2e2a168026d175411bfd04e38ebcd441112dfd913ecf"
+                  },
+                  {
+                      "path":  "AGENTS.md",
+                      "bytes":  612,
+                      "sha256":  "ffb9b495eea6907465926d1c138e95b98f5983e50743e41f6d2b7e0f4c8a6786"
+                  },
+                  {
+                      "path":  "BUILDING.md",
+                      "bytes":  2973,
+                      "sha256":  "0c8f9682345b22038b25688f05c7a5f23f93081c37a0bee9c8a13be67196ddb7"
+                  },
+                  {
+                      "path":  "DEPLOY-SECURITY.md",
+                      "bytes":  1388,
+                      "sha256":  "a987ce3425410cb0fc3dade9ed87e691cfd5784289e3d6739017438d89aa1082"
+                  },
+                  {
+                      "path":  "HANDOFF.md",
+                      "bytes":  4868,
+                      "sha256":  "088747bfceddef891c1f8f8f277f81a45471a0b9eb27335ee9ea4e77db32db33"
+                  },
+                  {
+                      "path":  "NEXT-WINDOW-PROMPT.md",
+                      "bytes":  2022,
+                      "sha256":  "59b63c4a9121d7f6d64253718fad24f3056a0e60d0beb5c5279e53a8d8247d19"
+                  },
+                  {
+                      "path":  "README.md",
+                      "bytes":  5755,
+                      "sha256":  "b4a9932252975701c702f2747a0af83c44b8f3cf4aa34c0d3de913a2336653e6"
+                  },
+                  {
+                      "path":  "assets/fonts/Mojang-Regular.ttf",
+                      "bytes":  28416,
+                      "sha256":  "babe80218d6a598279fc917aa47759aa670bb20c0e24fb0d6856e60c2828d305"
+                  },
+                  {
+                      "path":  "assets/fonts/unifont-15.1.04.otf",
+                      "bytes":  5105244,
+                      "sha256":  "27c83ca235c3ab99d5d35df35d78b5ac4018421a4287b1b4ea657b2299996d38"
+                  },
+                  {
+                      "path":  "assets/icon.ico",
+                      "bytes":  4533,
+                      "sha256":  "84e4b2ddd07e751a19259a0e1956ae8267716137e760837fdb29f5d05ab2faac"
+                  },
+                  {
+                      "path":  "assets/icon.png",
+                      "bytes":  1356,
+                      "sha256":  "ca0e88bac4d8a0c42831a3ff6e732c5d9c6a3948fa36c9c64c22500ae433177d"
+                  },
+                  {
+                      "path":  "assets/skins/cat/blink.png",
+                      "bytes":  4100,
+                      "sha256":  "ded85d0a1dec1f552db09345565ae3c9a09af66c0730905fcfc2e0b30d34c45c"
+                  },
+                  {
+                      "path":  "assets/skins/cat/happy.png",
+                      "bytes":  4067,
+                      "sha256":  "99dc471dcdf5504fc4136bee643b450b22394552ab252865259263eda8ca3329"
+                  },
+                  {
+                      "path":  "assets/skins/cat/hover.png",
+                      "bytes":  3878,
+                      "sha256":  "31cb0caa8e1d04c868eeb074e042be59270fb987c90b0b12485f2cee35aa41d5"
+                  },
+                  {
+                      "path":  "assets/skins/cat/idle.png",
+                      "bytes":  4134,
+                      "sha256":  "698e4bb8cdb36d3389224ff3c62701919b16a27bef2278376c2610625bbcc4c0"
+                  },
+                  {
+                      "path":  "assets/skins/cat/pain.png",
+                      "bytes":  4095,
+                      "sha256":  "47bb896e83034fabf433de772eb9a5b55077969df07ddcdae4575c49d87b47c4"
+                  },
+                  {
+                      "path":  "assets/skins/cat/pull.png",
+                      "bytes":  3841,
+                      "sha256":  "9e5662155219cbcbd544d4fab85e7eb5788854ce96671305a3047f7e8c8439a5"
+                  },
+                  {
+                      "path":  "assets/skins/skins.json",
+                      "bytes":  1302,
+                      "sha256":  "52fc7c7d624c888760514498453a5e470ca4a29ffd1b2acb49b48d7367a949b6"
+                  },
+                  {
+                      "path":  "assets/skins/turtle/blink.png",
+                      "bytes":  560,
+                      "sha256":  "7acb943aa0cafce52e8f8bdbb62289ed5c4bd6f8b561bf2bfabea4fcd7423276"
+                  },
+                  {
+                      "path":  "assets/skins/turtle/happy.png",
+                      "bytes":  689,
+                      "sha256":  "f98f969aaf17f47e9421ca2851010eb61a9c50258d028ebfa368f4288556a7d7"
+                  },
+                  {
+                      "path":  "assets/skins/turtle/hover.png",
+                      "bytes":  585,
+                      "sha256":  "bbb4e1daa7c8c0617557f507040ce15774bb86761b0a09385e11fd0eb7e50090"
+                  },
+                  {
+                      "path":  "assets/skins/turtle/idle.png",
+                      "bytes":  568,
+                      "sha256":  "c046c9baeff5b38a36ba2204b36bf0921a3cdc6b5c7f8d769cd0ed38fbf377a4"
+                  },
+                  {
+                      "path":  "assets/skins/turtle/pain.png",
+                      "bytes":  654,
+                      "sha256":  "46d1ab16db4133bbb5a1eadca071817e9d8b53f97854db08f57529aea56da712"
+                  },
+                  {
+                      "path":  "assets/skins/turtle/pull.png",
+                      "bytes":  602,
+                      "sha256":  "12382f7263e22cebcdbe2a4a0c67f847f3fba196bbed54910ff4fc85c3d538e9"
+                  },
+                  {
+                      "path":  "assets/sprites/blink.png",
+                      "bytes":  272,
+                      "sha256":  "4f5916eb58c9d2a532840705c11f43eb27dc99ca531b318d6ffa6ad2aebea3dc"
+                  },
+                  {
+                      "path":  "assets/sprites/happy.png",
+                      "bytes":  275,
+                      "sha256":  "cf7a20767bfda472dc9710deac30c78742a5ae25a05e3abf76086253bd56a7d5"
+                  },
+                  {
+                      "path":  "assets/sprites/hover.png",
+                      "bytes":  279,
+                      "sha256":  "2d3e671f3a5e6d3675bcbcdd372e0ba78e4e35eca70612a5f19fb8ef30a3fc23"
+                  },
+                  {
+                      "path":  "assets/sprites/idle.png",
+                      "bytes":  276,
+                      "sha256":  "5a9e08ed8471799f88255eeeea8899b99584af276329fdd3b8aecce566ca1a4c"
+                  },
+                  {
+                      "path":  "assets/sprites/pain.png",
+                      "bytes":  279,
+                      "sha256":  "3ba94a72a4eb2126a66cdca0f45b320fb4a1d51b8672123c868fae49d040ba4c"
+                  },
+                  {
+                      "path":  "assets/sprites/pull.png",
+                      "bytes":  270,
+                      "sha256":  "cc39c6523f2600bede234eb0416a69d6f87b03b6c47ccc9b3a33c686ba47a92d"
+                  },
+                  {
+                      "path":  "assets/uninstaller-icon.ico",
+                      "bytes":  8336,
+                      "sha256":  "4830a35d5c47431e81bbe7f7288710b969edd552e01913aefb622121462ba50b"
+                  },
+                  {
+                      "path":  "assets/uninstaller-icon.png",
+                      "bytes":  221,
+                      "sha256":  "ee8f36f9a1f0b73f68933ce7ef20072fd681b86a71f3c3e77c41344d45d94f24"
+                  },
+                  {
+                      "path":  "electron-builder.config.js",
+                      "bytes":  1618,
+                      "sha256":  "2764452335195c5cec634fe830602da9c9b7b571ce1eee02f6f89cf8bbdce09d"
+                  },
+                  {
+                      "path":  "forge.config.js",
+                      "bytes":  544,
+                      "sha256":  "848ca7d5479ae35e12aa117e9254740dd769902e9b8e1b7bb71cc76cdc169d50"
+                  },
+                  {
+                      "path":  "icon.ico",
+                      "bytes":  4533,
+                      "sha256":  "84e4b2ddd07e751a19259a0e1956ae8267716137e760837fdb29f5d05ab2faac"
+                  },
+                  {
+                      "path":  "native/HardwareSensorHost/HardwareSensorHost.csproj",
+                      "bytes":  625,
+                      "sha256":  "b4450b9a70f8b2cd89a4f8cb61e0b5edd20e111026ea693dc8ad1e2cc7a764e5"
+                  },
+                  {
+                      "path":  "native/HardwareSensorHost/Program.cs",
+                      "bytes":  10359,
+                      "sha256":  "e541ab3e92a2328ee4e5635e3e25c9e0d3f02c258e52be26c363189c73e7555a"
+                  },
+                  {
+                      "path":  "package-lock.json",
+                      "bytes":  350190,
+                      "sha256":  "4c93e4b6e700bdc51ebe5ff18c0d7da40c51f85e434699e6ad2aa0212167567b"
+                  },
+                  {
+                      "path":  "package.json",
+                      "bytes":  1342,
+                      "sha256":  "95c192ab9f4fa1537a250bf7dd8887658665b7c9237b2c5e8bf26ec6c2eda225"
+                  },
+                  {
+                      "path":  "public/assets/fonts/Mojang-Regular.ttf",
+                      "bytes":  28416,
+                      "sha256":  "babe80218d6a598279fc917aa47759aa670bb20c0e24fb0d6856e60c2828d305"
+                  },
+                  {
+                      "path":  "public/assets/fonts/unifont-15.1.04.otf",
+                      "bytes":  5105244,
+                      "sha256":  "27c83ca235c3ab99d5d35df35d78b5ac4018421a4287b1b4ea657b2299996d38"
+                  },
+                  {
+                      "path":  "public/assets/skins/cat/blink.png",
+                      "bytes":  4100,
+                      "sha256":  "ded85d0a1dec1f552db09345565ae3c9a09af66c0730905fcfc2e0b30d34c45c"
+                  },
+                  {
+                      "path":  "public/assets/skins/cat/happy.png",
+                      "bytes":  4067,
+                      "sha256":  "99dc471dcdf5504fc4136bee643b450b22394552ab252865259263eda8ca3329"
+                  },
+                  {
+                      "path":  "public/assets/skins/cat/hover.png",
+                      "bytes":  3878,
+                      "sha256":  "31cb0caa8e1d04c868eeb074e042be59270fb987c90b0b12485f2cee35aa41d5"
+                  },
+                  {
+                      "path":  "public/assets/skins/cat/idle.png",
+                      "bytes":  4134,
+                      "sha256":  "698e4bb8cdb36d3389224ff3c62701919b16a27bef2278376c2610625bbcc4c0"
+                  },
+                  {
+                      "path":  "public/assets/skins/cat/pain.png",
+                      "bytes":  4095,
+                      "sha256":  "47bb896e83034fabf433de772eb9a5b55077969df07ddcdae4575c49d87b47c4"
+                  },
+                  {
+                      "path":  "public/assets/skins/cat/pull.png",
+                      "bytes":  3841,
+                      "sha256":  "9e5662155219cbcbd544d4fab85e7eb5788854ce96671305a3047f7e8c8439a5"
+                  },
+                  {
+                      "path":  "public/assets/skins/skins.json",
+                      "bytes":  1175,
+                      "sha256":  "c5badc49a133acd96d6b5389deb3d8f6f9afea034eb0b76a65f9ce5c40feea6c"
+                  },
+                  {
+                      "path":  "public/assets/skins/turtle/blink.png",
+                      "bytes":  560,
+                      "sha256":  "7acb943aa0cafce52e8f8bdbb62289ed5c4bd6f8b561bf2bfabea4fcd7423276"
+                  },
+                  {
+                      "path":  "public/assets/skins/turtle/happy.png",
+                      "bytes":  689,
+                      "sha256":  "f98f969aaf17f47e9421ca2851010eb61a9c50258d028ebfa368f4288556a7d7"
+                  },
+                  {
+                      "path":  "public/assets/skins/turtle/hover.png",
+                      "bytes":  585,
+                      "sha256":  "bbb4e1daa7c8c0617557f507040ce15774bb86761b0a09385e11fd0eb7e50090"
+                  },
+                  {
+                      "path":  "public/assets/skins/turtle/idle.png",
+                      "bytes":  568,
+                      "sha256":  "c046c9baeff5b38a36ba2204b36bf0921a3cdc6b5c7f8d769cd0ed38fbf377a4"
+                  },
+                  {
+                      "path":  "public/assets/skins/turtle/pain.png",
+                      "bytes":  654,
+                      "sha256":  "46d1ab16db4133bbb5a1eadca071817e9d8b53f97854db08f57529aea56da712"
+                  },
+                  {
+                      "path":  "public/assets/skins/turtle/pull.png",
+                      "bytes":  602,
+                      "sha256":  "12382f7263e22cebcdbe2a4a0c67f847f3fba196bbed54910ff4fc85c3d538e9"
+                  },
+                  {
+                      "path":  "public/assets/sprites/blink.png",
+                      "bytes":  272,
+                      "sha256":  "4f5916eb58c9d2a532840705c11f43eb27dc99ca531b318d6ffa6ad2aebea3dc"
+                  },
+                  {
+                      "path":  "public/assets/sprites/happy.png",
+                      "bytes":  275,
+                      "sha256":  "cf7a20767bfda472dc9710deac30c78742a5ae25a05e3abf76086253bd56a7d5"
+                  },
+                  {
+                      "path":  "public/assets/sprites/hover.png",
+                      "bytes":  279,
+                      "sha256":  "2d3e671f3a5e6d3675bcbcdd372e0ba78e4e35eca70612a5f19fb8ef30a3fc23"
+                  },
+                  {
+                      "path":  "public/assets/sprites/idle.png",
+                      "bytes":  276,
+                      "sha256":  "5a9e08ed8471799f88255eeeea8899b99584af276329fdd3b8aecce566ca1a4c"
+                  },
+                  {
+                      "path":  "public/assets/sprites/pain.png",
+                      "bytes":  279,
+                      "sha256":  "3ba94a72a4eb2126a66cdca0f45b320fb4a1d51b8672123c868fae49d040ba4c"
+                  },
+                  {
+                      "path":  "public/assets/sprites/pull.png",
+                      "bytes":  270,
+                      "sha256":  "cc39c6523f2600bede234eb0416a69d6f87b03b6c47ccc9b3a33c686ba47a92d"
+                  },
+                  {
+                      "path":  "resources/hardware-sensor/BlackSharp.Core.dll",
+                      "bytes":  32768,
+                      "sha256":  "cafb93afcc8d8a367e21f619673d05c06887d8964867fed1371f02ded1cd3e23"
+                  },
+                  {
+                      "path":  "resources/hardware-sensor/DiskInfoToolkit.dll",
+                      "bytes":  903680,
+                      "sha256":  "1acbf51b3c10c51c986cf43021680d34a2e38d9a5ba652bcfa9a1b5f7fc09800"
+                  },
+                  {
+                      "path":  "resources/hardware-sensor/HardwareSensorHost.exe",
+                      "bytes":  19456,
+                      "sha256":  "362fc9b73aa77adff7d185e160e38a5b07078943817e051d3579b9400493765e"
+                  },
+                  {
+                      "path":  "resources/hardware-sensor/HardwareSensorHost.exe.config",
+                      "bytes":  176,
+                      "sha256":  "ad8267122c40d37dcd9d99e1412d763187a1825732f378db8867f3ecf675cf70"
+                  },
+                  {
+                      "path":  "resources/hardware-sensor/HidSharp.dll",
+                      "bytes":  262792,
+                      "sha256":  "d86690efde30ea9179f669320f39148853793b743a98b531afeaf30598e22f54"
+                  },
+                  {
+                      "path":  "resources/hardware-sensor/LICENSE.txt",
+                      "bytes":  17098,
+                      "sha256":  "2684de17300e0a434686f1ec7f8af6045207a4b457a3fe04b2b9ce655e7c5d50"
+                  },
+                  {
+                      "path":  "resources/hardware-sensor/LibreHardwareMonitorLib.dll",
+                      "bytes":  1203200,
+                      "sha256":  "6ebc194316536ba61af5be24508ad9fcbb2ecc685e716c12e787c79530f66bf0"
+                  },
+                  {
+                      "path":  "resources/hardware-sensor/RAMSPDToolkit-NDD.dll",
+                      "bytes":  233472,
+                      "sha256":  "b6882354c7c8ec186617e421507743dbfae09c5c1fc24cef76a1d0c0c26651de"
+                  },
+                  {
+                      "path":  "resources/hardware-sensor/System.Buffers.dll",
+                      "bytes":  23816,
+                      "sha256":  "2d78d770c9cb997199154ae8c018b9f1d1efbc86729f7264dde6dbad2a12cac3"
+                  },
+                  {
+                      "path":  "resources/hardware-sensor/System.CodeDom.dll",
+                      "bytes":  34056,
+                      "sha256":  "adab61ffc51ef97ad6f3da0af3aa6fa4324db70f817e6d31fc765f53dc3d2881"
+                  },
+                  {
+                      "path":  "resources/hardware-sensor/System.Memory.dll",
+                      "bytes":  145200,
+                      "sha256":  "d5e8e4866f9cfa66f7765660f84b210198893e55335487afe5ebda342c0e913d"
+                  },
+                  {
+                      "path":  "resources/hardware-sensor/System.Numerics.Vectors.dll",
+                      "bytes":  110344,
+                      "sha256":  "20c2fa81b8c70d651099d762954f285fd4f942e63b2d7217c145dab8d4b2f4c9"
+                  },
+                  {
+                      "path":  "resources/hardware-sensor/System.Runtime.CompilerServices.Unsafe.dll",
+                      "bytes":  19256,
+                      "sha256":  "08cbd7278b66f1e68425a82d4b97181a4130d93e3dd91831407aba7212ccdacf"
+                  },
+                  {
+                      "path":  "resources/hardware-sensor/System.Security.AccessControl.dll",
+                      "bytes":  35952,
+                      "sha256":  "ff14c5f628b9a6798d173aefbba0a43d61e66f715108e2576ac0d3dfab9071d0"
+                  },
+                  {
+                      "path":  "resources/hardware-sensor/System.Security.Principal.Windows.dll",
+                      "bytes":  18312,
+                      "sha256":  "b4d8e15adc235d0e858e39b5133e5d00a4baa8c94f4f39e3b5e791b0f9c0c806"
+                  },
+                  {
+                      "path":  "resources/hardware-sensor/System.Threading.AccessControl.dll",
+                      "bytes":  34568,
+                      "sha256":  "5e3a3902f04f840c0fc1f9c2f249f804f6cfdf7901b2e06778bc2a4603ae4694"
+                  },
+                  {
+                      "path":  "resources/hardware-sensor/THIRD-PARTY-LICENSES.txt",
+                      "bytes":  26388,
+                      "sha256":  "c8ffa3402809c859a9a526903134868ccee8afac77e1a65be399ebb1c25fdc33"
+                  },
+                  {
+                      "path":  "resources/hardware-sensor/manifest.json",
+                      "bytes":  2856,
+                      "sha256":  "99e5d323af1f26202c1310d4282f3faf80f6523e31dd5e566df0973b0688f77a"
+                  },
+                  {
+                      "path":  "run.bat",
+                      "bytes":  61,
+                      "sha256":  "7b6d24ebadf10cca85efa6472430eef68a6d3e7cd958135349e796fa7300d212"
+                  },
+                  {
+                      "path":  "scripts/build-all.mjs",
+                      "bytes":  756,
+                      "sha256":  "4c936c7a02d5fc77dab9707a85e95e405ef88c2cbc31ef7ee696c0f752bc4fd6"
+                  },
+                  {
+                      "path":  "scripts/build-sensor-host.mjs",
+                      "bytes":  1947,
+                      "sha256":  "0cbb1316b95e37de57b4fe3076dae46059dc85470453cb062ec06be9e232e453"
+                  },
+                  {
+                      "path":  "scripts/build.mjs",
+                      "bytes":  1749,
+                      "sha256":  "c20ead7ca10a404887aa29c2de3ff66750072dc77128d18f39a9edec081db731"
+                  },
+                  {
+                      "path":  "scripts/clean.mjs",
+                      "bytes":  432,
+                      "sha256":  "fa7e2cd58525499bed8622a0daee6fe8f6e13be74ea77467ee932eb1fe92a51d"
+                  },
+                  {
+                      "path":  "scripts/package.mjs",
+                      "bytes":  1403,
+                      "sha256":  "9e193bd84e613930ab21711bb450b5cb0fd36de1e2ad87bec9e861a3a64d2329"
+                  },
+                  {
+                      "path":  "scripts/sign-license.js",
+                      "bytes":  2803,
+                      "sha256":  "cc5f6c906548f4627be55836846171d439192984d3435f0796d4afac2a23bf7f"
+                  },
+                  {
+                      "path":  "scripts/verify-artifacts.mjs",
+                      "bytes":  4574,
+                      "sha256":  "f1d0fe514b8c78f935b8e283c2f236869bd32237761adc16bf4bdd6b14cf4968"
+                  },
+                  {
+                      "path":  "scripts/verify-project.mjs",
+                      "bytes":  6409,
+                      "sha256":  "fcb00a779be5a81baf94ac75003300308b0c417455f501f97c71b2f340c13561"
+                  },
+                  {
+                      "path":  "src/custom/canvas-fullscreen.html",
+                      "bytes":  6675,
+                      "sha256":  "0ba8df0a661c32e2e3fe94ca5ad6aa5aa142b93711fa19c94c8c8bd3b0f1d263"
+                  },
+                  {
+                      "path":  "src/custom/canvas-fullscreen.js",
+                      "bytes":  11352,
+                      "sha256":  "5437b971605a8430636c2b846b9884b49bbed66bbd6cec99216dee58bf357c33"
+                  },
+                  {
+                      "path":  "src/custom/canvas-region.html",
+                      "bytes":  5701,
+                      "sha256":  "4745c64f0009d61ec0e5640158d87291783aa236724c5ab6038cde90528cfb16"
+                  },
+                  {
+                      "path":  "src/custom/canvas-region.js",
+                      "bytes":  18293,
+                      "sha256":  "6ce85d8d05724f68139fdbcf56168e644c4faf05a5fddf7d5c5b326bd0c38581"
+                  },
+                  {
+                      "path":  "src/custom/custom.js",
+                      "bytes":  90642,
+                      "sha256":  "3cb34235e30bfef2fca7e67f5e564ccef1905401b6f661a8e07de6f1e601c8af"
+                  },
+                  {
+                      "path":  "src/custom/index.html",
+                      "bytes":  47847,
+                      "sha256":  "3e2a9bc7db33bda4b22a6285b0d77f1d6347bf0c52ff285dfa6023057f5aebd6"
+                  },
+                  {
+                      "path":  "src/custom/preload.js",
+                      "bytes":  2197,
+                      "sha256":  "065f7719142b7d9248f001292ff7ccfadedaa38270037938d8d27421a2e05fe1"
+                  },
+                  {
+                      "path":  "src/main/codex-desktop-bridge.js",
+                      "bytes":  9488,
+                      "sha256":  "dc8fecc86e06e85309dc56bc4f7d55622c2ab0582410a018a1d08f3691b647ba"
+                  },
+                  {
+                      "path":  "src/main/codex-monitor.js",
+                      "bytes":  57973,
+                      "sha256":  "ebbb40703d989f349d4fc52c750deca1e94a7624b5ae76e2495e6ec5a25818ab"
+                  },
+                  {
+                      "path":  "src/main/elevation-restart.js",
+                      "bytes":  4069,
+                      "sha256":  "59e66b5dc0dbd66f66abea25d2b28d380b6fa0d5e53898f13b361b3c1c672301"
+                  },
+                  {
+                      "path":  "src/main/gpu-monitor.js",
+                      "bytes":  7170,
+                      "sha256":  "ee1a23e4d066cfb9b8246bf11debb0d400321540fc202ecc900492b2bcf640e6"
+                  },
+                  {
+                      "path":  "src/main/hardware-sensor-monitor.js",
+                      "bytes":  19462,
+                      "sha256":  "50e5f679a24f8a792e296163c8508fd3ef1c02f49f36a8712734bd9492232752"
+                  },
+                  {
+                      "path":  "src/main/index.js",
+                      "bytes":  39495,
+                      "sha256":  "2f271a55c07ebeba2c8f7bff91b7bb9727b1196d97ced98928c1007df90b5271"
+                  },
+                  {
+                      "path":  "src/main/license.js",
+                      "bytes":  4339,
+                      "sha256":  "5cb3f13d4788bdbfae6d6e452fe2cfa8b4da8e985826d585bcb416a04c1fb39c"
+                  },
+                  {
+                      "path":  "src/main/monitor-metrics.js",
+                      "bytes":  31899,
+                      "sha256":  "ba4c6f92670fa2b5e920a8dffd59732c17a29f5268bafec5be034fa7d15a9ab9"
+                  },
+                  {
+                      "path":  "src/main/preload.js",
+                      "bytes":  7774,
+                      "sha256":  "d587d27cf22874757ccd3995feaba8776ceacb517ff7cae809003c4612bcca0f"
+                  },
+                  {
+                      "path":  "src/main/system-monitor.js",
+                      "bytes":  71237,
+                      "sha256":  "d39cb4c4682fafbcf9ac4dc99528b5b56f863c3ecda4f847f83069def78c4ff0"
+                  },
+                  {
+                      "path":  "src/main/window-lifecycle.js",
+                      "bytes":  5145,
+                      "sha256":  "1ef06542f71a37b2c8653145d29b82798705b6c1f23dd2650ac14469fe7df2ca"
+                  },
+                  {
+                      "path":  "src/renderer/codex-companion.js",
+                      "bytes":  51602,
+                      "sha256":  "cbb4d46128ec6c1db17267f9cd0f3b7e4ec0092de09dc6744c6246608bbacf68"
+                  },
+                  {
+                      "path":  "src/renderer/codex-motion.js",
+                      "bytes":  7332,
+                      "sha256":  "e934f5a0624e90181371dc1baafc388e03eb5919c6ff2d07db93974dbcfd1ea5"
+                  },
+                  {
+                      "path":  "src/renderer/codex-view-state.js",
+                      "bytes":  2401,
+                      "sha256":  "0c6bc8b20650590785ca6fe154281493b4aeea0b6f40bca14ea7ff5f6edef5e4"
+                  },
+                  {
+                      "path":  "src/renderer/dashboard-model.js",
+                      "bytes":  7721,
+                      "sha256":  "a40a75ba58a966e7c4bf8c09ae9211e1cf0d3024dce3369562ac4dc2d1c62556"
+                  },
+                  {
+                      "path":  "src/renderer/dashboard-panel.js",
+                      "bytes":  67124,
+                      "sha256":  "3df246dd5e54c12c3c4e4575ba66e11b571d36582f16fd2c1fb5dff7d61f2fd2"
+                  },
+                  {
+                      "path":  "src/renderer/index.css",
+                      "bytes":  20406,
+                      "sha256":  "6758ef127bb47065e3c3cf0fec0c842baffe274fc103b500235298d5a0c3856c"
+                  },
+                  {
+                      "path":  "src/renderer/index.html",
+                      "bytes":  1159,
+                      "sha256":  "2c7424c5e66f4b17cf701afd1194dd219a0ed884162f006cc99e306afddec5bc"
+                  },
+                  {
+                      "path":  "src/renderer/input.js",
+                      "bytes":  11947,
+                      "sha256":  "eea74b660a16f331264864b55f32d8e1fedb78403fdc07bac8a8266789edd7a4"
+                  },
+                  {
+                      "path":  "src/renderer/main.js",
+                      "bytes":  51045,
+                      "sha256":  "2d07d115d84dd654c6a90b3aff7d0f0fb41e03fe394b628eca81c8f49ee21861"
+                  },
+                  {
+                      "path":  "src/renderer/markdown.js",
+                      "bytes":  6203,
+                      "sha256":  "58a77e338c0c88f2ffeb22ff93e7f67f88f11c94763db963d85398c09304a9e8"
+                  },
+                  {
+                      "path":  "src/renderer/monitor-visuals.js",
+                      "bytes":  5712,
+                      "sha256":  "4f48836d30c41462156c9c40408e434cfa3d1c8dbcd05e35c57517562ebea0d1"
+                  },
+                  {
+                      "path":  "src/renderer/panel-layout.js",
+                      "bytes":  2576,
+                      "sha256":  "11fd6b9dcfbf1600c23d4b8348529b8346338c281642aca739e476743e85d63c"
+                  },
+                  {
+                      "path":  "src/renderer/panel.js",
+                      "bytes":  46,
+                      "sha256":  "c83162ac0b192e05e270b0ffbdf9e7e90f0d00dc64b1e3c2802e8879b5a5b480"
+                  },
+                  {
+                      "path":  "src/renderer/physics.js",
+                      "bytes":  15924,
+                      "sha256":  "7df689cc69ca9d9f30368db6f9cf21c5f2e6e0840cd5a0a8fc123467e71ab819"
+                  },
+                  {
+                      "path":  "src/renderer/rope.js",
+                      "bytes":  4431,
+                      "sha256":  "8cbe75186a690419ee140d98be06e0e0a7a1766e1bc9b63204d82a294fb26f22"
+                  },
+                  {
+                      "path":  "src/renderer/settings.js",
+                      "bytes":  33291,
+                      "sha256":  "0bc5bdda21a8d8061a7fb5b25c1b712cce6de423f711ccca0a5915458373bc7e"
+                  },
+                  {
+                      "path":  "src/renderer/skin-selector.js",
+                      "bytes":  9059,
+                      "sha256":  "421048e032344aa499bf94a12c6961cb54f4b5796c4f4095a0bc9b3439caa587"
+                  },
+                  {
+                      "path":  "src/renderer/state-machine.js",
+                      "bytes":  6668,
+                      "sha256":  "195b870747351f4acf1637dab74550421c3fc76ebd393941c10769e3da1e5c0d"
+                  },
+                  {
+                      "path":  "src/renderer/velocity-tracker.js",
+                      "bytes":  2293,
+                      "sha256":  "7a3f0305c21532d9e705c4e57750aeb2b9723b8a39e9c1b9e711dd0e864dde8a"
+                  },
+                  {
+                      "path":  "src/shared/codex-integration.js",
+                      "bytes":  9000,
+                      "sha256":  "bccb89fb9f6fceaecbbbe8cd1c057ec0f2164ab5de3ed35b63dfbc206a88ee7e"
+                  },
+                  {
+                      "path":  "src/shared/monitor-config-draft.js",
+                      "bytes":  951,
+                      "sha256":  "efca585d79f0960715bf5a33fcd735b393654b74b088fddceab702a0797bb440"
+                  },
+                  {
+                      "path":  "src/shared/monitor-panel-config.js",
+                      "bytes":  7672,
+                      "sha256":  "f845b8574bd83ee83706d9856a62d29dc6b57e98f8f43966ee23579aad08cf63"
+                  },
+                  {
+                      "path":  "tests/codex-desktop-bridge.test.mjs",
+                      "bytes":  4013,
+                      "sha256":  "17f28d0e0bc37e4ecb3d4c051a78927a763e5bf6cd2ee9618db4476a9e96137d"
+                  },
+                  {
+                      "path":  "tests/codex-integration.test.mjs",
+                      "bytes":  33661,
+                      "sha256":  "88359a4bb06695fa6a7bc75a71f2b503593be614e3623b80eb4189f660d74c23"
+                  },
+                  {
+                      "path":  "tests/dashboard-model.test.mjs",
+                      "bytes":  4473,
+                      "sha256":  "4e6c3da90f2507cf38b8bf223cba61de1aea1920a5d08762d62c58f758475589"
+                  },
+                  {
+                      "path":  "tests/elevation-restart.test.mjs",
+                      "bytes":  2914,
+                      "sha256":  "9523911f07c17ca73716f681505f270154f56f634d3e82c96397cab99c733792"
+                  },
+                  {
+                      "path":  "tests/gpu-monitor.test.mjs",
+                      "bytes":  4403,
+                      "sha256":  "53403a1f6f0008fd0dd5a368c5859124420919d9a8c38203d06a07bdfe1fe63e"
+                  },
+                  {
+                      "path":  "tests/hardware-sensor-monitor.test.mjs",
+                      "bytes":  7556,
+                      "sha256":  "74d38d4941338c278bd1876bc6f6aa6bc7abd08ec54726027f340832f2319de1"
+                  },
+                  {
+                      "path":  "tests/markdown.test.mjs",
+                      "bytes":  1345,
+                      "sha256":  "29daf43910083325291caca6ce0238b2c766cf3ede7a91fee0c8029bf8d6ac5f"
+                  },
+                  {
+                      "path":  "tests/monitor-config-draft.test.mjs",
+                      "bytes":  1325,
+                      "sha256":  "168ed264813de8f77322d21e13101aca51a396c88426467a929cb999387ae7ad"
+                  },
+                  {
+                      "path":  "tests/monitor-metrics.test.mjs",
+                      "bytes":  4994,
+                      "sha256":  "86bcd8004f885d69eaf6b810d22f2531e142e8a38bafdd19f3c8e7acca669579"
+                  },
+                  {
+                      "path":  "tests/monitor-panel-config.test.mjs",
+                      "bytes":  3363,
+                      "sha256":  "f0a9855f205b56e1a989c2a2e54b1eee16b4efc8e904a056a1bb2d622da7cf01"
+                  },
+                  {
+                      "path":  "tests/monitor-visuals.test.mjs",
+                      "bytes":  2902,
+                      "sha256":  "0c7fc6d99822ed200c686ebc174b1aa33a2ee9bff21a8c1f33b64531091cd9df"
+                  },
+                  {
+                      "path":  "tests/panel-layout.test.mjs",
+                      "bytes":  2843,
+                      "sha256":  "3143d87ecb02223c7b838701203bb8c951581c0b80eb9743e47220036b88f740"
+                  },
+                  {
+                      "path":  "tests/system-monitor.test.mjs",
+                      "bytes":  8195,
+                      "sha256":  "c9ebe42c42d4f2c6bff3817ad5b2696a316185a5a58a6ff411404d50000dd382"
+                  },
+                  {
+                      "path":  "tests/window-lifecycle.test.mjs",
+                      "bytes":  5734,
+                      "sha256":  "4238a12b4778bdc5f7400d1d8c0efdfcbac4467cbcebd67e98416403e3930c3e"
+                  },
+                  {
+                      "path":  "third_party/LibreHardwareMonitor/LICENSE.txt",
+                      "bytes":  17098,
+                      "sha256":  "2684de17300e0a434686f1ec7f8af6045207a4b457a3fe04b2b9ce655e7c5d50"
+                  },
+                  {
+                      "path":  "third_party/LibreHardwareMonitor/README.md",
+                      "bytes":  456,
+                      "sha256":  "879cf66e9603a45fce614d0c6b2c7cfd50a311ae911cbbf29b72c75a022a1585"
+                  },
+                  {
+                      "path":  "third_party/LibreHardwareMonitor/THIRD-PARTY-LICENSES.txt",
+                      "bytes":  26388,
+                      "sha256":  "c8ffa3402809c859a9a526903134868ccee8afac77e1a65be399ebb1c25fdc33"
+                  },
+                  {
+                      "path":  "tsconfig.json",
+                      "bytes":  330,
+                      "sha256":  "c34780e8afab3d6604245fb8bee0ef7de3ae1f5ed5b0a66c2da58597846bb796"
+                  },
+                  {
+                      "path":  "uninstaller-icon.ico",
+                      "bytes":  8336,
+                      "sha256":  "4830a35d5c47431e81bbe7f7288710b969edd552e01913aefb622121462ba50b"
+                  },
+                  {
+                      "path":  "vite.main.build.js",
+                      "bytes":  733,
+                      "sha256":  "76d1985e4cf5fe1e53860778a32bbf5023be81eecb7b462d807851eac1347f5e"
+                  },
+                  {
+                      "path":  "vite.main.config.js",
+                      "bytes":  629,
+                      "sha256":  "34140c0ca144a1860ad8e4f2f794496f0e62f5ef9ed5e44ed1bd9591e9efd384"
+                  },
+                  {
+                      "path":  "vite.preload.config.js",
+                      "bytes":  481,
+                      "sha256":  "f78ff8f00441f57a06c793afa648f5e41f73d075e7bd9ebdfedda446357ce2ce"
+                  },
+                  {
+                      "path":  "vite.renderer.config.js",
+                      "bytes":  537,
+                      "sha256":  "01ac4fd4474595f9db155b379f0838c08ab1a5a4b8b59c63fd57afecad7f08ab"
+                  }
+              ]
+}

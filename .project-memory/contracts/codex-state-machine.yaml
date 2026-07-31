@@ -1,0 +1,66 @@
+status: Confirmed
+evidence:
+  - src/shared/codex-integration.js
+  - src/main/codex-monitor.js
+  - src/renderer/codex-view-state.js
+  - src/renderer/codex-motion.js
+activity_priority:
+  - needsInput
+  - blocked
+  - ready
+  - running
+  - silent
+  - disconnected
+connection_states:
+  - disconnected
+  - waitingIdle
+  - connecting
+  - connected
+  - temporaryReadOnly
+  - error
+pet_moods:
+  needsInput: attention
+  blocked: pain
+  ready: happy
+  running: working
+  silent: idle
+  disconnected: idle
+view_invariants:
+  - A manually opened detail remains open across task snapshots.
+  - A new notification queues while another task detail is being viewed or edited.
+  - Reply and approval keep the detail view open.
+  - Only close or back explicitly dismisses a user-opened detail.
+  - An opened detail refreshes messages when the task update timestamp advances.
+  - User, assistant, tool call, and tool result messages remain visually distinguishable.
+  - Tool calls and tool results render as one-line disclosures by default and expand only on user activation.
+  - A tool disclosure keeps its expanded state when background message refreshes rerender the detail.
+  - The task connection list remains visible for both direct and desktop reply transports when tasks exist.
+  - Every synchronized task in the Tasks and conversations list has a dedicated navigation button that opens the existing Monitor conversation detail even when the task has zero unread events.
+  - Task navigation and connection control are separate actions: the left task button opens the conversation, while the right button connects or disconnects in direct mode and opens the exact Codex task in desktop mode.
+  - Opening a task from configuration closes the configuration state cleanly, preserves the manual detail across background snapshots, and remains keyboard accessible through the native task button.
+ownership_rules:
+  - A running task accepts replies through turn/steer only after App Server resolves its real active turn id.
+  - A running task without a resolved active turn remains temporaryReadOnly and is retried automatically.
+  - Idle desired connections resume through App Server before accepting replies.
+  - replyTransport direct sends through the connected Monitor App Server and stays in Monitor.
+  - replyTransport desktop never starts, resumes, subscribes, or writes through a Monitor-owned App Server.
+  - replyTransport desktop is a Windows Codex-client integration: it copies the draft for manual fallback, opens the exact task, recognizes ChatGPT.exe or Codex.exe without an install path or localized title, prefers the deep-link foreground process when multiple candidates exist, and otherwise activates the newest candidate window.
+  - The bridge locates an enabled ProseMirror edit control in the active client window and calls SetFocus instead of depending on compact-layout autofocus; maximized, restored, high-DPI, and multi-monitor layouts use the same coordinate-free UI Automation path.
+  - The desktop bridge transports the message as UTF-8 Base64, writes it through UI Automation ValuePattern with exact readback, and invokes the enabled composer submit button; Enter followed conditionally by Ctrl+Enter is only a compatibility fallback when the button exposes no InvokePattern.
+  - The bridge never presses both keyboard shortcuts after a successful send; it retries with Ctrl+Enter only while the composer still contains text, restoring the exact original message first.
+  - A desktop bridge focus or submit failure preserves the Monitor draft and reports an error instead of claiming the message was sent.
+  - Slow client startup and navigation are bounded by 12-second window and composer discovery deadlines inside a 30-second bridge timeout.
+  - Desktop submission is reported successful only after the selected task's local session records a new matching user message after the send timestamp; confirmation polls up to 40 times at 500 ms and inspects the newest 100 messages.
+  - Persisted direct-mode desiredThreadIds never produce a connecting state or a Monitor App Server connection while replyTransport is desktop.
+  - codex://threads/{id} locates an existing client task but has no prompt or submit parameter; codex://new?prompt= creates a different task and is not a compatible reply path.
+  - Approval requires a real request id owned by the active managed connection.
+  - Unknown request types remain pending and direct the user to Codex.
+history_rules:
+  - Recent rollout discovery is bounded while explicitly selected task files are always retained.
+  - Large rollout files are tailed instead of read in full during the initial scan.
+  - App Server history hydrates a detail when the local rollout history is truncated.
+motion_rules:
+  - running injects alternating impulses into the existing pendulum through a normalized grip point
+  - blocked lengthens the rope, drops and rebounds, then climbs through the same grip joint
+  - dragging or opening an interaction surface pauses active force
+  - reduced-motion keeps a static pixel state marker

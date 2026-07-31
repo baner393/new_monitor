@@ -2,7 +2,9 @@ import {
   CODEX_ACTIVITY,
   CODEX_CONNECTION,
   codexMoodForActivity,
+  compactCodexTechnicalPreview,
   normalizeCodexLocale,
+  shouldShowCodexConnectionList,
 } from '../shared/codex-integration.js';
 import {
   closeCodexTask,
@@ -10,6 +12,7 @@ import {
   openCodexTask,
   reconcileCodexViewState,
 } from './codex-view-state.js';
+import { renderMarkdown } from './markdown.js';
 
 function element(tag, className, text = '') {
   const node = document.createElement(tag);
@@ -25,41 +28,47 @@ function clamp(value, min, max) {
 const TEXT = {
   'zh-CN': {
     liveTasks: '任务动态', emptyTasks: '目前没有运行中、未读或已连接的任务', close: '关闭', back: '返回任务列表',
-    openCodex: '打开 Codex', previousPage: '上一页', nextPage: '下一页', send: '发送', replyPlaceholder: '直接回复这个任务…',
+    openCodex: '打开 Codex', previousPage: '上一页', nextPage: '下一页', send: '发送', handoff: '复制并打开 Codex', replyPlaceholder: '直接回复这个任务…', desktopPlaceholder: '输入后复制到 Codex 同一任务…',
     configTitle: '连接 Codex', configIntro: '同步全部任务；只有建立可操作连接的任务才能在气泡中直接回复和批准。',
     sync: '消息同步', control: '气泡回复与批准', enable: '启用 Codex 接入', disable: '断开同步', reconnect: '重新检测',
     dataLocation: '对话数据位置', selectHome: '选择其他目录', restoreAuto: '恢复自动检测', advanced: '高级设置',
-    allowControl: '允许气泡回复与批准', allowControlNote: '连接已有任务时会等待它空闲，避免与 Codex 同时操作。',
+    allowControl: '允许气泡回复与批准', allowControlNote: '开启后，可在任务气泡中发送消息并处理 Codex 的确认请求。',
+    replyTransport: '回复通道', replyDirect: 'Monitor 直连', replyDesktop: 'Codex 客户端兼容',
+    replyDirectNote: '消息发送后留在当前窗口，继续查看 Codex 的回复。',
+    replyDesktopNote: '兼容模式不启动 Monitor 的第二 App Server。回复会复制到剪贴板并打开 Codex 的同一任务，请在客户端粘贴发送，以保持单一上下文。',
     localOnly: '数据只在本机读取，不需要 API Key。未连接的任务仍会提醒，并可准确跳转到 Codex。',
     autoPath: '当前用户的 .codex（自动检测）', noPath: '尚未选择目录', connect: '连接', disconnect: '断开', retry: '重试',
-    noMessages: '暂时还没有可显示的回复。', loadOlder: '加载更早消息', you: '你', codex: 'Codex',
+    noMessages: '暂时还没有可显示的回复。', loadOlder: '加载更早消息', you: '你', codex: 'Codex', toolCall: '工具调用', toolResult: '工具结果',
     submitAnswers: '提交回答', choose: '请选择', custom: '自己输入…', inputAnswer: '输入回答', answerAll: '请完成所有问题后再提交',
     accept: '本次允许', acceptForSession: '本次会话允许', decline: '拒绝', cancel: '拒绝并停止',
-    goHandle: '前往 Codex 处理', sent: '消息已发送，正在等待 Codex 回复。', handled: '操作已提交，等待 Codex 继续。',
+    goHandle: '前往 Codex 处理', sent: '消息已发送，正在等待 Codex 回复。', handedOff: '消息已通过 Codex 客户端提交，正在等待回复。', desktopSubmitFailed: '已复制消息并打开 Codex，但客户端自动提交失败；草稿已保留。', handled: '操作已提交，等待 Codex 继续。',
     statusRunning: '运行中', statusNeedsInput: '等待你', statusReady: '新回复', statusBlocked: '遇到问题', statusDisconnected: '未连接', statusSilent: '已同步',
     connDisconnected: '未连接', connWaitingIdle: '等待任务空闲', connConnecting: '正在连接', connConnected: '已连接',
     connReadOnly: 'Codex 正在运行，暂时只读', connError: '连接出错', childRunning: '个子任务运行中',
-    connected: 'Codex 消息已同步', attention: '接入需要处理', readyConnect: '已准备好连接', controlReady: '控制通道已就绪',
-    controlWaiting: '消息正常；控制通道后台连接中', disabled: '尚未启用', messagesNormal: '同步正常', tasksLabel: '任务连接',
+    connected: 'Codex 消息已同步', attention: '接入需要处理', readyConnect: '已准备好连接', controlReady: '控制通道已就绪', clientUnified: '由 Codex 客户端统一',
+    controlWaiting: '消息正常；控制通道后台连接中', disabled: '尚未启用', messagesNormal: '同步正常', tasksLabel: '任务与会话', openConversation: '查看对话',
   },
   'en-US': {
     liveTasks: 'Task activity', emptyTasks: 'No running, unread, or connected tasks', close: 'Close', back: 'Back to tasks',
-    openCodex: 'Open Codex', previousPage: 'Previous', nextPage: 'Next', send: 'Send', replyPlaceholder: 'Reply to this task…',
+    openCodex: 'Open Codex', previousPage: 'Previous', nextPage: 'Next', send: 'Send', handoff: 'Copy & open Codex', replyPlaceholder: 'Reply to this task…', desktopPlaceholder: 'Copy a reply to the same Codex task…',
     configTitle: 'Connect Codex', configIntro: 'Sync every task. Inline reply and approval are available after a control connection is established.',
     sync: 'Message sync', control: 'Bubble reply and approval', enable: 'Enable Codex integration', disable: 'Stop syncing', reconnect: 'Check again',
     dataLocation: 'Conversation data location', selectHome: 'Choose another folder', restoreAuto: 'Use automatic detection', advanced: 'Advanced settings',
-    allowControl: 'Allow bubble replies and approvals', allowControlNote: 'Existing tasks wait until idle before connecting, preventing simultaneous control.',
+    allowControl: 'Allow bubble replies and approvals', allowControlNote: 'Send messages and handle Codex confirmation requests from a task bubble.',
+    replyTransport: 'Reply channel', replyDirect: 'Monitor direct', replyDesktop: 'Codex client compatible',
+    replyDirectNote: 'Stay in this window after sending and continue reading Codex replies here.',
+    replyDesktopNote: 'Compatible mode does not start Monitor\'s second App Server. It copies the reply and opens the same Codex task; paste and send there to preserve one context.',
     localOnly: 'Data stays on this computer and needs no API key. Unconnected tasks can still notify and open in Codex.',
     autoPath: 'Current user .codex (automatic)', noPath: 'No folder selected', connect: 'Connect', disconnect: 'Disconnect', retry: 'Retry',
-    noMessages: 'No visible response yet.', loadOlder: 'Load earlier messages', you: 'You', codex: 'Codex',
+    noMessages: 'No visible response yet.', loadOlder: 'Load earlier messages', you: 'You', codex: 'Codex', toolCall: 'Tool call', toolResult: 'Tool result',
     submitAnswers: 'Submit answers', choose: 'Choose', custom: 'Enter another answer…', inputAnswer: 'Enter answer', answerAll: 'Answer every question before submitting',
     accept: 'Allow once', acceptForSession: 'Allow for session', decline: 'Decline', cancel: 'Decline and stop',
-    goHandle: 'Handle in Codex', sent: 'Message sent. Waiting for Codex.', handled: 'Action submitted. Waiting for Codex to continue.',
+    goHandle: 'Handle in Codex', sent: 'Message sent. Waiting for Codex.', handedOff: 'Message submitted through the Codex client. Waiting for its reply.', desktopSubmitFailed: 'The message was copied and Codex opened, but automatic client submission failed. The draft was preserved.', handled: 'Action submitted. Waiting for Codex to continue.',
     statusRunning: 'Running', statusNeedsInput: 'Needs you', statusReady: 'New reply', statusBlocked: 'Problem', statusDisconnected: 'Disconnected', statusSilent: 'Synced',
     connDisconnected: 'Not connected', connWaitingIdle: 'Waiting until idle', connConnecting: 'Connecting', connConnected: 'Connected',
     connReadOnly: 'Codex is running; temporarily read-only', connError: 'Connection error', childRunning: 'child tasks running',
-    connected: 'Codex messages are synced', attention: 'Integration needs attention', readyConnect: 'Ready to connect', controlReady: 'Control channel ready',
-    controlWaiting: 'Messages are synced; control is connecting in the background', disabled: 'Not enabled', messagesNormal: 'Sync is healthy', tasksLabel: 'Task connections',
+    connected: 'Codex messages are synced', attention: 'Integration needs attention', readyConnect: 'Ready to connect', controlReady: 'Control channel ready', clientUnified: 'Unified through Codex client',
+    controlWaiting: 'Messages are synced; control is connecting in the background', disabled: 'Not enabled', messagesNormal: 'Sync is healthy', tasksLabel: 'Tasks & conversations', openConversation: 'Open conversation',
   },
 };
 
@@ -82,6 +91,8 @@ export class CodexCompanion {
     this.notifiedInFlight = new Set();
     this.drafts = new Map();
     this.messagePages = new Map();
+    this.expandedToolMessages = new Set();
+    this.inlineError = '';
     this.positionKeys = new Map();
     this.sizes = new Map();
     this.locale = normalizeCodexLocale(navigator.language);
@@ -170,6 +181,7 @@ export class CodexCompanion {
       </div>
       <details class="codex-advanced"><summary></summary>
         <label class="codex-switch-row"><span><strong class="codex-control-setting-label"></strong><small class="codex-control-setting-note"></small></span><input class="codex-managed" type="checkbox"><i></i></label>
+        <label class="codex-select-row"><span><strong class="codex-reply-transport-label"></strong><small class="codex-reply-transport-note"></small></span><select class="codex-reply-transport"><option value="direct"></option><option value="desktop"></option></select></label>
         <div class="codex-config-note"></div>
       </details>
       <footer class="codex-config-actions"><button class="codex-quiet-button codex-config-refresh" type="button"></button></footer>
@@ -212,6 +224,13 @@ export class CodexCompanion {
       }
     });
     this.bubble.querySelector('.codex-bubble-scroll').addEventListener('scroll', () => this.#onScroll());
+    this.bubble.querySelector('.codex-message-list').addEventListener('click', (event) => {
+      const link = event.target.closest?.('.codex-markdown-link');
+      if (!link) return;
+      event.preventDefault();
+      const href = link.dataset.href;
+      if (href) window.electronAPI.codex.openLink(href).catch((error) => this.#showBubbleError(error?.message || String(error)));
+    });
 
     this.configPanel.querySelector('.codex-config-close').addEventListener('click', () => this.closeConfig());
     this.configPanel.querySelector('.codex-select-home').addEventListener('click', () => this.#selectHome());
@@ -222,6 +241,7 @@ export class CodexCompanion {
     this.configPanel.querySelector('.codex-connect-button').addEventListener('click', () => this.#commitConfig({ enabled: true }));
     this.configPanel.querySelector('.codex-disconnect-button').addEventListener('click', () => this.#commitConfig({ enabled: false }));
     this.configPanel.querySelector('.codex-managed').addEventListener('change', () => this.#commitConfig({ enabled: this.config?.enabled === true }));
+    this.configPanel.querySelector('.codex-reply-transport').addEventListener('change', () => this.#commitConfig({ enabled: this.config?.enabled === true }));
     this.configPanel.querySelector('.codex-advanced').addEventListener('toggle', () => this.updatePosition(true));
     this.configPanel.querySelector('.codex-config-refresh').addEventListener('click', async () => {
       this.#setConfigBusy(true);
@@ -255,6 +275,9 @@ export class CodexCompanion {
     this.configPanel.querySelector('.codex-advanced summary').textContent = this.t('advanced');
     this.configPanel.querySelector('.codex-control-setting-label').textContent = this.t('allowControl');
     this.configPanel.querySelector('.codex-control-setting-note').textContent = this.t('allowControlNote');
+    this.configPanel.querySelector('.codex-reply-transport-label').textContent = this.t('replyTransport');
+    this.configPanel.querySelector('.codex-reply-transport option[value="direct"]').textContent = this.t('replyDirect');
+    this.configPanel.querySelector('.codex-reply-transport option[value="desktop"]').textContent = this.t('replyDesktop');
     this.configPanel.querySelector('.codex-config-note').textContent = this.t('localOnly');
     this.configPanel.querySelector('.codex-config-refresh').textContent = this.t('reconnect');
     this.configPanel.querySelector('.codex-disconnect-button').textContent = this.t('disable');
@@ -281,7 +304,15 @@ export class CodexCompanion {
     this.#renderTaskTray();
     this.#renderConfigStatus();
     this.#renderConnectionList();
-    if (this.viewState.mode !== 'closed') this.#renderBubble();
+    if (this.viewState.mode !== 'closed') {
+      this.#renderBubble();
+      const page = this.messagePages.get(this.viewState.threadId);
+      const sourceUpdatedAtMs = Number(this.#currentTask()?.updatedAtMs || 0);
+      if (page?.loaded && sourceUpdatedAtMs > Number(page.sourceUpdatedAtMs || 0)) {
+        page.sourceUpdatedAtMs = sourceUpdatedAtMs;
+        void this.#loadMessages(false, true);
+      }
+    }
     this.#emitMood();
     this.updatePosition();
     this.onInteractionChange?.();
@@ -481,6 +512,7 @@ export class CodexCompanion {
 
   #openTask(task) {
     this.#saveScroll();
+    this.inlineError = '';
     this.viewState = openCodexTask(this.viewState, task);
     this.trayOpen = false;
     this.taskTray.hidden = true;
@@ -506,8 +538,11 @@ export class CodexCompanion {
     this.bubble.querySelector('.codex-bubble-project').textContent = event.project || task?.project || 'Codex';
     this.bubble.querySelector('.codex-bubble-title').textContent = event.title || task?.title || 'Codex';
     this.bubble.querySelector('.codex-bubble-state').textContent = this.#statusLabel(event.activity || task?.activity);
-    this.bubble.querySelector('.codex-inline-error').textContent = '';
+    this.bubble.querySelector('.codex-inline-error').textContent = this.inlineError;
     const textarea = this.bubble.querySelector('textarea');
+    const desktopCompatible = this.config?.replyTransport === 'desktop';
+    this.bubble.querySelector('.codex-send-button').textContent = this.t(desktopCompatible ? 'handoff' : 'send');
+    textarea.placeholder = this.t(desktopCompatible ? 'desktopPlaceholder' : 'replyPlaceholder');
     if (document.activeElement !== textarea) textarea.value = this.drafts.get(this.viewState.threadId) || '';
 
     const compose = this.bubble.querySelector('.codex-bubble-compose');
@@ -522,7 +557,7 @@ export class CodexCompanion {
     if (event.kind === 'question' && event.requestId && event.supported !== false) this.#renderQuestions(event, questions);
     else if (event.requestId && event.supported !== false) this.#renderApprovalActions(event, actions);
     else if (event.requestId && event.supported === false) this.#renderOpenCodexAction(actions);
-    else if (task?.capabilities?.reply === true || event.canReply === true) compose.hidden = false;
+    else if (task?.capabilities?.reply === true) compose.hidden = false;
     else if (task?.connectionState && task.connectionState !== CODEX_CONNECTION.CONNECTED) notice.textContent = this.#connectionLabel(task.connectionState);
 
     const page = this.messagePages.get(this.viewState.threadId);
@@ -535,13 +570,21 @@ export class CodexCompanion {
   async #loadMessages(older = false, force = false) {
     const threadId = this.viewState.threadId;
     if (!threadId) return;
-    const current = this.messagePages.get(threadId) || { messages: [], nextCursor: null, total: 0, loaded: false, loading: false, scrollTop: null };
-    if (current.loading || (older && current.loaded && current.nextCursor === null)) return;
+    const current = this.messagePages.get(threadId) || {
+      messages: [], nextCursor: null, total: 0, loaded: false, loading: false,
+      scrollTop: null, sourceUpdatedAtMs: 0, refreshPending: false,
+    };
+    if (current.loading) {
+      if (force && !older) current.refreshPending = true;
+      return;
+    }
+    if (older && current.loaded && current.nextCursor === null) return;
     if (!force && !older && current.loaded) return;
     current.loading = true;
     this.messagePages.set(threadId, current);
     const scroller = this.bubble.querySelector('.codex-bubble-scroll');
     const previousHeight = scroller.scrollHeight;
+    const wasAtBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= 24;
     try {
       const result = await window.electronAPI.codex.getMessages(threadId, older ? current.nextCursor : null, 50);
       if (this.viewState.threadId !== threadId) return;
@@ -556,17 +599,26 @@ export class CodexCompanion {
       current.nextCursor = result.nextCursor;
       current.total = result.total;
       current.loaded = true;
+      current.sourceUpdatedAtMs = Math.max(
+        Number(current.sourceUpdatedAtMs || 0),
+        Number(this.#currentTask()?.updatedAtMs || 0),
+      );
       this.#renderMessages();
       requestAnimationFrame(() => {
         if (older) scroller.scrollTop += scroller.scrollHeight - previousHeight;
-        else if (current.scrollTop !== null) scroller.scrollTop = current.scrollTop;
-        else scroller.scrollTop = scroller.scrollHeight;
+        else if (wasAtBottom || current.scrollTop === null) scroller.scrollTop = scroller.scrollHeight;
+        else scroller.scrollTop = current.scrollTop;
         this.#updatePageStatus();
       });
     } catch (error) {
+      current.sourceUpdatedAtMs = 0;
       this.#showBubbleError(error?.message || String(error));
     } finally {
       current.loading = false;
+      if (current.refreshPending) {
+        current.refreshPending = false;
+        queueMicrotask(() => this.#loadMessages(false, true));
+      }
     }
   }
 
@@ -578,8 +630,34 @@ export class CodexCompanion {
     for (const message of page?.messages || []) {
       const article = element('article', 'codex-message-item');
       article.dataset.role = message.role;
-      article.append(element('div', 'codex-message-role', message.role === 'user' ? this.t('you') : this.t('codex')));
-      article.append(element('div', 'codex-message-text', message.message));
+      article.dataset.kind = message.kind || 'message';
+      const roleLabel = message.role === 'user' ? this.t('you')
+        : message.role === 'tool'
+          ? (message.kind === 'tool-result' ? this.t('toolResult') : this.t('toolCall'))
+          : this.t('codex');
+      if (message.role === 'tool') {
+        const messageKey = message.id || `${message.role}:${message.createdAtMs}:${message.message}`;
+        const disclosure = element('details', 'codex-tool-disclosure');
+        disclosure.open = this.expandedToolMessages.has(messageKey);
+        const summary = element('summary', 'codex-tool-summary');
+        summary.append(
+          element('span', 'codex-message-role', roleLabel),
+          element('span', 'codex-tool-preview', compactCodexTechnicalPreview(message.message)),
+        );
+        const body = element('div', 'codex-message-text', message.message);
+        disclosure.append(summary, body);
+        disclosure.addEventListener('toggle', () => {
+          if (disclosure.open) this.expandedToolMessages.add(messageKey);
+          else this.expandedToolMessages.delete(messageKey);
+        });
+        article.append(disclosure);
+        host.appendChild(article);
+        continue;
+      }
+      article.append(element('div', 'codex-message-role', roleLabel));
+      const body = element('div', 'codex-message-text');
+      body.innerHTML = renderMarkdown(message.message);
+      article.append(body);
       host.appendChild(article);
     }
     const eventText = this.viewState.event?.message;
@@ -669,15 +747,25 @@ export class CodexCompanion {
     if (!threadId || !text) return;
     this.#setBubbleBusy(true);
     try {
-      await window.electronAPI.codex.reply(threadId, text);
+      const result = await window.electronAPI.codex.reply(threadId, text);
+      if (result?.mode === 'desktop-submit' && result?.submitted !== true) {
+        throw new Error(result?.submitError || result?.openError || this.t('desktopSubmitFailed'));
+      }
+      this.inlineError = '';
       textarea.value = '';
       this.drafts.delete(threadId);
       if (this.viewState.eventId) await this.#markRead(this.viewState.eventId);
       this.viewState = {
         ...this.viewState,
-        event: { ...this.viewState.event, requestId: null, kind: 'task', activity: CODEX_ACTIVITY.RUNNING, message: this.t('sent') },
+        event: {
+          ...this.viewState.event,
+          requestId: null,
+          kind: 'task',
+          activity: CODEX_ACTIVITY.RUNNING,
+          message: this.t(result?.mode === 'desktop-submit' ? 'handedOff' : 'sent'),
+        },
       };
-      await this.#loadMessages(false, true);
+      if (result?.mode !== 'desktop-submit') await this.#loadMessages(false, true);
       this.#renderBubble();
     } catch (error) { this.#showBubbleError(error?.message || String(error)); }
     finally { this.#setBubbleBusy(false); }
@@ -745,6 +833,9 @@ export class CodexCompanion {
   #fillConfig() {
     const config = this.config || {};
     this.configPanel.querySelector('.codex-managed').checked = config.managedReplies !== false;
+    const replyTransport = config.replyTransport === 'desktop' ? 'desktop' : 'direct';
+    this.configPanel.querySelector('.codex-reply-transport').value = replyTransport;
+    this.configPanel.querySelector('.codex-reply-transport-note').textContent = this.t(replyTransport === 'desktop' ? 'replyDesktopNote' : 'replyDirectNote');
     this.configPanel.dataset.mode = config.homeMode || 'auto';
     this.configPanel.dataset.manualHome = config.manualHome || '';
     this.#setPendingMode(config.homeMode || 'auto');
@@ -776,6 +867,7 @@ export class CodexCompanion {
         ...this.config,
         enabled,
         managedReplies: this.configPanel.querySelector('.codex-managed').checked,
+        replyTransport: this.configPanel.querySelector('.codex-reply-transport').value,
         homeMode: this.configPanel.dataset.mode,
         manualHome: this.configPanel.dataset.manualHome || '',
       });
@@ -802,7 +894,10 @@ export class CodexCompanion {
       : enabled ? (this.snapshot.reason || this.t('controlWaiting')) : this.t('disabled');
     this.configPanel.querySelector('.codex-sync-state').textContent = connected ? this.t('messagesNormal') : enabled ? this.t('connConnecting') : this.t('disabled');
     this.configPanel.querySelector('.codex-reply-state').textContent = !this.config?.managedReplies
-      ? this.t('disabled') : this.snapshot.controlConnected ? this.t('controlReady') : enabled ? this.t('controlWaiting') : this.t('disabled');
+      ? this.t('disabled')
+      : this.config?.replyTransport === 'desktop'
+        ? this.t('replyDesktop')
+        : this.snapshot.controlConnected ? this.t('controlReady') : enabled ? this.t('controlWaiting') : this.t('disabled');
     const connectButton = this.configPanel.querySelector('.codex-connect-button');
     connectButton.hidden = connected;
     connectButton.textContent = this.t('enable');
@@ -816,16 +911,35 @@ export class CodexCompanion {
     for (const task of (this.snapshot?.tasks || [])) {
       const row = element('div', 'codex-connection-row');
       row.dataset.state = task.connectionState || CODEX_CONNECTION.DISCONNECTED;
+      const openButton = element('button', 'codex-connection-open');
+      openButton.type = 'button';
+      openButton.setAttribute('aria-label', `${this.t('openConversation')}: ${task.title || 'Codex'}`);
       const copy = element('div', 'codex-connection-copy');
       copy.append(element('strong', '', task.title || 'Codex'));
-      const status = task.connectionError || this.#connectionLabel(task.connectionState);
+      const desktopCompatible = this.config?.replyTransport === 'desktop';
+      const status = desktopCompatible
+        ? this.t('clientUnified')
+        : task.connectionError || this.#connectionLabel(task.connectionState);
       copy.append(element('small', '', `${task.project || 'Codex'} · ${status}`));
+      openButton.appendChild(copy);
+      openButton.addEventListener('click', () => {
+        this.closeConfig();
+        this.#openTask(task);
+      });
       const connected = task.connectionState !== CODEX_CONNECTION.DISCONNECTED;
-      const button = element('button', connected ? 'codex-quiet-button' : 'codex-save-button', connected ? this.t('disconnect') : this.t('connect'));
+      const button = element(
+        'button',
+        desktopCompatible || connected ? 'codex-quiet-button' : 'codex-save-button',
+        desktopCompatible ? this.t('openCodex') : connected ? this.t('disconnect') : this.t('connect'),
+      );
       button.type = 'button';
       button.addEventListener('click', async () => {
         button.disabled = true;
         try {
+          if (desktopCompatible) {
+            await window.electronAPI.codex.openApp(task.id, task.title);
+            return;
+          }
           const snapshot = connected
             ? await window.electronAPI.codex.disconnectThread(task.id)
             : await window.electronAPI.codex.connectThread(task.id);
@@ -834,11 +948,11 @@ export class CodexCompanion {
         } catch (error) { this.configPanel.querySelector('.codex-config-error').textContent = error?.message || String(error); }
         finally { button.disabled = false; }
       });
-      row.append(copy, button);
+      row.append(openButton, button);
       host.appendChild(row);
     }
     const section = this.configPanel.querySelector('.codex-thread-connections');
-    section.hidden = host.childElementCount === 0;
+    section.hidden = !shouldShowCodexConnectionList(this.config?.replyTransport, host.childElementCount);
   }
 
   #setBubbleBusy(busy) {
@@ -847,7 +961,10 @@ export class CodexCompanion {
   }
   #setConfigBusy(busy) {
     this.configPanel.classList.toggle('busy', busy);
-    this.configPanel.querySelectorAll('button, input').forEach((node) => { node.disabled = busy; });
+    this.configPanel.querySelectorAll('button, input, select').forEach((node) => { node.disabled = busy; });
   }
-  #showBubbleError(message) { this.bubble.querySelector('.codex-inline-error').textContent = message; }
+  #showBubbleError(message) {
+    this.inlineError = String(message || '');
+    this.bubble.querySelector('.codex-inline-error').textContent = this.inlineError;
+  }
 }

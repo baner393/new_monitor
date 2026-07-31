@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "MonitorPanelConfigV2",
+  "title": "MonitorPanelConfigV2",
+  "type": "object",
+  "required": ["version", "preset", "layout", "sensors", "motion"],
+  "properties": {
+    "version": { "const": 2 },
+    "preset": { "enum": ["minimal", "performance", "hardware", "full", "custom"] },
+    "layout": {
+      "type": "object",
+      "required": ["order", "enabled"],
+      "properties": {
+        "order": {
+          "type": "array",
+          "items": { "enum": ["cpu", "memory", "gpu", "network", "storage", "cooling", "power", "battery"] },
+          "minItems": 8,
+          "maxItems": 8,
+          "uniqueItems": true
+        },
+        "enabled": {
+          "type": "object",
+          "required": ["cpu", "memory", "gpu", "network", "storage", "cooling", "power", "battery"],
+          "additionalProperties": false,
+          "properties": {
+            "cpu": { "type": "boolean" }, "memory": { "type": "boolean" },
+            "gpu": { "type": "boolean" }, "network": { "type": "boolean" },
+            "storage": { "type": "boolean" }, "cooling": { "type": "boolean" },
+            "power": { "type": "boolean" }, "battery": { "type": "boolean" }
+          }
+        }
+      }
+    },
+    "sensors": {
+      "type": "object",
+      "required": ["visible", "temperatureDefaults", "temperatureOverrides"],
+      "properties": {
+        "visible": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "temperature": { "type": "boolean" }, "power": { "type": "boolean" },
+            "fan": { "type": "boolean" }, "voltage": { "type": "boolean" },
+            "storageHealth": { "type": "boolean" }
+          }
+        },
+        "temperatureDefaults": { "$ref": "#/$defs/thresholdMap" },
+        "temperatureOverrides": { "$ref": "#/$defs/thresholdMap" }
+      }
+    },
+    "motion": {
+      "type": "object",
+      "required": ["enabled", "mode"],
+      "properties": { "enabled": { "type": "boolean" }, "mode": { "const": "adaptive" } }
+    }
+  },
+  "$defs": {
+    "thresholdMap": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "array", "items": { "type": "number", "minimum": -20, "maximum": 150 },
+        "minItems": 4, "maxItems": 4
+      }
+    }
+  },
+  "x-status": "Confirmed",
+  "x-evidence": "src/shared/monitor-panel-config.js"
+}
