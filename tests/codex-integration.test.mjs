@@ -6,6 +6,7 @@ import test from 'node:test';
 
 import { CodexMonitor, parseCodexRollout, resolveCodexHome } from '../src/main/codex-monitor.js';
 import { StateMachine } from '../src/renderer/state-machine.js';
+import { InputManager } from '../src/renderer/input.js';
 import {
   CODEX_ACTIVITY,
   buildCodexVisibleTasks,
@@ -169,6 +170,24 @@ test('short left interaction opens Codex config while long pull keeps monitor be
   longPull.transition('LEFT_RELEASE');
   longPull.transition('BOUNCE_COMPLETE', { pullExceeded: true });
   assert.equal(longPull.getState(), 'EXPANDING');
+});
+
+test('Codex overlay presses never start the pet left-click gesture', () => {
+  const transitions = [];
+  const input = new InputManager({
+    pixiApp: {},
+    sprite: { x: 100, y: 100, getBounds: () => ({ x: 50, y: 50, width: 100, height: 100 }) },
+    stateMachine: {
+      getState: () => 'IDLE',
+      transition: (...args) => transitions.push(args),
+    },
+    physics: {},
+    shouldIgnoreEvent: () => true,
+  });
+  input._onMouseDown({ button: 0, clientX: 100, clientY: 100 });
+  input._onMouseUp({ button: 0, clientX: 100, clientY: 100 });
+  assert.equal(input._isDragging, false);
+  assert.deepEqual(transitions, []);
 });
 
 test('forced refresh waits for an in-flight enable scan and returns the fresh connection', async () => {

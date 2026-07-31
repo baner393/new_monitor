@@ -15,11 +15,12 @@ import { VelocityTracker } from './velocity-tracker.js';
 const PULL_THRESHOLD = 80;
 
 export class InputManager {
-  constructor({ pixiApp, sprite, stateMachine, physics }) {
+  constructor({ pixiApp, sprite, stateMachine, physics, shouldIgnoreEvent = null }) {
     this.pixiApp = pixiApp;
     this.sprite = sprite;
     this.stateMachine = stateMachine;
     this.physics = physics;
+    this.shouldIgnoreEvent = typeof shouldIgnoreEvent === 'function' ? shouldIgnoreEvent : null;
 
     this._enabled = false;
     this._isDragging = false;
@@ -102,6 +103,7 @@ export class InputManager {
 
   _onContextMenu(e) {
     if (this._destroyed) return;
+    if (this.shouldIgnoreEvent?.(e)) return;
     // Always prevent default context menu — we handle right-click ourselves
     e.preventDefault();
   }
@@ -110,6 +112,7 @@ export class InputManager {
 
   _onMouseDown(e) {
     if (this._destroyed) return;
+    if (this.shouldIgnoreEvent?.(e)) return;
 
     // ── Right button (button === 2) ──
     if (e.button === 2) {

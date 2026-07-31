@@ -468,6 +468,7 @@ const inputManager = new InputManager({
   sprite,
   stateMachine,
   physics,
+  shouldIgnoreEvent: (event) => codexCompanion.ownsEvent(event),
 });
 inputManager.enable();
 

@@ -143,6 +143,15 @@ export class CodexCompanion {
     this.root.appendChild(this.configPanel);
     document.body.appendChild(this.root);
 
+    // InputManager listens on document for transparent-window reliability.
+    // Stop Codex controls at this DOM boundary so a badge press that overlaps
+    // the pet cannot also begin the pet's left-click gesture.
+    // Let mouseup keep bubbling: if a real pet drag ends over this overlay,
+    // InputManager still needs the release event to clear its drag state.
+    for (const eventName of ['mousedown', 'contextmenu']) {
+      this.root.addEventListener(eventName, (event) => event.stopPropagation());
+    }
+
     this.badge.addEventListener('click', () => this.toggleTaskTray());
     this.taskTray.querySelector('.codex-tray-close').addEventListener('click', () => this.closeTaskTray());
     this.bubble.querySelector('.codex-task-back').addEventListener('click', () => {
@@ -304,6 +313,11 @@ export class CodexCompanion {
       const bounds = node.getBoundingClientRect();
       return x >= bounds.left && x <= bounds.right && y >= bounds.top && y <= bounds.bottom;
     });
+  }
+
+  ownsEvent(event) {
+    return Boolean(event?.composedPath?.().includes(this.root)
+      || (event?.target instanceof Node && this.root.contains(event.target)));
   }
 
   get capturesOutsideClicks() {
