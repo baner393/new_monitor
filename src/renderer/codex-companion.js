@@ -83,6 +83,8 @@ export class CodexCompanion {
     this.trayOpen = false;
     this.configOpen = false;
     this.bubblesSuppressed = false;
+    this.readingStabilityEnabled = true;
+    this.pinnedConversationPosition = null;
     this.anchor = { x: window.innerWidth / 2, y: 180 };
     this.alertFreshUntil = 0;
     this.lastMood = 'idle';
@@ -374,6 +376,14 @@ export class CodexCompanion {
   updateFrame() { this.#emitMood(); this.updatePosition(); }
   setAnchor(x, y) { this.anchor = { x, y }; this.updatePosition(); }
 
+  setReadingStability(enabled) {
+    const next = enabled !== false;
+    if (next === this.readingStabilityEnabled) return;
+    this.readingStabilityEnabled = next;
+    if (!next) this.pinnedConversationPosition = null;
+    this.updatePosition(true);
+  }
+
   #place(node, x, y, force = false) {
     const key = `${Math.round(x)},${Math.round(y)}`;
     if (!force && this.positionKeys.get(node) === key) return;
@@ -389,8 +399,24 @@ export class CodexCompanion {
     const bubbleHeight = this.sizes.get(this.bubble)?.height || 430;
     const configHeight = this.sizes.get(this.configPanel)?.height || 560;
     const trayHeight = this.sizes.get(this.taskTray)?.height || 300;
-    this.bubble.dataset.side = preferRight ? 'right' : 'left';
-    this.#place(this.bubble, clamp(bubbleLeft, 12, window.innerWidth - bubbleWidth - 12), clamp(this.anchor.y - 92, 62, window.innerHeight - bubbleHeight - 12), force);
+    const readingStable = this.readingStabilityEnabled && this.isReadingConversationOpen;
+    if (!readingStable) this.pinnedConversationPosition = null;
+    if (readingStable && !this.pinnedConversationPosition) {
+      this.pinnedConversationPosition = {
+        x: clamp(bubbleLeft, 12, window.innerWidth - bubbleWidth - 12),
+        y: clamp(this.anchor.y - 92, 62, window.innerHeight - bubbleHeight - 12),
+        side: preferRight ? 'right' : 'left',
+      };
+    }
+    const bubblePosition = this.pinnedConversationPosition || {
+      x: clamp(bubbleLeft, 12, window.innerWidth - bubbleWidth - 12),
+      y: clamp(this.anchor.y - 92, 62, window.innerHeight - bubbleHeight - 12),
+      side: preferRight ? 'right' : 'left',
+    };
+    bubblePosition.x = clamp(bubblePosition.x, 12, window.innerWidth - bubbleWidth - 12);
+    bubblePosition.y = clamp(bubblePosition.y, 62, window.innerHeight - bubbleHeight - 12);
+    this.bubble.dataset.side = bubblePosition.side;
+    this.#place(this.bubble, bubblePosition.x, bubblePosition.y, force);
     this.#place(this.configPanel, clamp(this.anchor.x - configWidth / 2, 12, window.innerWidth - configWidth - 12), clamp(this.anchor.y + 58, 62, window.innerHeight - configHeight - 12), force);
     this.#place(this.badge, this.anchor.x + 29, this.anchor.y - 42, force);
     this.taskTray.dataset.side = preferRight ? 'right' : 'left';
@@ -412,6 +438,7 @@ export class CodexCompanion {
 
   get capturesOutsideClicks() { return this.configOpen || this.trayOpen; }
   get isConversationOpen() { return !this.bubble.hidden && this.viewState.mode !== 'closed'; }
+  get isReadingConversationOpen() { return !this.bubble.hidden && this.viewState.mode === 'manual'; }
   get pausesPetMotion() {
     return this.configOpen
       || this.trayOpen

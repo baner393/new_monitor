@@ -9,6 +9,7 @@ import {
   deriveQuickTunings,
   detectPetSettingsPreset,
   normalizePetSettings,
+  resolveAmbientSwingEnabled,
   scalePreviewRopeLength,
 } from '../src/shared/pet-settings-model.js';
 
@@ -61,4 +62,12 @@ test('preview rope length uses the full visual range and changes monotonically',
   assert.equal(short, 58);
   assert.ok(medium > short);
   assert.equal(long, 230);
+});
+
+test('ambient swing is user-controlled and temporarily suppressed during stable reading', () => {
+  assert.equal(resolveAmbientSwingEnabled(PET_SETTINGS_DEFAULTS, false), true);
+  assert.equal(resolveAmbientSwingEnabled(PET_SETTINGS_DEFAULTS, true), false);
+  assert.equal(resolveAmbientSwingEnabled({ ambientSwingEnabled: false, panelMoveStable: false }, false), false);
+  assert.equal(resolveAmbientSwingEnabled({ ambientSwingEnabled: true, panelMoveStable: false }, true), true);
+  assert.equal(normalizePetSettings({ ambientSwingEnabled: false }).ambientSwingEnabled, false);
 });

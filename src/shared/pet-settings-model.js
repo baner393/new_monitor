@@ -16,6 +16,7 @@ export const PET_SETTINGS_DEFAULTS = Object.freeze({
   bounceRestitution: 0.6,
   airDamping: 0.98,
   ropeElasticity: 5,
+  ambientSwingEnabled: true,
   panelMoveStable: true,
 });
 
@@ -30,6 +31,7 @@ export const PET_SETTING_SECTIONS = Object.freeze([
 export const PET_SETTING_FIELDS = Object.freeze({
   turtleSize: { section: 'appearance', label: '桌宠大小', hint: '桌面上桌宠的显示尺寸', min: 24, max: 192, step: 2, unit: 'px' },
   ropeLength: { section: 'appearance', label: '悬挂高度', hint: '桌宠静止时绳子的默认长度', min: 30, max: 400, step: 5, unit: 'px' },
+  ambientSwingEnabled: { section: 'appearance', label: '待机自摆动', hint: '空闲和悬停时保持轻微自然摆动；不影响拖拽和 Codex 主动状态动作', type: 'boolean' },
   gravity: { section: 'left', label: '重力', hint: '数值越大，下落和摆动越有重量感', min: 200, max: 2000, step: 50, unit: 'px/s²' },
   damping: { section: 'left', label: '摆动延续', hint: '越接近 1，摆动持续得越久', min: 0.9, max: 1, step: 0.005, unit: '' },
   ropeElasticity: { section: 'left', label: '绳子弹性', hint: '1 最松软，12 最紧绷', min: 1, max: 12, step: 1, unit: '档' },
@@ -38,7 +40,7 @@ export const PET_SETTING_FIELDS = Object.freeze({
   ropeDamping: { section: 'right', label: '回拉收敛', hint: '抑制弹簧往复振动的强度', min: 5, max: 30, step: 1, unit: '' },
   bounceRestitution: { section: 'right', label: '碰撞弹力', hint: '桌宠碰到屏幕边缘后的反弹幅度', min: 0.1, max: 1, step: 0.1, unit: '' },
   airDamping: { section: 'right', label: '空气阻力', hint: '越小阻力越大，甩动停止得越快', min: 0.9, max: 1, step: 0.01, unit: '' },
-  panelMoveStable: { section: 'panel', label: '稳定移动面板', hint: '面板展开时使用稳定参数，避免拖动后剧烈弹跳', type: 'boolean' },
+  panelMoveStable: { section: 'panel', label: '面板移动稳定', hint: '阅读 Codex 对话时固定面板并暂停待机自摆动；拖动面板时使用稳定参数', type: 'boolean' },
 });
 
 export const PET_SETTINGS_PRESETS = Object.freeze({
@@ -102,6 +104,12 @@ export function scalePreviewRopeLength(ropeLength, canvasHeight) {
   const maximumPreviewLength = Math.max(minimumPreviewLength, Number(canvasHeight) - 100);
   const progress = (normalizedLength - field.min) / (field.max - field.min);
   return minimumPreviewLength + (maximumPreviewLength - minimumPreviewLength) * progress;
+}
+
+export function resolveAmbientSwingEnabled(settings = {}, codexConversationReading = false) {
+  const ambientSwingEnabled = settings.ambientSwingEnabled !== false;
+  const stabilizeReading = settings.panelMoveStable !== false && codexConversationReading === true;
+  return ambientSwingEnabled && !stabilizeReading;
 }
 
 function mix(min, max, value) {

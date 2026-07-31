@@ -21,6 +21,7 @@ import { CodexCompanion } from './codex-companion.js';
 import { CodexMotionController, codexStatusSymbol } from './codex-motion.js';
 import { PANEL_DRAG_CONTEXT, resolvePanelDragContext, resolvePanelDragSettledState } from './panel-drag-context.js';
 import { CODEX_ACTIVITY } from '../shared/codex-integration.js';
+import { resolveAmbientSwingEnabled } from '../shared/pet-settings-model.js';
 
 // ── Font loading gate ─────────────────────────────────────────────────
 async function waitForFonts() {
@@ -294,6 +295,10 @@ window.addEventListener('beforeunload', () => codexCompanion.destroy());
 
 // ── Settings Panel ─────────────────────────────────────────────────────
 const settingsPanel = new SettingsPanel();
+const petBehaviorSettings = {
+  ambientSwingEnabled: true,
+  panelMoveStable: true,
+};
 
 // Listen for open-settings from context menu
 function openSettingsPanel() {
@@ -436,6 +441,13 @@ function applySettings(settings) {
   if (settings.ropeDamping !== undefined) physics.ropeDamping = settings.ropeDamping;
   if (settings.bounceRestitution !== undefined) physics.ropeBounceRest = settings.bounceRestitution;
   if (settings.airDamping !== undefined) physics.airDamping = settings.airDamping;
+  if (settings.ambientSwingEnabled !== undefined) {
+    petBehaviorSettings.ambientSwingEnabled = settings.ambientSwingEnabled !== false;
+  }
+  if (settings.panelMoveStable !== undefined) {
+    petBehaviorSettings.panelMoveStable = settings.panelMoveStable !== false;
+    codexCompanion.setReadingStability(petBehaviorSettings.panelMoveStable);
+  }
   if (settings.ropeElasticity !== undefined) {
     // 新版：档位(1~12) → 浮点值；旧版：直接是浮点值
     const step = settings.ropeElasticity;
@@ -927,6 +939,11 @@ pixiApp.ticker.add((delta) => {
     windowHeight: window.innerHeight,
     turtleSize: TURTLE_SIZE,
   });
+
+  physics.ambientSwingEnabled = resolveAmbientSwingEnabled(
+    petBehaviorSettings,
+    codexCompanion.isReadingConversationOpen,
+  );
 
   // Update physics (skipped during PULLING and BOUNCING)
   physics.updatePendulum(dt);

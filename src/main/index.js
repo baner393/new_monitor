@@ -94,6 +94,7 @@ const DEFAULT_SETTINGS = {
   airDamping:       0.98,
   ropeElasticity:   5,      // 档位 1-12（与渲染进程一致）
   selectedSkin:     'turtle',
+  ambientSwingEnabled: true,
   panelMoveStable:  true,
   monitorVisibility: toLegacyMonitorVisibility(DEFAULT_MONITOR_PANEL),
   monitorPanel: DEFAULT_MONITOR_PANEL,

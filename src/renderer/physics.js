@@ -45,6 +45,7 @@ class PhysicsEngine {
     this.gravity       = GRAVITY
     this.damping        = DAMPING
     this.pulleyFriction = PULLEY_FRICTION
+    this.ambientSwingEnabled = true
 
     // ── 钟摆状态 ──
     this.pendulumAngle = 0          // θ (弧度)
@@ -335,8 +336,8 @@ class PhysicsEngine {
 
     // 状态相关扰动 — 让乌龟微微摇摆
     const t = this._time
-    if (this.state === 'IDLE')  alpha += 0.8 * Math.sin(t * 3.0)
-    if (this.state === 'HOVER') alpha += 2.0 * Math.sin(t * 4.0)
+    if (this.ambientSwingEnabled && this.state === 'IDLE')  alpha += 0.8 * Math.sin(t * 3.0)
+    if (this.ambientSwingEnabled && this.state === 'HOVER') alpha += 2.0 * Math.sin(t * 4.0)
 
     // 欧拉积分
     this.pendulumOmega += alpha * dt
