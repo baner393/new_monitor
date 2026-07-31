@@ -16,7 +16,8 @@
       },
       "preview": "assets/sprites/idle.png",
       "scale": 2.5,
-      "baseSize": 24
+      "baseSize": 24,
+      "gripPoint": { "x": 0.5, "y": 0.12 }
     },
     {
       "id": "cat",
@@ -34,7 +35,8 @@
       },
       "preview": "assets/skins/cat/idle.png",
       "scale": 1.0,
-      "baseSize": 96
+      "baseSize": 96,
+      "gripPoint": { "x": 0.5, "y": 0.09 }
     }
   ],
   "defaultSkin": "turtle"

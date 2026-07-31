@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, ipcMain, Menu, dialog, powerMonitor, screen, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu, dialog, powerMonitor, screen, shell } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import { SystemMonitor } from './system-monitor.js';
@@ -171,19 +171,25 @@ ipcMain.handle('codex-home-select', async () => {
 });
 
 ipcMain.handle('codex-status-get', () => codexMonitor?.getSnapshot() || null);
+ipcMain.handle('codex-messages-get', async (_event, payload = {}) => await codexMonitor?.getMessages(
+  payload.threadId,
+  { cursor: payload.cursor ?? null, limit: payload.limit ?? 50 },
+) || { threadId: String(payload.threadId || ''), messages: [], nextCursor: null, total: 0 });
 ipcMain.handle('codex-refresh', async () => {
   await codexMonitor?.scan(true);
   return codexMonitor?.getSnapshot() || null;
 });
 ipcMain.handle('codex-mark-read', (_event, eventId) => codexMonitor?.markRead(eventId) || null);
+ipcMain.handle('codex-mark-notified', (_event, eventId) => codexMonitor?.markNotified(eventId) || null);
+ipcMain.handle('codex-thread-connect', (_event, threadId) => codexMonitor?.connectThread(threadId));
+ipcMain.handle('codex-thread-disconnect', (_event, threadId) => codexMonitor?.disconnectThread(threadId));
 ipcMain.handle('codex-reply', (_event, payload) => codexMonitor?.reply(payload?.threadId, payload?.text));
 ipcMain.handle('codex-respond', (_event, payload) => codexMonitor?.respond(payload?.requestId, payload?.response));
 ipcMain.handle('codex-open-app', async (_event, payload = {}) => {
   const threadId = String(payload.threadId || '').trim();
-  const title = String(payload.title || '').trim();
-  if (threadId) clipboard.writeText([title, threadId].filter(Boolean).join('\n'));
-  await shell.openExternal('codex://');
-  return { opened: true, exact: false, copiedThread: Boolean(threadId) };
+  const target = threadId ? `codex://threads/${encodeURIComponent(threadId)}` : 'codex://';
+  await shell.openExternal(target);
+  return { opened: true, exact: Boolean(threadId), copiedThread: false };
 });
 
 ipcMain.on('monitor-panel-config-set', (_event, config) => {

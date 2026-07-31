@@ -1,7 +1,5 @@
 import { CODEX_ACTIVITY } from '../shared/codex-integration.js';
 
-const TAU = Math.PI * 2;
-
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
 }
@@ -49,6 +47,9 @@ export class CodexMotionController {
     this.emissions = [];
     this.lastRunningBeat = -1;
     this.lastInputBeat = -1;
+    this.bodyAngle = 0;
+    this.bodyOmega = 0;
+    this.runningImpulseCycle = -1;
   }
 
   setState(activity, eventKey = '') {
@@ -63,6 +64,7 @@ export class CodexMotionController {
     this.time = 0;
     this.lastRunningBeat = -1;
     this.lastInputBeat = -1;
+    this.runningImpulseCycle = -1;
 
     if (nextActivity === CODEX_ACTIVITY.BLOCKED
       && previousActivity !== CODEX_ACTIVITY.BLOCKED) {
@@ -97,6 +99,10 @@ export class CodexMotionController {
     let angleOffset = 0;
     let lengthOffset = 0;
     let rotation = 0;
+    let bodyTarget = 0;
+    let pendulumImpulse = 0;
+    let effortDirection = 0;
+    let workPulse = 0;
 
     if (this.sequence === 'blocked') {
       const dropLength = codexDropLength({ petHeight, baseY, viewportHeight });
@@ -104,22 +110,41 @@ export class CodexMotionController {
       if (this.time >= 1.35 && this.time < 4.35) {
         const step = Math.floor(((this.time - 1.35) / 3) * 12);
         const local = (((this.time - 1.35) / 3) * 12) % 1;
-        rotation = (step % 2 === 0 ? -1 : 1) * Math.sin(Math.min(local / 0.68, 1) * Math.PI) * 0.045;
-        angleOffset = rotation * 0.28;
+        bodyTarget = (step % 2 === 0 ? -1 : 1) * Math.sin(Math.min(local / 0.68, 1) * Math.PI) * 0.09;
+        angleOffset = bodyTarget * 0.2;
       }
       if (this.time >= 4.8) this.sequence = '';
     } else if (this.sequence === 'ready') {
       const t = clamp(this.time / 0.9, 0, 1);
       lengthOffset = -Math.sin(t * Math.PI) * (1 - t * 0.35) * Math.min(18, petHeight * 0.25);
-      rotation = Math.sin(t * Math.PI * 2) * 0.035 * (1 - t);
+      bodyTarget = Math.sin(t * Math.PI * 2) * 0.055 * (1 - t);
       if (t >= 1) this.sequence = '';
     } else if (this.activity === CODEX_ACTIVITY.RUNNING) {
-      angleOffset = Math.sin(this.time * TAU / 2.4) * (Math.PI / 60);
-      rotation = angleOffset * 0.45;
-      const beat = Math.floor(this.time / 1.2);
+      const cycleDuration = 3.6;
+      const cycle = Math.floor(this.time / cycleDuration);
+      const local = this.time - cycle * cycleDuration;
+      effortDirection = cycle % 2 === 0 ? 1 : -1;
+      if (local < 0.55) {
+        const preload = smoothstep(local / 0.55);
+        bodyTarget = -effortDirection * 0.13 * preload;
+        workPulse = preload * 0.45;
+      } else if (local < 0.78) {
+        const release = smoothstep((local - 0.55) / 0.23);
+        bodyTarget = (-effortDirection * 0.13) * (1 - release) + effortDirection * 0.1 * release;
+        workPulse = 0.45 + release * 0.55;
+        if (this.runningImpulseCycle !== cycle) {
+          this.runningImpulseCycle = cycle;
+          pendulumImpulse = effortDirection * 0.22;
+          this.emissions.push({ kind: 'running', count: 4, direction: effortDirection });
+        }
+      } else {
+        const coast = clamp((local - 0.78) / 2.82, 0, 1);
+        bodyTarget = effortDirection * Math.sin(coast * Math.PI * 3) * 0.035 * (1 - coast);
+        workPulse = Math.max(0, 0.35 * (1 - coast));
+      }
+      const beat = cycle;
       if (beat !== this.lastRunningBeat) {
         this.lastRunningBeat = beat;
-        this.emissions.push({ kind: 'running', count: 2 });
       }
     } else if (this.activity === CODEX_ACTIVITY.NEEDS_INPUT) {
       const cycle = this.time % 2.8;
@@ -134,19 +159,42 @@ export class CodexMotionController {
       }
     }
 
-    return this.#frame({ angleOffset, lengthOffset, rotation });
+    const bodyAlpha = (bodyTarget - this.bodyAngle) * 42 - this.bodyOmega * 9;
+    this.bodyOmega += bodyAlpha * safeDt;
+    this.bodyAngle += this.bodyOmega * safeDt;
+    this.bodyAngle = clamp(this.bodyAngle, -Math.PI / 15, Math.PI / 15);
+    rotation = this.bodyAngle;
+
+    return this.#frame({
+      angleOffset,
+      lengthOffset,
+      rotation,
+      pendulumImpulse,
+      effortDirection,
+      workPulse,
+    });
   }
 
   drainEmissions() {
     return this.emissions.splice(0);
   }
 
-  #frame({ angleOffset = 0, lengthOffset = 0, rotation = 0 } = {}) {
+  #frame({
+    angleOffset = 0,
+    lengthOffset = 0,
+    rotation = 0,
+    pendulumImpulse = 0,
+    effortDirection = 0,
+    workPulse = 0,
+  } = {}) {
     return {
       activity: this.activity,
       angleOffset,
       lengthOffset,
       rotation,
+      pendulumImpulse,
+      effortDirection,
+      workPulse,
       sequence: this.sequence,
       symbolFrame: Math.floor(this.time * 8),
     };

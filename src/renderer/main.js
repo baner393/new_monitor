@@ -19,6 +19,7 @@ import { ROPE_ELASTICITY_STEPS } from './settings.js';
 import { SkinSelector } from './skin-selector.js';
 import { CodexCompanion } from './codex-companion.js';
 import { CodexMotionController, codexStatusSymbol } from './codex-motion.js';
+import { CODEX_ACTIVITY } from '../shared/codex-integration.js';
 
 // ── Font loading gate ─────────────────────────────────────────────────
 async function waitForFonts() {
@@ -143,16 +144,20 @@ turtleContainer.eventMode = 'static';
 turtleContainer.cursor = 'pointer';
 pixiApp.stage.addChild(turtleContainer);
 
-// Body sprite (main texture)
+// Body sprite (main texture). The container is the rope/grip joint; the
+// texture hangs below it so rotation has visible body inertia.
+let currentGripPoint = { x: 0.5, y: 0.12 };
 const bodySprite = new PIXI.Sprite(idleTexture);
-bodySprite.anchor.set(0.5, 0.5);
+bodySprite.anchor.set(currentGripPoint.x, currentGripPoint.y);
 bodySprite.scale.set(2.5);
 turtleContainer.addChild(bodySprite);
 
 const codexMotion = new CodexMotionController();
 const codexParticleGraphics = new PIXI.Graphics();
 const codexStatusGraphics = new PIXI.Graphics();
+const codexWorkGraphics = new PIXI.Graphics();
 pixiApp.stage.addChild(codexParticleGraphics);
+pixiApp.stage.addChild(codexWorkGraphics);
 pixiApp.stage.addChild(codexStatusGraphics);
 const codexParticles = [];
 const reducedMotionQuery = window.matchMedia?.('(prefers-reduced-motion: reduce)');
@@ -207,7 +212,7 @@ function drawCodexStatus(activity, frame, x, y) {
   const symbol = codexStatusSymbol(activity, frame);
   if (!symbol.pixels.length) return;
   const pixel = 3;
-  const originX = Math.round(x + 25);
+  const originX = Math.round(x - 42);
   const originY = Math.round(y - 42);
   codexStatusGraphics.beginFill(0x0d1420, 0.9);
   codexStatusGraphics.drawRect(originX - 3, originY - 3, 21, 21);
@@ -217,6 +222,24 @@ function drawCodexStatus(activity, frame, x, y) {
     codexStatusGraphics.drawRect(originX + px * pixel, originY + py * pixel, pixel, pixel);
   }
   codexStatusGraphics.endFill();
+}
+
+function drawCodexWorkLayer(activity, frame, x, y, pulse = 0, reducedMotion = false) {
+  codexWorkGraphics.clear();
+  if (activity !== CODEX_ACTIVITY.RUNNING) return;
+  const originX = Math.round(x + 31);
+  const originY = Math.round(y + 4);
+  codexWorkGraphics.beginFill(0x0d1420, 0.94);
+  codexWorkGraphics.drawRect(originX, originY, 22, 17);
+  codexWorkGraphics.endFill();
+  codexWorkGraphics.lineStyle(2, 0x66c9ff, 0.9);
+  codexWorkGraphics.drawRect(originX + 2, originY + 2, 18, 11);
+  codexWorkGraphics.lineStyle(0);
+  const scan = reducedMotion ? 1 : Math.abs(Math.floor(frame / 2)) % 3;
+  codexWorkGraphics.beginFill(0x69e0aa, 0.72 + Math.min(0.28, pulse * 0.28));
+  codexWorkGraphics.drawRect(originX + 5 + scan * 4, originY + 5, 3, 3);
+  codexWorkGraphics.drawRect(originX + 4, originY + 14, 14, 2);
+  codexWorkGraphics.endFill();
 }
 
 // Blink uses texture swap (blinkTexture has squinting eyes built in)
@@ -353,6 +376,12 @@ skinSelector.onSkinChange = async (skinId, skinConfig) => {
     // Respect saved turtleSize setting instead of hardcoded value
     const baseSize = skinConfig.baseSize || 24;
     currentSkinBaseSize = baseSize; // remember for settings
+    const grip = skinConfig.gripPoint || { x: 0.5, y: 0.12 };
+    currentGripPoint = {
+      x: Math.min(0.9, Math.max(0.1, Number(grip.x) || 0.5)),
+      y: Math.min(0.45, Math.max(0, Number(grip.y) || 0.12)),
+    };
+    bodySprite.anchor.set(currentGripPoint.x, currentGripPoint.y);
     // Get saved turtleSize from settings panel or use default
     const savedTurtleSize = settingsPanel._values?.turtleSize || 64;
     const skinScale = savedTurtleSize / baseSize;
@@ -1105,19 +1134,22 @@ pixiApp.ticker.add((delta) => {
   const codexMotionEnabled = (state === 'IDLE' || state === 'HOVER')
     && !settingsPanel.isOpen
     && !settingsPanel.isAnimating
-    && !skinSelector.isOpen;
+    && !skinSelector.isOpen
+    && !codexCompanion.pausesPetMotion;
   if (!codexMotionEnabled && codexMotionWasEnabled) codexMotion.cancelSequence();
   codexMotionWasEnabled = codexMotionEnabled;
   codexMotion.setState(codexCompanion.activity, codexCompanion.motionEventKey);
-  const petBounds = bodySprite.getBounds();
   const motionFrame = codexMotion.update(dt, {
     enabled: codexMotionEnabled,
     reducedMotion: reducedMotionQuery?.matches === true,
-    petHeight: petBounds.height || TURTLE_SIZE,
+    petHeight: bodySprite.height || TURTLE_SIZE,
     baseY: sprite.y,
     viewportHeight: window.innerHeight,
   });
   if (codexMotionEnabled) {
+    if (motionFrame.pendulumImpulse) {
+      physics.pendulumOmega += motionFrame.pendulumImpulse;
+    }
     const baseDx = sprite.x - anchorX;
     const baseDy = sprite.y - anchorY;
     const baseLength = Math.sqrt(baseDx * baseDx + baseDy * baseDy);
@@ -1129,18 +1161,31 @@ pixiApp.ticker.add((delta) => {
   } else {
     bodySprite.rotation = 0;
   }
+  bodySprite.x = 0;
+  bodySprite.y = 0;
+  const codexBodyBounds = bodySprite.getBounds();
+  const codexVisualX = codexBodyBounds.x + codexBodyBounds.width / 2;
+  const codexVisualY = codexBodyBounds.y + codexBodyBounds.height / 2;
   for (const emission of codexMotion.drainEmissions()) {
-    spawnCodexParticles(emission.kind, emission.count, sprite.x, sprite.y);
+    spawnCodexParticles(emission.kind, emission.count, codexVisualX, codexVisualY);
   }
   updateCodexParticles(dt);
-  drawCodexStatus(motionFrame.activity, motionFrame.symbolFrame, sprite.x, sprite.y);
+  drawCodexWorkLayer(
+    motionFrame.activity,
+    motionFrame.symbolFrame,
+    codexVisualX,
+    codexVisualY,
+    motionFrame.workPulse,
+    reducedMotionQuery?.matches === true,
+  );
+  drawCodexStatus(motionFrame.activity, motionFrame.symbolFrame, codexVisualX, codexVisualY);
 
   const suppressCodexBubbles = [
     'EXPANDING', 'HAPPY', 'PANEL_OPEN', 'COLLAPSING',
     'CODEX_CONFIG_OPENING', 'CODEX_CONFIG_OPEN', 'CODEX_CONFIG_CLOSING',
   ].includes(state) || settingsPanel.isOpen || settingsPanel.isAnimating || skinSelector.isOpen;
   codexCompanion.setBubblesSuppressed(suppressCodexBubbles);
-  codexCompanion.setAnchor(sprite.x, sprite.y);
+  codexCompanion.setAnchor(codexVisualX, codexVisualY);
   codexCompanion.updateFrame();
   if ((state === 'IDLE' || state === 'HOVER') && codexMood !== codexCompanion.mood) {
     codexMood = codexCompanion.mood;

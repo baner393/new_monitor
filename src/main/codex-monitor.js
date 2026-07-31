@@ -6,8 +6,11 @@ import path from 'path';
 import readline from 'readline';
 import {
   CODEX_ACTIVITY,
+  CODEX_CONNECTION,
   buildCodexVisibleTasks,
+  cleanCodexUserMessage,
   normalizeCodexIntegrationConfig,
+  normalizeCodexLocale,
   resolveCodexActivity,
   sanitizeProjectName,
   sanitizeTaskTitle,
@@ -15,9 +18,10 @@ import {
 } from '../shared/codex-integration.js';
 
 const MAX_SESSION_FILES = 120;
-const ROLLOUT_HEAD_BYTES = 96 * 1024;
-const ROLLOUT_TAIL_BYTES = 1024 * 1024;
+const DISCOVERY_INTERVAL_MS = 30_000;
+const WATCH_DEBOUNCE_MS = 250;
 const RUNNING_STALE_MS = 5 * 60 * 1000;
+const CLIENT_RETRY_DELAYS = [1000, 2000, 5000, 10_000, 30_000];
 
 function finiteTimestamp(value, fallback = 0) {
   const numeric = Number(value);
@@ -26,145 +30,200 @@ function finiteTimestamp(value, fallback = 0) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function parseLine(line) {
+  try { return JSON.parse(line); } catch { return null; }
+}
+
 function textFromMessageContent(content) {
   if (!Array.isArray(content)) return '';
   return content
-    .filter((item) => item?.type === 'output_text' || item?.type === 'input_text')
+    .filter((item) => item?.type === 'output_text' || item?.type === 'input_text' || item?.type === 'text')
     .map((item) => String(item?.text || ''))
     .join('\n')
     .trim();
 }
 
-function parseLine(line) {
-  try {
-    return JSON.parse(line);
-  } catch {
-    return null;
-  }
+function timestampToMs(value) {
+  const numeric = Number(value);
+  if (Number.isFinite(numeric) && numeric > 0) return numeric < 10_000_000_000 ? numeric * 1000 : numeric;
+  return finiteTimestamp(value, 0);
 }
 
-function uniqueLines(head, tail) {
-  if (!head) return tail || '';
-  if (!tail || head === tail) return head;
-  return `${head}\n${tail}`;
-}
-
-export function parseCodexRollout(text, {
-  filePath = '',
-  modifiedAtMs = 0,
-  enabledAtMs = 0,
-  readEventIds = new Set(),
-} = {}) {
-  let threadId = '';
-  let cwd = '';
-  let title = '';
-  let lastAgentMessage = '';
-  let lastStartedAtMs = 0;
-  let lastFinishedAtMs = 0;
-  let lastActivityAtMs = modifiedAtMs;
-  let lastTurnId = '';
-  let lastFinishKind = '';
+function messagesFromThread(thread) {
   const messages = [];
-  const messageKeys = new Set();
+  for (const [turnIndex, turn] of (thread?.turns || []).entries()) {
+    for (const [itemIndex, item] of (turn?.items || []).entries()) {
+      const type = String(item?.type || '');
+      const role = type === 'userMessage' ? 'user' : type === 'agentMessage' ? 'assistant' : '';
+      if (!role) continue;
+      const message = role === 'user'
+        ? cleanCodexUserMessage(textFromMessageContent(item.content) || item.text || item.message)
+        : String(item.text || item.message || textFromMessageContent(item.content) || '').trim();
+      if (!message) continue;
+      messages.push({
+        id: String(item.id || `app-server:${thread.id}:${messages.length}`),
+        role,
+        message,
+        createdAtMs: (timestampToMs(item.createdAt || turn.startedAt || turn.completedAt || thread.updatedAt)
+          || turnIndex * 1000) + itemIndex,
+      });
+    }
+  }
+  return messages;
+}
 
-  const appendMessage = (role, value, timestamp) => {
-    const message = String(value || '').trim();
-    if (!message) return;
-    const createdAtMs = finiteTimestamp(timestamp, modifiedAtMs);
-    const key = `${role}:${createdAtMs}:${message}`;
-    if (messageKeys.has(key)) return;
-    messageKeys.add(key);
-    messages.push({ id: key.slice(0, 240), role, message, createdAtMs });
-    if (messages.length > 64) messages.shift();
+function createRolloutState(filePath = '', modifiedAtMs = 0) {
+  return {
+    filePath,
+    modifiedAtMs,
+    partial: '',
+    threadId: '',
+    parentThreadId: '',
+    cwd: '',
+    name: '',
+    title: '',
+    isInternal: false,
+    lastAgentMessage: '',
+    lastStartedAtMs: 0,
+    lastFinishedAtMs: 0,
+    lastActivityAtMs: modifiedAtMs,
+    lastTurnId: '',
+    lastFinishKind: '',
+    messages: [],
+    messageKeys: new Set(),
   };
+}
 
-  for (const rawLine of String(text || '').split(/\r?\n/)) {
-    const row = parseLine(rawLine);
-    if (!row) continue;
-    const timestamp = finiteTimestamp(row.timestamp, modifiedAtMs);
-    lastActivityAtMs = Math.max(lastActivityAtMs, timestamp);
-    const payload = row.payload || {};
+function appendMessage(state, role, value, timestamp) {
+  const message = role === 'user'
+    ? cleanCodexUserMessage(value)
+    : String(value || '').trim();
+  if (!message || (role !== 'user' && role !== 'assistant')) return;
+  const createdAtMs = finiteTimestamp(timestamp, state.modifiedAtMs);
+  const normalizedMessage = message.replace(/\s+/g, ' ').trim();
+  const timeBucket = Math.floor(createdAtMs / 10_000);
+  const keys = [-1, 0, 1].map((offset) => `${role}:${timeBucket + offset}:${normalizedMessage}`);
+  if (keys.some((key) => state.messageKeys.has(key))) return;
+  state.messageKeys.add(`${role}:${timeBucket}:${normalizedMessage}`);
+  state.messages.push({
+    id: `${state.threadId || 'thread'}:${state.messages.length}:${createdAtMs}`,
+    role,
+    message,
+    createdAtMs,
+  });
+  if (role === 'user' && !state.title) state.title = message;
+  if (role === 'assistant') state.lastAgentMessage = message;
+}
 
-    if (row.type === 'session_meta') {
-      threadId ||= String(payload.id || payload.session_id || '');
-      cwd ||= String(payload.cwd || '');
-      continue;
-    }
-    if (row.type === 'turn_context') {
-      cwd = String(payload.cwd || cwd || '');
-      lastTurnId = String(payload.turn_id || lastTurnId || '');
-      continue;
-    }
-    if (row.type === 'event_msg') {
-      if (payload.type === 'user_message') {
-        if (!title) title = String(payload.message || '').trim();
-        appendMessage('user', payload.message, timestamp);
-      } else if (payload.type === 'agent_message') {
-        lastAgentMessage = String(payload.message || lastAgentMessage || '').trim();
-        appendMessage('assistant', payload.message, timestamp);
-      } else if (payload.type === 'task_started') {
-        lastStartedAtMs = Math.max(lastStartedAtMs, finiteTimestamp(payload.started_at, timestamp));
-        lastTurnId = String(payload.turn_id || lastTurnId || '');
-      } else if (payload.type === 'task_complete') {
-        lastFinishedAtMs = Math.max(lastFinishedAtMs, finiteTimestamp(payload.completed_at, timestamp));
-        lastTurnId = String(payload.turn_id || lastTurnId || '');
-        lastFinishKind = 'completed';
-        lastAgentMessage = String(payload.last_agent_message || lastAgentMessage || '').trim();
-      } else if (payload.type === 'turn_aborted') {
-        lastFinishedAtMs = Math.max(lastFinishedAtMs, timestamp);
-        lastTurnId = String(payload.turn_id || lastTurnId || '');
-        lastFinishKind = 'aborted';
-      }
-      continue;
-    }
-    if (row.type === 'response_item' && payload.type === 'message') {
-      const messageText = textFromMessageContent(payload.content);
-      if (payload.role === 'user' && !title) title = messageText;
-      if (payload.role === 'assistant' && messageText) lastAgentMessage = messageText;
-      appendMessage(payload.role === 'assistant' ? 'assistant' : 'user', messageText, timestamp);
-    }
+function applyRolloutRow(state, row) {
+  if (!row) return;
+  const timestamp = finiteTimestamp(row.timestamp, state.modifiedAtMs);
+  state.lastActivityAtMs = Math.max(state.lastActivityAtMs, timestamp);
+  const payload = row.payload || {};
+
+  if (row.type === 'session_meta') {
+    state.threadId ||= String(payload.id || payload.session_id || '');
+    state.parentThreadId ||= String(payload.parent_thread_id || payload.parentThreadId || '');
+    state.cwd ||= String(payload.cwd || '');
+    state.name ||= String(payload.name || payload.thread_name || '');
+    const internalSubagent = String(payload.source?.subagent?.other || '').toLowerCase();
+    state.isInternal ||= ['guardian', 'auto_review', 'approvals_reviewer'].includes(internalSubagent);
+    return;
   }
-
-  if (!threadId) {
-    threadId = path.basename(filePath || '', path.extname(filePath || ''));
+  if (row.type === 'turn_context') {
+    state.cwd = String(payload.cwd || state.cwd || '');
+    state.lastTurnId = String(payload.turn_id || state.lastTurnId || '');
+    return;
   }
+  if (row.type === 'event_msg') {
+    if (payload.type === 'user_message') appendMessage(state, 'user', payload.message, timestamp);
+    else if (payload.type === 'agent_message') appendMessage(state, 'assistant', payload.message, timestamp);
+    else if (payload.type === 'task_started') {
+      state.lastStartedAtMs = Math.max(state.lastStartedAtMs, finiteTimestamp(payload.started_at, timestamp));
+      state.lastTurnId = String(payload.turn_id || state.lastTurnId || '');
+      state.lastFinishKind = '';
+    } else if (payload.type === 'task_complete') {
+      state.lastFinishedAtMs = Math.max(state.lastFinishedAtMs, finiteTimestamp(payload.completed_at, timestamp));
+      state.lastTurnId = String(payload.turn_id || state.lastTurnId || '');
+      state.lastFinishKind = 'completed';
+      if (payload.last_agent_message) appendMessage(state, 'assistant', payload.last_agent_message, timestamp);
+    } else if (payload.type === 'turn_aborted') {
+      state.lastFinishedAtMs = Math.max(state.lastFinishedAtMs, timestamp);
+      state.lastTurnId = String(payload.turn_id || state.lastTurnId || '');
+      state.lastFinishKind = 'aborted';
+    }
+    return;
+  }
+  if (row.type === 'response_item' && payload.type === 'message'
+    && (payload.role === 'user' || payload.role === 'assistant')) {
+    appendMessage(state, payload.role, textFromMessageContent(payload.content), timestamp);
+  }
+}
+
+function applyRolloutChunk(state, chunk, { flush = false } = {}) {
+  const combined = `${state.partial}${String(chunk || '')}`;
+  const lines = combined.split(/\r?\n/);
+  state.partial = flush ? '' : (lines.pop() || '');
+  if (flush && lines.at(-1) === '') lines.pop();
+  for (const line of lines) applyRolloutRow(state, parseLine(line));
+  if (flush && state.partial) {
+    applyRolloutRow(state, parseLine(state.partial));
+    state.partial = '';
+  }
+}
+
+function snapshotRolloutState(state, { enabledAtMs = 0, readEventIds = new Set(), nowMs = Date.now() } = {}) {
+  if (state.isInternal) return null;
+  const threadId = state.threadId
+    || path.basename(state.filePath || '', path.extname(state.filePath || ''));
   if (!threadId) return null;
-
-  const running = lastStartedAtMs > lastFinishedAtMs
-    && Date.now() - Math.max(lastActivityAtMs, modifiedAtMs) <= RUNNING_STALE_MS;
+  const updatedAtMs = Math.max(
+    state.lastActivityAtMs,
+    state.lastFinishedAtMs,
+    state.lastStartedAtMs,
+    state.modifiedAtMs,
+  );
+  const running = state.lastStartedAtMs > state.lastFinishedAtMs
+    && nowMs - updatedAtMs <= RUNNING_STALE_MS;
   const task = {
     id: threadId,
-    title: sanitizeTaskTitle(title),
-    project: sanitizeProjectName(cwd),
+    parentThreadId: state.parentThreadId || null,
+    title: sanitizeTaskTitle(state.name || state.title),
+    project: sanitizeProjectName(state.cwd),
     activity: running ? CODEX_ACTIVITY.RUNNING : CODEX_ACTIVITY.SILENT,
-    updatedAtMs: Math.max(lastActivityAtMs, lastFinishedAtMs, lastStartedAtMs, modifiedAtMs),
+    updatedAtMs,
     managed: false,
-    messages,
+    messages: state.messages,
   };
-
   let unread = null;
-  if (lastFinishKind && lastFinishedAtMs >= enabledAtMs) {
-    const activity = lastFinishKind === 'completed' ? CODEX_ACTIVITY.READY : CODEX_ACTIVITY.BLOCKED;
-    const eventId = `${threadId}:${lastTurnId || lastFinishedAtMs}:${activity}`;
+  if (!running && state.lastFinishKind && state.lastFinishedAtMs >= enabledAtMs) {
+    const activity = state.lastFinishKind === 'completed' ? CODEX_ACTIVITY.READY : CODEX_ACTIVITY.BLOCKED;
+    const eventId = `${threadId}:${state.lastTurnId || state.lastFinishedAtMs}:${activity}`;
     if (!readEventIds.has(eventId)) {
       unread = {
         id: eventId,
         threadId,
-        turnId: lastTurnId || null,
+        turnId: state.lastTurnId || null,
         title: task.title,
         project: task.project,
         activity,
-        kind: lastFinishKind,
-        message: lastFinishKind === 'completed'
-          ? (lastAgentMessage || '任务已经完成。')
-          : '任务已中断，打开 Codex 可查看具体原因。',
-        createdAtMs: lastFinishedAtMs,
+        kind: state.lastFinishKind,
+        message: state.lastFinishKind === 'completed'
+          ? (state.lastAgentMessage || '任务已经完成。')
+          : '任务已中断，请打开 Codex 查看具体原因。',
+        createdAtMs: state.lastFinishedAtMs,
         managed: false,
-        canReply: lastFinishKind === 'completed',
+        canReply: false,
       };
     }
   }
   return { task, unread };
+}
+
+export function parseCodexRollout(text, options = {}) {
+  const state = createRolloutState(options.filePath, options.modifiedAtMs);
+  applyRolloutChunk(state, text, { flush: true });
+  return snapshotRolloutState(state, options);
 }
 
 export function resolveCodexHome(config, env = process.env, homeDirectory = os.homedir()) {
@@ -178,31 +237,10 @@ export function resolveCodexHome(config, env = process.env, homeDirectory = os.h
       const resolved = path.resolve(String(candidate));
       if (fs.existsSync(resolved) && fs.statSync(resolved).isDirectory()) return resolved;
     } catch {
-      // A configured path may be temporarily unavailable (for example, a
-      // disconnected roaming profile). Continue with the next portable path.
+      // A roaming or removable profile can disappear between launches.
     }
   }
   return null;
-}
-
-async function readRolloutWindow(filePath) {
-  const handle = await fs.promises.open(filePath, 'r');
-  try {
-    const stat = await handle.stat();
-    const headLength = Math.min(ROLLOUT_HEAD_BYTES, stat.size);
-    const tailStart = Math.max(0, stat.size - ROLLOUT_TAIL_BYTES);
-    const tailLength = Math.max(0, stat.size - tailStart);
-    const head = Buffer.alloc(headLength);
-    const tail = Buffer.alloc(tailLength);
-    if (headLength) await handle.read(head, 0, headLength, 0);
-    if (tailLength) await handle.read(tail, 0, tailLength, tailStart);
-    return {
-      text: uniqueLines(head.toString('utf8'), tail.toString('utf8')),
-      modifiedAtMs: stat.mtimeMs,
-    };
-  } finally {
-    await handle.close();
-  }
 }
 
 async function collectSessionFiles(root) {
@@ -211,20 +249,17 @@ async function collectSessionFiles(root) {
   while (stack.length) {
     const directory = stack.pop();
     let entries;
-    try {
-      entries = await fs.promises.readdir(directory, { withFileTypes: true });
-    } catch {
-      continue;
-    }
+    try { entries = await fs.promises.readdir(directory, { withFileTypes: true }); }
+    catch { continue; }
     for (const entry of entries) {
       const fullPath = path.join(directory, entry.name);
       if (entry.isDirectory()) stack.push(fullPath);
       else if (entry.isFile() && entry.name.endsWith('.jsonl')) {
         try {
           const stat = await fs.promises.stat(fullPath);
-          found.push({ path: fullPath, modifiedAtMs: stat.mtimeMs });
+          found.push({ path: fullPath, modifiedAtMs: stat.mtimeMs, size: stat.size });
         } catch {
-          // The session may rotate between readdir and stat.
+          // A session can rotate between directory enumeration and stat.
         }
       }
     }
@@ -234,14 +269,34 @@ async function collectSessionFiles(root) {
     .slice(0, MAX_SESSION_FILES);
 }
 
+async function readRange(filePath, start, length) {
+  if (length <= 0) return '';
+  const handle = await fs.promises.open(filePath, 'r');
+  try {
+    const buffer = Buffer.alloc(length);
+    const { bytesRead } = await handle.read(buffer, 0, length, start);
+    return buffer.subarray(0, bytesRead).toString('utf8');
+  } finally {
+    await handle.close();
+  }
+}
+
+function readCodexLocale(codexHome) {
+  try {
+    const config = fs.readFileSync(path.join(codexHome, 'config.toml'), 'utf8');
+    const match = config.match(/^\s*localeOverride\s*=\s*["']([^"']+)["']/m);
+    return normalizeCodexLocale(match?.[1], Intl.DateTimeFormat().resolvedOptions().locale);
+  } catch {
+    return normalizeCodexLocale('', Intl.DateTimeFormat().resolvedOptions().locale);
+  }
+}
+
 function findCliPathInConfig(codexHome) {
   try {
     const config = fs.readFileSync(path.join(codexHome, 'config.toml'), 'utf8');
     const match = config.match(/^cli_path\s*=\s*["']([^"']+)["']/m);
     return match?.[1] ? path.resolve(match[1]) : null;
-  } catch {
-    return null;
-  }
+  } catch { return null; }
 }
 
 function resolveCodexExecutables(codexHome) {
@@ -250,7 +305,10 @@ function resolveCodexExecutables(codexHome) {
   if (configured) candidates.push(configured);
   if (process.env.CODEX_CLI_PATH) candidates.push(path.resolve(process.env.CODEX_CLI_PATH));
   if (process.platform === 'win32') {
-    const binRoot = path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'OpenAI', 'Codex', 'bin');
+    const binRoot = path.join(
+      process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'),
+      'OpenAI', 'Codex', 'bin',
+    );
     try {
       const versions = fs.readdirSync(binRoot, { withFileTypes: true })
         .filter((entry) => entry.isDirectory())
@@ -259,7 +317,7 @@ function resolveCodexExecutables(codexHome) {
         .sort((left, right) => fs.statSync(right).mtimeMs - fs.statSync(left).mtimeMs);
       candidates.push(...versions);
     } catch {
-      // Codex desktop may not be installed; PATH remains the final fallback.
+      // PATH remains the portable fallback.
     }
   }
   candidates.push(process.platform === 'win32' ? 'codex.exe' : 'codex');
@@ -272,9 +330,10 @@ class CodexAppServerClient extends EventEmitter {
     this.codexHome = codexHome;
     this.child = null;
     this.reader = null;
-    this.nextId = 10000;
+    this.nextId = 10_000;
     this.pending = new Map();
     this.connecting = null;
+    this.intentionalStop = false;
   }
 
   async connect() {
@@ -300,6 +359,7 @@ class CodexAppServerClient extends EventEmitter {
 
   #spawnAndInitialize(executable) {
     return new Promise((resolve, reject) => {
+      this.intentionalStop = false;
       const child = spawn(executable, ['app-server', '--listen', 'stdio://'], {
         cwd: this.codexHome,
         env: { ...process.env, CODEX_HOME: this.codexHome },
@@ -316,9 +376,10 @@ class CodexAppServerClient extends EventEmitter {
       child.once('error', fail);
       child.once('exit', (code) => {
         const error = new Error(`Codex App Server 已退出（${code ?? 'unknown'}）`);
+        const wasConnected = settled;
         if (!settled) fail(error);
         this.#rejectPending(error);
-        this.emit('disconnect', error);
+        if (wasConnected && !this.intentionalStop) this.emit('disconnect', error);
       });
       child.stderr.on('data', (chunk) => {
         const message = String(chunk || '').trim();
@@ -326,12 +387,11 @@ class CodexAppServerClient extends EventEmitter {
       });
       this.reader = readline.createInterface({ input: child.stdout });
       this.reader.on('line', (line) => this.#onLine(line));
-
-      const timeout = setTimeout(() => fail(new Error('Codex App Server 初始化超时')), 8000);
+      const timeout = setTimeout(() => fail(new Error('Codex App Server 初始化超时')), 20_000);
       this.request('initialize', {
         clientInfo: { name: 'new_monitor', title: 'Turtle Monitor', version: '1.0.0' },
         capabilities: { experimentalApi: true },
-      }, 7500).then(() => {
+      }, 19_000).then(() => {
         if (settled) return;
         this.sendNotification('initialized', {});
         clearTimeout(timeout);
@@ -367,7 +427,7 @@ class CodexAppServerClient extends EventEmitter {
     this.child.stdin.write(`${JSON.stringify(message)}\n`);
   }
 
-  request(method, params, timeoutMs = 12000) {
+  request(method, params, timeoutMs = 12_000) {
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
@@ -375,9 +435,8 @@ class CodexAppServerClient extends EventEmitter {
         reject(new Error(`${method} 请求超时`));
       }, timeoutMs);
       this.pending.set(String(id), { resolve, reject, timeout });
-      try {
-        this.#write({ id, method, params });
-      } catch (error) {
+      try { this.#write({ id, method, params }); }
+      catch (error) {
         clearTimeout(timeout);
         this.pending.delete(String(id));
         reject(error);
@@ -385,13 +444,8 @@ class CodexAppServerClient extends EventEmitter {
     });
   }
 
-  sendNotification(method, params) {
-    this.#write({ method, params });
-  }
-
-  sendServerResponse(id, result) {
-    this.#write({ id, result });
-  }
+  sendNotification(method, params) { this.#write({ method, params }); }
+  sendServerResponse(id, result) { this.#write({ id, result }); }
 
   #rejectPending(error) {
     for (const pending of this.pending.values()) {
@@ -402,6 +456,7 @@ class CodexAppServerClient extends EventEmitter {
   }
 
   stop() {
+    this.intentionalStop = true;
     this.reader?.close();
     this.reader = null;
     if (this.child && !this.child.killed) this.child.kill();
@@ -411,11 +466,12 @@ class CodexAppServerClient extends EventEmitter {
 }
 
 export class CodexMonitor {
-  constructor({ config, onConfigChange, pollIntervalMs = 1500 } = {}) {
+  constructor({ config, onConfigChange, pollIntervalMs = DISCOVERY_INTERVAL_MS, appServerFactory } = {}) {
+    this.migratingFromV1 = Number(config?.version || 1) < 2;
     this.config = normalizeCodexIntegrationConfig(config);
     this.onConfigChange = onConfigChange;
-    this.pollIntervalMs = pollIntervalMs;
-    this.idlePollIntervalMs = Math.max(5000, pollIntervalMs);
+    this.pollIntervalMs = Math.max(5000, pollIntervalMs);
+    this.appServerFactory = appServerFactory || ((home) => new CodexAppServerClient(home));
     this.window = null;
     this.timer = null;
     this.running = false;
@@ -424,11 +480,26 @@ export class CodexMonitor {
     this.watchDebounce = null;
     this.scanPromise = null;
     this.scanAgain = false;
+    this.scanAgainForce = false;
+    this.fileCache = new Map();
+    this.knownFiles = new Map();
+    this.changedPaths = new Set();
+    this.lastDiscoveryAtMs = 0;
     this.tasks = new Map();
+    this.catalogTasks = new Map();
+    this.catalogSynced = false;
     this.managedTasks = new Map();
+    this.managedMessages = new Map();
     this.managedUnread = new Map();
     this.pendingRequests = new Map();
+    this.connectionStates = new Map();
     this.client = null;
+    this.clientReady = false;
+    this.clientRetryTimer = null;
+    this.clientRetryIndex = 0;
+    this.bytesRead = 0;
+    this.filesParsed = 0;
+    this.locale = 'zh-CN';
     this.lastSnapshot = this.#emptySnapshot();
   }
 
@@ -441,55 +512,119 @@ export class CodexMonitor {
     if (this.running) return;
     this.running = true;
     this.scan();
+    if (this.config.enabled) this.#startClientLifecycle();
   }
 
   stop() {
     this.running = false;
     if (this.timer) clearTimeout(this.timer);
     if (this.watchDebounce) clearTimeout(this.watchDebounce);
+    if (this.clientRetryTimer) clearTimeout(this.clientRetryTimer);
     this.timer = null;
     this.watchDebounce = null;
+    this.clientRetryTimer = null;
     this.#closeWatcher();
     this.client?.stop();
     this.client = null;
+    this.clientReady = false;
+    this.catalogSynced = false;
   }
 
   getConfig() {
-    return { ...this.config, readEventIds: [...this.config.readEventIds] };
+    return {
+      ...this.config,
+      desiredThreadIds: [...this.config.desiredThreadIds],
+      readEventIds: [...this.config.readEventIds],
+      notifiedEventIds: [...this.config.notifiedEventIds],
+    };
   }
 
   updateConfig(next) {
+    const previousConfig = this.config;
     const wasEnabled = this.config.enabled;
     this.config = normalizeCodexIntegrationConfig({ ...this.config, ...next });
     if (!wasEnabled && this.config.enabled) this.config.enabledAtMs = Date.now();
-    this.onConfigChange?.(this.getConfig());
+    this.#persistConfig();
     if (!this.config.enabled) {
       this.tasks.clear();
+      this.catalogTasks.clear();
+      this.catalogSynced = false;
       this.managedUnread.clear();
+      this.connectionStates.clear();
       this.client?.stop();
       this.client = null;
+      this.clientReady = false;
+    } else {
+      const homeChanged = previousConfig.homeMode !== this.config.homeMode
+        || previousConfig.manualHome !== this.config.manualHome;
+      const controlDisabled = previousConfig.managedReplies && !this.config.managedReplies;
+      if (this.client && (homeChanged || controlDisabled)) {
+        this.client.stop();
+        this.client = null;
+        this.clientReady = false;
+        this.catalogSynced = false;
+      }
+      if (!this.config.managedReplies) this.connectionStates.clear();
+      if (this.running) this.#startClientLifecycle();
     }
     this.scan(true);
     return this.getConfig();
   }
 
-  getSnapshot() {
-    return structuredClone(this.lastSnapshot);
+  getSnapshot() { return structuredClone(this.lastSnapshot); }
+
+  async getMessages(threadId, { cursor = null, limit = 50 } = {}) {
+    const id = String(threadId || '');
+    if (!(this.tasks.get(id)?.messages?.length) && this.clientReady && this.catalogTasks.has(id)) {
+      await this.#hydrateThreadMessages(id);
+    }
+    const fileMessages = this.tasks.get(id)?.messages || [];
+    const managedMessages = this.managedMessages.get(id) || [];
+    const lastSeenAt = new Map();
+    const messages = [...fileMessages, ...managedMessages]
+      .sort((left, right) => Number(left.createdAtMs || 0) - Number(right.createdAtMs || 0))
+      .filter((message) => {
+        const key = `${message.role}:${message.message}`;
+        const timestamp = Number(message.createdAtMs || 0);
+        const previous = lastSeenAt.get(key);
+        if (Number.isFinite(previous) && Math.abs(timestamp - previous) <= 10_000) return false;
+        lastSeenAt.set(key, timestamp);
+        return true;
+      });
+    const pageSize = Math.min(100, Math.max(1, Number(limit) || 50));
+    const end = cursor === null ? messages.length : Math.min(messages.length, Math.max(0, Number(cursor) || 0));
+    const start = Math.max(0, end - pageSize);
+    return {
+      threadId: id,
+      messages: messages.slice(start, end),
+      nextCursor: start > 0 ? String(start) : null,
+      total: messages.length,
+    };
+  }
+
+  getDiagnostics() {
+    return {
+      bytesRead: this.bytesRead,
+      filesParsed: this.filesParsed,
+      cachedFiles: this.fileCache.size,
+    };
   }
 
   scan(force = false) {
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
     if (this.scanPromise) {
-      if (force) this.scanAgain = true;
+      this.scanAgain = true;
+      this.scanAgainForce ||= force;
       return this.scanPromise;
     }
     this.scanPromise = (async () => {
       let nextForce = force;
       do {
         this.scanAgain = false;
+        this.scanAgainForce = false;
         await this.#scanOnce(nextForce);
-        nextForce = true;
+        nextForce = this.scanAgainForce;
       } while (this.scanAgain);
     })().finally(() => {
       this.scanPromise = null;
@@ -499,98 +634,203 @@ export class CodexMonitor {
   }
 
   async #scanOnce(force = false) {
-      if (!this.config.enabled) {
-        this.#closeWatcher();
-        this.lastSnapshot = this.#emptySnapshot();
-        this.#sendSnapshot();
-        return;
-      }
-      const codexHome = resolveCodexHome(this.config);
-      if (!codexHome) {
-        this.#closeWatcher();
-        this.lastSnapshot = {
-          ...this.#emptySnapshot(),
-          configured: true,
-          reason: this.config.homeMode === 'manual'
-            ? '选择的 Codex 数据目录不存在'
-            : '本机没有检测到 Codex 数据目录',
-        };
-        this.#sendSnapshot();
-        return;
-      }
-      const sessionsRoot = path.join(codexHome, 'sessions');
-      if (!fs.existsSync(sessionsRoot)) {
-        this.#watchSessions(codexHome);
-        this.lastSnapshot = {
-          ...this.#emptySnapshot(),
-          configured: true,
-          homeLabel: this.config.homeMode === 'manual' ? '手动目录' : '自动检测',
-          reason: 'Codex 已连接，但还没有本地对话记录',
-        };
-        this.#sendSnapshot();
-        return;
-      }
-
-      this.#watchSessions(sessionsRoot);
-
-      const files = await collectSessionFiles(sessionsRoot);
-      const readIds = new Set(this.config.readEventIds);
-      const nextTasks = new Map();
-      const unread = [];
-      for (const file of files) {
-        try {
-          const window = await readRolloutWindow(file.path);
-          const parsed = parseCodexRollout(window.text, {
-            filePath: file.path,
-            modifiedAtMs: window.modifiedAtMs,
-            enabledAtMs: this.config.enabledAtMs,
-            readEventIds: readIds,
-          });
-          if (!parsed) continue;
-          nextTasks.set(parsed.task.id, parsed.task);
-          if (parsed.unread) unread.push(parsed.unread);
-        } catch (error) {
-          if (force) console.warn('[Codex] Session read failed:', error.message);
-        }
-      }
-      this.tasks = nextTasks;
-      for (const [id, task] of this.managedTasks) this.tasks.set(id, { ...this.tasks.get(id), ...task });
-      const unreadById = new Map([...unread, ...this.managedUnread.values()]
-        .filter((event) => !readIds.has(event.id))
-        .map((event) => [event.id, event]));
-      const allUnread = [...unreadById.values()];
-      const allTasks = [...this.tasks.values()];
-      const tasks = allTasks
-        .filter((task) => task.activity !== CODEX_ACTIVITY.SILENT)
-        .sort((left, right) => right.updatedAtMs - left.updatedAtMs);
-      const sortedUnread = sortCodexUnreadEvents(allUnread);
-      const taskSummary = buildCodexVisibleTasks(allTasks, sortedUnread);
+    if (!this.config.enabled) {
+      this.#closeWatcher();
+      this.lastSnapshot = this.#emptySnapshot();
+      this.#sendSnapshot();
+      return;
+    }
+    const codexHome = resolveCodexHome(this.config);
+    if (!codexHome) {
+      this.#closeWatcher();
       this.lastSnapshot = {
+        ...this.#emptySnapshot(),
+        configured: true,
+        enabled: true,
+        reason: this.config.homeMode === 'manual'
+          ? '选择的 Codex 数据目录不存在'
+          : '本机没有检测到 Codex 数据目录',
+      };
+      this.#sendSnapshot();
+      return;
+    }
+    this.locale = readCodexLocale(codexHome);
+    const sessionsRoot = path.join(codexHome, 'sessions');
+    if (!fs.existsSync(sessionsRoot)) {
+      this.#watchSessions(codexHome);
+      this.lastSnapshot = {
+        ...this.#emptySnapshot(),
         configured: true,
         enabled: true,
         connected: true,
+        locale: this.locale,
         homeLabel: this.config.homeMode === 'manual' ? '手动目录' : '自动检测',
-        source: this.client ? 'managed+sessions' : 'sessions',
-        activity: resolveCodexActivity({ connected: true, tasks, unread: sortedUnread }),
-        tasks,
-        unread: sortedUnread,
-        unreadCount: sortedUnread.length,
-        ...taskSummary,
-        updatedAtMs: Date.now(),
-        reason: '',
+        reason: 'Codex 已连接，但还没有本地对话记录',
       };
       this.#sendSnapshot();
+      return;
+    }
+
+    this.#watchSessions(sessionsRoot);
+    const nowMs = Date.now();
+    const needsDiscovery = force
+      || this.knownFiles.size === 0
+      || nowMs - this.lastDiscoveryAtMs >= DISCOVERY_INTERVAL_MS;
+    if (needsDiscovery) {
+      const discovered = await collectSessionFiles(sessionsRoot);
+      this.knownFiles = new Map(discovered.map((file) => [path.resolve(file.path), file]));
+      this.changedPaths.clear();
+      this.lastDiscoveryAtMs = nowMs;
+    } else if (this.changedPaths.size) {
+      const changed = [...this.changedPaths];
+      this.changedPaths.clear();
+      await Promise.all(changed.map(async (changedPath) => {
+        try {
+          const stat = await fs.promises.stat(changedPath);
+          if (stat.isFile() && changedPath.endsWith('.jsonl')) {
+            this.knownFiles.set(changedPath, {
+              path: changedPath,
+              modifiedAtMs: stat.mtimeMs,
+              size: stat.size,
+            });
+          }
+        } catch {
+          this.knownFiles.delete(changedPath);
+          this.fileCache.delete(changedPath);
+        }
+      }));
+    }
+    const files = [...this.knownFiles.values()]
+      .sort((left, right) => right.modifiedAtMs - left.modifiedAtMs)
+      .slice(0, MAX_SESSION_FILES);
+    const readIds = new Set(this.config.readEventIds);
+    const nextTasks = new Map();
+    const unread = [];
+    const livePaths = new Set(files.map((file) => file.path));
+    for (const cachedPath of this.fileCache.keys()) {
+      if (!livePaths.has(cachedPath)) this.fileCache.delete(cachedPath);
+    }
+    for (const file of files) {
+      try {
+        const parsed = await this.#readCachedRollout(file, readIds);
+        if (!parsed) continue;
+        const existing = nextTasks.get(parsed.task.id);
+        if (!existing || parsed.task.updatedAtMs >= existing.updatedAtMs) nextTasks.set(parsed.task.id, parsed.task);
+        if (parsed.unread) unread.push(parsed.unread);
+      } catch (error) {
+        if (force) console.warn('[Codex] Session read failed:', error.message);
+      }
+    }
+    this.tasks = new Map(this.catalogTasks);
+    for (const [id, task] of nextTasks) {
+      const catalog = this.catalogTasks.get(id);
+      this.tasks.set(id, {
+        ...catalog,
+        ...task,
+        title: catalog?.hasSavedName ? catalog.title : task.title,
+      });
+    }
+    await this.#reconcileDesiredConnections();
+    this.#rebuildSnapshot(unread);
+  }
+
+  async #readCachedRollout(file, readIds) {
+    let cached = this.fileCache.get(file.path);
+    if (!cached || file.size < cached.offset) {
+      cached = { offset: 0, modifiedAtMs: 0, state: createRolloutState(file.path, file.modifiedAtMs) };
+    }
+    if (file.size > cached.offset) {
+      const chunk = await readRange(file.path, cached.offset, file.size - cached.offset);
+      this.bytesRead += Buffer.byteLength(chunk);
+      cached.state.modifiedAtMs = file.modifiedAtMs;
+      applyRolloutChunk(cached.state, chunk);
+      cached.offset = file.size;
+      cached.modifiedAtMs = file.modifiedAtMs;
+      this.filesParsed += 1;
+      this.fileCache.set(file.path, cached);
+    } else if (!this.fileCache.has(file.path)) {
+      this.fileCache.set(file.path, cached);
+    }
+    return snapshotRolloutState(cached.state, {
+      enabledAtMs: this.config.enabledAtMs,
+      readEventIds: readIds,
+    });
+  }
+
+  #rebuildSnapshot(freshUnread = null) {
+    const readIds = new Set(this.config.readEventIds);
+    const parsedUnread = freshUnread || [...this.fileCache.values()]
+      .map((entry) => snapshotRolloutState(entry.state, {
+        enabledAtMs: this.config.enabledAtMs,
+        readEventIds: readIds,
+      })?.unread)
+      .filter(Boolean);
+    for (const [id, task] of this.managedTasks) this.tasks.set(id, { ...this.tasks.get(id), ...task });
+    const unreadById = new Map([...parsedUnread, ...this.managedUnread.values()]
+      .filter((event) => !readIds.has(event.id))
+      .map((event) => [event.id, event]));
+    const allUnread = sortCodexUnreadEvents([...unreadById.values()]);
+
+    if (this.migratingFromV1) {
+      if (allUnread.length) {
+        this.config = normalizeCodexIntegrationConfig({
+          ...this.config,
+          notifiedEventIds: [...this.config.notifiedEventIds, ...allUnread.map((event) => event.id)],
+        });
+      }
+      this.migratingFromV1 = false;
+      this.#persistConfig();
+    }
+
+    const desired = new Set(this.config.managedReplies ? this.config.desiredThreadIds : []);
+    const allTasks = [...this.tasks.values()].map((task) => {
+      const runtime = this.connectionStates.get(task.id);
+      const connectionState = runtime?.state
+        || (desired.has(task.id) ? CODEX_CONNECTION.CONNECTING : CODEX_CONNECTION.DISCONNECTED);
+      const pending = [...this.pendingRequests.values()].some((request) => request.threadId === task.id);
+      return {
+        ...task,
+        connectionState,
+        connectionError: runtime?.error || '',
+        hasOwnedRequest: pending,
+        canReply: connectionState === CODEX_CONNECTION.CONNECTED,
+        capabilities: {
+          reply: connectionState === CODEX_CONNECTION.CONNECTED,
+          approve: connectionState === CODEX_CONNECTION.CONNECTED && pending,
+          jump: true,
+        },
+      };
+    });
+    const taskSummary = buildCodexVisibleTasks(allTasks, allUnread);
+    const notified = new Set(this.config.notifiedEventIds);
+    this.lastSnapshot = {
+      configured: true,
+      enabled: true,
+      connected: true,
+      controlConnected: this.clientReady,
+      locale: this.locale,
+      homeLabel: this.config.homeMode === 'manual' ? '手动目录' : '自动检测',
+      source: this.clientReady ? 'app-server+sessions' : 'sessions',
+      activity: resolveCodexActivity({ connected: true, tasks: allTasks, unread: allUnread }),
+      tasks: allTasks
+        .map(({ messages, ...summary }) => summary)
+        .sort((left, right) => Number(right.updatedAtMs || 0) - Number(left.updatedAtMs || 0)),
+      unread: allUnread,
+      alerts: allUnread.filter((event) => !notified.has(event.id)),
+      unreadCount: allUnread.length,
+      ...taskSummary,
+      updatedAtMs: Date.now(),
+      reason: '',
+    };
+    this.#sendSnapshot();
   }
 
   #scheduleScan() {
     if (!this.running || this.timer) return;
-    const active = this.lastSnapshot.activity === CODEX_ACTIVITY.RUNNING
-      || this.lastSnapshot.tasks?.some((task) => task.activity === CODEX_ACTIVITY.RUNNING);
-    const delay = active ? this.pollIntervalMs : this.idlePollIntervalMs;
     this.timer = setTimeout(() => {
       this.timer = null;
       this.scan();
-    }, delay);
+    }, this.pollIntervalMs);
     this.timer.unref?.();
   }
 
@@ -602,43 +842,153 @@ export class CodexMonitor {
       this.watcher = fs.watch(resolved, { recursive: process.platform === 'win32' }, (_event, fileName) => {
         const name = String(fileName || '');
         if (name && !/\.jsonl$|sessions/i.test(name)) return;
+        if (name && name.endsWith('.jsonl')) this.changedPaths.add(path.resolve(resolved, name));
         if (this.watchDebounce) clearTimeout(this.watchDebounce);
         this.watchDebounce = setTimeout(() => {
           this.watchDebounce = null;
-          this.scan(true);
-        }, 120);
+          this.scan(!name || !name.endsWith('.jsonl'));
+        }, WATCH_DEBOUNCE_MS);
         this.watchDebounce.unref?.();
       });
       this.watchedRoot = resolved;
       this.watcher.on('error', () => this.#closeWatcher());
-    } catch {
-      this.#closeWatcher();
-    }
+    } catch { this.#closeWatcher(); }
   }
 
   #closeWatcher() {
     this.watcher?.close();
     this.watcher = null;
     this.watchedRoot = '';
+    this.knownFiles.clear();
+    this.changedPaths.clear();
+    this.lastDiscoveryAtMs = 0;
   }
 
   markRead(eventId) {
     const id = String(eventId || '').slice(0, 240);
     if (!id) return this.getSnapshot();
-    const next = [...this.config.readEventIds.filter((item) => item !== id), id].slice(-512);
-    this.config = normalizeCodexIntegrationConfig({ ...this.config, readEventIds: next });
+    this.config = normalizeCodexIntegrationConfig({
+      ...this.config,
+      readEventIds: [...this.config.readEventIds, id],
+      notifiedEventIds: [...this.config.notifiedEventIds, id],
+    });
     this.managedUnread.delete(id);
-    this.onConfigChange?.(this.getConfig());
-    this.scan(true);
+    this.#persistConfig();
+    this.#rebuildSnapshot();
     return this.getSnapshot();
+  }
+
+  markNotified(eventId) {
+    const id = String(eventId || '').slice(0, 240);
+    if (!id || this.config.notifiedEventIds.includes(id)) return this.getSnapshot();
+    this.config = normalizeCodexIntegrationConfig({
+      ...this.config,
+      notifiedEventIds: [...this.config.notifiedEventIds, id],
+    });
+    this.#persistConfig();
+    this.#rebuildSnapshot();
+    return this.getSnapshot();
+  }
+
+  async connectThread(threadId) {
+    const id = String(threadId || '').trim();
+    if (!id || !this.tasks.has(id)) throw new Error('没有找到这个 Codex 任务');
+    if (!this.config.managedReplies) throw new Error('请先开启“允许气泡回复与批准”');
+    this.config = normalizeCodexIntegrationConfig({
+      ...this.config,
+      desiredThreadIds: [...this.config.desiredThreadIds, id],
+    });
+    this.#persistConfig();
+    const task = this.tasks.get(id);
+    this.connectionStates.set(id, {
+      state: task.activity === CODEX_ACTIVITY.RUNNING
+        ? CODEX_CONNECTION.WAITING_IDLE
+        : CODEX_CONNECTION.CONNECTING,
+      error: '',
+    });
+    this.#rebuildSnapshot();
+    this.#startClientLifecycle();
+    void this.#connectDesiredThread(id);
+    return this.getSnapshot();
+  }
+
+  async disconnectThread(threadId) {
+    const id = String(threadId || '').trim();
+    this.config = normalizeCodexIntegrationConfig({
+      ...this.config,
+      desiredThreadIds: this.config.desiredThreadIds.filter((item) => item !== id),
+    });
+    this.#persistConfig();
+    this.connectionStates.delete(id);
+    if (this.clientReady) {
+      try { await this.client.request('thread/unsubscribe', { threadId: id }, 5000); }
+      catch { /* The thread may already be unloaded. */ }
+    }
+    this.#rebuildSnapshot();
+    return this.getSnapshot();
+  }
+
+  async #reconcileDesiredConnections() {
+    if (!this.config.managedReplies) return;
+    for (const id of this.config.desiredThreadIds) {
+      const task = this.tasks.get(id);
+      if (!task) continue;
+      const current = this.connectionStates.get(id)?.state;
+      const ownedActive = Boolean(this.managedTasks.get(id)?.activeTurnId);
+      if (task.activity === CODEX_ACTIVITY.RUNNING && !ownedActive) {
+        this.connectionStates.set(id, {
+          state: current === CODEX_CONNECTION.CONNECTED
+            ? CODEX_CONNECTION.TEMPORARY_READ_ONLY
+            : CODEX_CONNECTION.WAITING_IDLE,
+          error: '',
+        });
+      } else if (this.clientReady && current !== CODEX_CONNECTION.CONNECTED) {
+        void this.#connectDesiredThread(id);
+      } else if (!this.clientReady && current !== CODEX_CONNECTION.ERROR) {
+        this.connectionStates.set(id, { state: CODEX_CONNECTION.CONNECTING, error: '' });
+      }
+    }
+  }
+
+  async #connectDesiredThread(threadId) {
+    if (!this.config.desiredThreadIds.includes(threadId)) return;
+    const task = this.tasks.get(threadId);
+    if (task?.activity === CODEX_ACTIVITY.RUNNING && !this.managedTasks.get(threadId)?.activeTurnId) {
+      this.connectionStates.set(threadId, { state: CODEX_CONNECTION.WAITING_IDLE, error: '' });
+      this.#rebuildSnapshot();
+      return;
+    }
+    try {
+      await this.#ensureClient();
+      this.connectionStates.set(threadId, { state: CODEX_CONNECTION.CONNECTING, error: '' });
+      this.#rebuildSnapshot();
+      const resumed = await this.client.request('thread/resume', { threadId }, 15_000);
+      const status = resumed?.thread?.status?.type;
+      const active = status === 'active' || status === 'inProgress';
+      this.connectionStates.set(threadId, {
+        state: active ? CODEX_CONNECTION.TEMPORARY_READ_ONLY : CODEX_CONNECTION.CONNECTED,
+        error: active ? '任务正在 Codex 中运行，空闲后会自动恢复连接' : '',
+      });
+      if (resumed?.thread?.name) {
+        const base = this.tasks.get(threadId) || {};
+        this.tasks.set(threadId, { ...base, title: sanitizeTaskTitle(resumed.thread.name) });
+      }
+    } catch (error) {
+      this.connectionStates.set(threadId, { state: CODEX_CONNECTION.ERROR, error: error.message });
+    }
+    this.#rebuildSnapshot();
   }
 
   async reply(threadId, text) {
     const message = String(text || '').trim();
     if (!message) throw new Error('请输入要发送的内容');
-    await this.#ensureClient();
     const id = String(threadId || '');
+    if (this.connectionStates.get(id)?.state !== CODEX_CONNECTION.CONNECTED) {
+      throw new Error('这个任务还没有建立可回复连接，请先连接或前往 Codex 处理');
+    }
+    await this.#ensureClient();
     const existing = this.managedTasks.get(id);
+    this.#appendManagedMessage(id, 'user', message);
     if (existing?.activeTurnId) {
       await this.client.request('turn/steer', {
         threadId: id,
@@ -647,25 +997,21 @@ export class CodexMonitor {
       });
       return { accepted: true, mode: 'steer' };
     }
-    const resumed = await this.client.request('thread/resume', { threadId: id });
-    const status = resumed?.thread?.status?.type;
-    if (status === 'active' && !existing?.activeTurnId) {
-      throw new Error('这个任务仍由 Codex 桌面端运行，请先在原任务中完成当前操作');
-    }
     const result = await this.client.request('turn/start', {
       threadId: id,
       input: [{ type: 'text', text: message }],
     });
     const activeTurnId = result?.turn?.id || '';
     this.#setManagedTask(id, { activity: CODEX_ACTIVITY.RUNNING, activeTurnId, updatedAtMs: Date.now() });
-    this.scan(true);
+    this.#rebuildSnapshot();
     return { accepted: true, mode: 'turn', turnId: activeTurnId };
   }
 
   async respond(requestId, response = {}) {
     const key = String(requestId || '');
     const pending = this.pendingRequests.get(key);
-    if (!pending) throw new Error('这项请求已经结束或已在 Codex 中处理');
+    if (!pending) throw new Error('这项请求已经结束，或者已在 Codex 中处理');
+    if (!pending.supported) throw new Error('这类请求需要前往 Codex 处理');
     let result;
     if (pending.method === 'item/tool/requestUserInput') {
       result = { answers: response.answers || {} };
@@ -681,30 +1027,127 @@ export class CodexMonitor {
       result = { decision };
     }
     this.client.sendServerResponse(pending.rawId, result);
-    this.pendingRequests.delete(key);
-    this.markRead(pending.eventId);
+    this.#resolvePendingRequest(key);
     return { accepted: true };
   }
 
   async #ensureClient() {
     if (!this.config.enabled) throw new Error('请先在左键配置页启用 Codex 接入');
-    if (!this.config.managedReplies) throw new Error('请先开启“允许气泡回复与审批”');
     const codexHome = resolveCodexHome(this.config);
     if (!codexHome) throw new Error('没有找到 Codex 数据目录');
     if (!this.client) {
-      this.client = new CodexAppServerClient(codexHome);
+      this.client = this.appServerFactory(codexHome);
       this.client.on('notification', (message) => this.#handleNotification(message));
       this.client.on('server-request', (message) => this.#handleServerRequest(message));
-      this.client.on('disconnect', () => {
-        this.client = null;
-        for (const task of this.managedTasks.values()) {
-          task.activeTurnId = '';
-          if (task.activity === CODEX_ACTIVITY.RUNNING) task.activity = CODEX_ACTIVITY.SILENT;
-        }
-        this.scan(true);
-      });
+      this.client.on('disconnect', (error) => this.#handleClientDisconnect(error));
     }
     await this.client.connect();
+    this.clientReady = true;
+    this.clientRetryIndex = 0;
+    if (!this.catalogSynced) {
+      try { await this.#syncThreadCatalog(); }
+      catch {
+        // Older App Server builds can still use rollout sync and direct connections.
+        this.catalogSynced = true;
+      }
+    }
+  }
+
+  async #syncThreadCatalog() {
+    const catalog = new Map();
+    const seenCursors = new Set();
+    let cursor = null;
+    do {
+      const result = await this.client.request('thread/list', {
+        cursor,
+        limit: 100,
+        sortKey: 'updated_at',
+        sortDirection: 'desc',
+        sourceKinds: ['cli', 'vscode', 'appServer'],
+        useStateDbOnly: true,
+      }, 15_000);
+      for (const thread of result?.data || []) {
+        const id = String(thread?.id || '');
+        if (!id) continue;
+        const status = thread.status || {};
+        const savedName = String(thread.name || '').trim();
+        catalog.set(id, {
+          id,
+          parentThreadId: thread.parentThreadId || thread.forkedFromId || null,
+          title: sanitizeTaskTitle(savedName || thread.preview),
+          project: sanitizeProjectName(thread.cwd),
+          activity: status.type === 'active' ? CODEX_ACTIVITY.RUNNING
+            : status.type === 'systemError' ? CODEX_ACTIVITY.BLOCKED : CODEX_ACTIVITY.SILENT,
+          updatedAtMs: timestampToMs(thread.updatedAt || thread.createdAt),
+          managed: false,
+          messages: this.catalogTasks.get(id)?.messages || [],
+          hasSavedName: Boolean(savedName),
+        });
+      }
+      const nextCursor = result?.nextCursor ? String(result.nextCursor) : '';
+      if (!nextCursor || seenCursors.has(nextCursor)) break;
+      seenCursors.add(nextCursor);
+      cursor = nextCursor;
+    } while (seenCursors.size < 100);
+    this.catalogTasks = catalog;
+    this.catalogSynced = true;
+    for (const [id, catalogTask] of catalog) {
+      const task = this.tasks.get(id);
+      if (!task) this.tasks.set(id, catalogTask);
+      else this.tasks.set(id, {
+        ...catalogTask,
+        ...task,
+        title: catalogTask.hasSavedName ? catalogTask.title : task.title,
+      });
+    }
+  }
+
+  async #hydrateThreadMessages(threadId) {
+    try {
+      const result = await this.client.request('thread/read', { threadId, includeTurns: true }, 15_000);
+      const messages = messagesFromThread(result?.thread);
+      if (!messages.length) return;
+      const catalog = this.catalogTasks.get(threadId);
+      if (catalog) this.catalogTasks.set(threadId, { ...catalog, messages });
+      const task = this.tasks.get(threadId);
+      if (task) this.tasks.set(threadId, { ...task, messages });
+    } catch {
+      // History viewing stays available from local rollout data when App Server is busy.
+    }
+  }
+
+  #startClientLifecycle() {
+    if (!this.running || !this.config.enabled || this.clientReady) return;
+    if (this.clientRetryTimer) return;
+    this.clientRetryTimer = setTimeout(async () => {
+      this.clientRetryTimer = null;
+      try {
+        await this.#ensureClient();
+        await this.#reconcileDesiredConnections();
+        this.#rebuildSnapshot();
+      } catch (error) {
+        this.clientReady = false;
+        for (const id of this.config.desiredThreadIds) {
+          this.connectionStates.set(id, { state: CODEX_CONNECTION.ERROR, error: error.message });
+        }
+        this.#rebuildSnapshot();
+        this.clientRetryIndex = Math.min(this.clientRetryIndex + 1, CLIENT_RETRY_DELAYS.length - 1);
+        this.#startClientLifecycle();
+      }
+    }, CLIENT_RETRY_DELAYS[this.clientRetryIndex] || CLIENT_RETRY_DELAYS.at(-1));
+    this.clientRetryTimer.unref?.();
+  }
+
+  #handleClientDisconnect(error) {
+    this.clientReady = false;
+    this.client = null;
+    this.catalogSynced = false;
+    for (const id of this.config.desiredThreadIds) {
+      this.connectionStates.set(id, { state: CODEX_CONNECTION.ERROR, error: error?.message || '连接已断开' });
+    }
+    for (const task of this.managedTasks.values()) task.activeTurnId = '';
+    this.#rebuildSnapshot();
+    this.#startClientLifecycle();
   }
 
   #setManagedTask(threadId, patch) {
@@ -713,13 +1156,29 @@ export class CodexMonitor {
       title: 'Codex 任务',
       project: '未指定项目',
       managed: true,
+      messages: [],
     };
     this.managedTasks.set(threadId, { ...base, ...patch, id: threadId, managed: true });
+  }
+
+  #appendManagedMessage(threadId, role, message) {
+    const list = this.managedMessages.get(threadId) || [];
+    const key = `${role}:${message}`;
+    const createdAtMs = Date.now();
+    const duplicate = list.some((item) => `${item.role}:${item.message}` === key
+      && Math.abs(createdAtMs - Number(item.createdAtMs || 0)) <= 10_000);
+    if (duplicate) return;
+    list.push({ id: `managed:${threadId}:${createdAtMs}:${list.length}`, role, message, createdAtMs });
+    this.managedMessages.set(threadId, list);
   }
 
   #handleNotification(message) {
     const method = message.method;
     const params = message.params || {};
+    if (method === 'serverRequest/resolved') {
+      this.#resolvePendingRequest(String(params.requestId || ''));
+      return;
+    }
     const threadId = String(params.threadId || params.thread?.id || '');
     if (!threadId) return;
     if (method === 'turn/started') {
@@ -729,6 +1188,7 @@ export class CodexMonitor {
         agentText: '',
         updatedAtMs: Date.now(),
       });
+      this.connectionStates.set(threadId, { state: CODEX_CONNECTION.CONNECTED, error: '' });
     } else if (method === 'item/agentMessage/delta') {
       const task = this.managedTasks.get(threadId) || {};
       this.#setManagedTask(threadId, {
@@ -738,18 +1198,17 @@ export class CodexMonitor {
       });
     } else if (method === 'item/completed' && params.item?.type === 'agentMessage') {
       const text = String(params.item?.text || params.item?.message || '').trim();
-      if (text) this.#setManagedTask(threadId, { agentText: text, updatedAtMs: Date.now() });
+      if (text) {
+        this.#appendManagedMessage(threadId, 'assistant', text);
+        this.#setManagedTask(threadId, { agentText: text, updatedAtMs: Date.now() });
+      }
     } else if (method === 'turn/completed') {
       const task = this.managedTasks.get(threadId) || this.tasks.get(threadId) || {};
       const turnId = String(params.turn?.id || task.activeTurnId || Date.now());
       const failed = ['failed', 'interrupted'].includes(params.turn?.status);
       const activity = failed ? CODEX_ACTIVITY.BLOCKED : CODEX_ACTIVITY.READY;
       const eventId = `${threadId}:${turnId}:${activity}`;
-      this.#setManagedTask(threadId, {
-        activity: CODEX_ACTIVITY.SILENT,
-        activeTurnId: '',
-        updatedAtMs: Date.now(),
-      });
+      this.#setManagedTask(threadId, { activity: CODEX_ACTIVITY.SILENT, activeTurnId: '', updatedAtMs: Date.now() });
       this.managedUnread.set(eventId, {
         id: eventId,
         threadId,
@@ -763,17 +1222,49 @@ export class CodexMonitor {
         managed: true,
         canReply: !failed,
       });
+      this.connectionStates.set(threadId, { state: CODEX_CONNECTION.CONNECTED, error: '' });
     } else if (method === 'thread/status/changed') {
       const status = params.status || {};
+      const systemError = status.type === 'systemError';
       const needsInput = status.type === 'active'
         && (status.activeFlags || []).some((flag) => flag === 'waitingOnApproval' || flag === 'waitingOnUserInput');
+      const ownActive = Boolean(this.managedTasks.get(threadId)?.activeTurnId);
       this.#setManagedTask(threadId, {
-        activity: needsInput ? CODEX_ACTIVITY.NEEDS_INPUT
+        activity: systemError ? CODEX_ACTIVITY.BLOCKED
+          : needsInput ? CODEX_ACTIVITY.NEEDS_INPUT
           : status.type === 'active' ? CODEX_ACTIVITY.RUNNING : CODEX_ACTIVITY.SILENT,
         updatedAtMs: Date.now(),
       });
+      if (systemError) {
+        const task = this.managedTasks.get(threadId) || this.tasks.get(threadId) || {};
+        const eventId = `${threadId}:${task.activeTurnId || 'system'}:${CODEX_ACTIVITY.BLOCKED}`;
+        this.managedUnread.set(eventId, {
+          id: eventId,
+          threadId,
+          turnId: task.activeTurnId || null,
+          title: task.title || 'Codex 任务',
+          project: task.project || '未指定项目',
+          activity: CODEX_ACTIVITY.BLOCKED,
+          kind: 'failed',
+          message: String(status.error?.message || status.message || 'Codex 任务遇到系统错误，请查看详情。'),
+          createdAtMs: Date.now(),
+          managed: true,
+          canReply: false,
+        });
+      }
+      if (status.type === 'active' && !ownActive) {
+        this.connectionStates.set(threadId, { state: CODEX_CONNECTION.TEMPORARY_READ_ONLY, error: '' });
+      } else if (status.type !== 'active' && this.config.desiredThreadIds.includes(threadId)) {
+        this.connectionStates.set(threadId, { state: CODEX_CONNECTION.CONNECTED, error: '' });
+      }
+    } else if (method === 'thread/name/updated') {
+      const task = this.tasks.get(threadId);
+      const title = sanitizeTaskTitle(params.name || params.thread?.name);
+      if (task) this.tasks.set(threadId, { ...task, title, hasSavedName: true });
+      const catalog = this.catalogTasks.get(threadId);
+      if (catalog) this.catalogTasks.set(threadId, { ...catalog, title, hasSavedName: true });
     }
-    this.scan(true);
+    this.#rebuildSnapshot();
   }
 
   #handleServerRequest(message) {
@@ -784,7 +1275,8 @@ export class CodexMonitor {
     const requestId = String(message.id);
     const eventId = `managed-request:${requestId}`;
     let messageText = String(params.reason || '').trim();
-    let kind = 'approval';
+    let kind = 'unsupported';
+    let supported = true;
     if (method === 'item/tool/requestUserInput') {
       kind = 'question';
       messageText = (params.questions || []).map((question) => question.question).filter(Boolean).join('\n');
@@ -798,8 +1290,8 @@ export class CodexMonitor {
       kind = 'permissionApproval';
       messageText ||= 'Codex 请求额外的文件或网络权限。';
     } else {
-      this.client.sendServerResponse(message.id, { decision: 'decline' });
-      return;
+      supported = false;
+      messageText ||= '这类请求需要前往 Codex 处理。';
     }
     const task = this.managedTasks.get(threadId) || this.tasks.get(threadId) || {};
     const event = {
@@ -813,27 +1305,50 @@ export class CodexMonitor {
       message: messageText || 'Codex 正在等待你的选择。',
       createdAtMs: Number(params.startedAtMs || Date.now()),
       managed: true,
-      canReply: true,
+      canReply: supported,
       requestId,
+      supported,
       questions: method === 'item/tool/requestUserInput' ? params.questions || [] : [],
       availableDecisions: params.availableDecisions || ['accept', 'acceptForSession', 'decline'],
     };
-    this.pendingRequests.set(requestId, { rawId: message.id, method, params, eventId });
+    this.pendingRequests.set(requestId, {
+      rawId: message.id,
+      method,
+      params,
+      eventId,
+      threadId,
+      supported,
+    });
     this.managedUnread.set(eventId, event);
     this.#setManagedTask(threadId, { activity: CODEX_ACTIVITY.NEEDS_INPUT, updatedAtMs: Date.now() });
-    this.scan(true);
+    this.#rebuildSnapshot();
   }
+
+  #resolvePendingRequest(requestId) {
+    const pending = this.pendingRequests.get(String(requestId));
+    if (!pending) return;
+    this.pendingRequests.delete(String(requestId));
+    this.managedUnread.delete(pending.eventId);
+    const task = this.managedTasks.get(pending.threadId);
+    if (task?.activity === CODEX_ACTIVITY.NEEDS_INPUT) task.activity = task.activeTurnId ? CODEX_ACTIVITY.RUNNING : CODEX_ACTIVITY.SILENT;
+    this.#rebuildSnapshot();
+  }
+
+  #persistConfig() { this.onConfigChange?.(this.getConfig()); }
 
   #emptySnapshot() {
     return {
       configured: false,
       enabled: false,
       connected: false,
+      controlConnected: false,
+      locale: this.locale,
       homeLabel: '',
       source: 'none',
       activity: CODEX_ACTIVITY.DISCONNECTED,
       tasks: [],
       unread: [],
+      alerts: [],
       unreadCount: 0,
       runningCount: 0,
       unreadTaskCount: 0,
