@@ -82,7 +82,10 @@ export function createClaudeTranscriptState({ filePath = '', modifiedAtMs = 0 } 
     lastUserAtMs: 0,
     lastAssistantAtMs: 0,
     lastFinishedAtMs: 0,
+    lastFinishedEventKey: '',
+    lastTerminalAssistantAtMs: 0,
     lastFailureAtMs: 0,
+    lastFailureEventKey: '',
     lastMessageUuid: '',
     permissionMode: '',
   };
@@ -111,15 +114,29 @@ function applyClaudeRow(state, row) {
     return;
   }
   if (row.type === 'system') {
-    if (row.subtype === 'turn_duration') state.lastFinishedAtMs = Math.max(state.lastFinishedAtMs, at);
-    if (row.subtype === 'api_error' || row.error) state.lastFailureAtMs = Math.max(state.lastFailureAtMs, at);
+    if (row.subtype === 'turn_duration' && at >= state.lastFinishedAtMs) {
+      state.lastFinishedAtMs = at;
+      if (state.lastTerminalAssistantAtMs < state.lastUserAtMs) {
+        state.lastFinishedEventKey = cleanText(row.uuid || row.messageId || at, 240);
+      }
+    }
+    if ((row.subtype === 'api_error' || row.error) && at >= state.lastFailureAtMs) {
+      state.lastFailureAtMs = at;
+      state.lastFailureEventKey = cleanText(row.uuid || row.messageId || at, 240);
+    }
     return;
   }
   if (row.type === 'assistant') {
     state.lastAssistantAtMs = Math.max(state.lastAssistantAtMs, at);
-    if (row.isApiErrorMessage || row.error) state.lastFailureAtMs = Math.max(state.lastFailureAtMs, at);
-    for (const block of messageContentBlocks(row.message)) {
+    if ((row.isApiErrorMessage || row.error) && at >= state.lastFailureAtMs) {
+      state.lastFailureAtMs = at;
+      state.lastFailureEventKey = cleanText(row.uuid || at, 240);
+    }
+    const blocks = messageContentBlocks(row.message);
+    let hasAssistantText = false;
+    for (const block of blocks) {
       if (block?.type === 'text') {
+        if (cleanText(block.text)) hasAssistantText = true;
         appendMessage(state, 'assistant', block.text, at, 'message', row.uuid);
       } else if (block?.type === 'thinking') {
         appendMessage(state, 'tool', block.thinking || block.text, at, 'thinking', `${row.uuid || at}:thinking`);
@@ -137,8 +154,12 @@ function applyClaudeRow(state, row) {
         if (block.id) state.pendingTools.set(String(block.id), { name: toolName, input: block.input, createdAtMs: at });
       }
     }
-    if (row.message?.stop_reason === 'end_turn' || row.message?.stop_reason === 'stop_sequence') {
-      state.lastFinishedAtMs = Math.max(state.lastFinishedAtMs, at);
+    if (hasAssistantText
+      && (row.message?.stop_reason === 'end_turn' || row.message?.stop_reason === 'stop_sequence')
+      && at >= state.lastFinishedAtMs) {
+      state.lastFinishedAtMs = at;
+      state.lastFinishedEventKey = cleanText(row.uuid || at, 240);
+      state.lastTerminalAssistantAtMs = at;
     }
     return;
   }
@@ -201,11 +222,13 @@ export function parseClaudeTranscript(text, {
   });
   let unread = null;
   const completedAtMs = failed ? state.lastFailureAtMs : state.lastFinishedAtMs;
+  const finishedCurrentTurn = state.lastUserAtMs > 0 && completedAtMs >= state.lastUserAtMs;
   const finalAssistantMessage = [...state.messages].reverse()
     .find((message) => message.role === 'assistant' && message.kind === 'message')?.message || '';
-  if (!pendingQuestion && completedAtMs >= enabledAtMs && completedAtMs > 0) {
+  if (!pendingQuestion && finishedCurrentTurn && completedAtMs >= enabledAtMs && completedAtMs > 0) {
     const resultActivity = failed ? CLAUDE_ACTIVITY.BLOCKED : CLAUDE_ACTIVITY.READY;
-    const eventId = `${sessionId}:${state.lastMessageUuid || completedAtMs}:${resultActivity}`;
+    const eventKey = failed ? state.lastFailureEventKey : state.lastFinishedEventKey;
+    const eventId = `${sessionId}:${eventKey || completedAtMs}:${resultActivity}`;
     if (!readEventIds.has(eventId)) {
       unread = {
         id: eventId,

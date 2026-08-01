@@ -19,6 +19,7 @@ import {
 import {
   CLAUDE_ACTIVITY,
   CLAUDE_REPLY_TRANSPORT,
+  CLAUDE_SEND_SHORTCUT,
   normalizeClaudeIntegrationConfig,
 } from '../src/shared/claude-integration.js';
 import { combineProviderSnapshots } from '../src/renderer/codex-companion.js';
@@ -36,12 +37,21 @@ test('Claude configuration is portable and bounds persisted state', () => {
     desiredSessionIds: ['one', 'one', 'two'],
     readEventIds: Array.from({ length: 1100 }, (_, index) => `event-${index}`),
   });
-  assert.equal(config.version, 1);
+  assert.equal(config.version, 2);
   assert.equal(config.manualHome, 'C:\\Users\\demo\\.claude');
   assert.equal(config.replyTransport, CLAUDE_REPLY_TRANSPORT.DESKTOP);
+  assert.equal(config.sendShortcut, CLAUDE_SEND_SHORTCUT.ENTER);
   assert.deepEqual(config.desiredSessionIds, ['one', 'two']);
   assert.equal(config.readEventIds.length, 1024);
   assert.ok(config.enabledAtMs > 0);
+});
+
+test('Claude send shortcut defaults to Enter and preserves Ctrl+Enter selection', () => {
+  assert.equal(normalizeClaudeIntegrationConfig({}).sendShortcut, CLAUDE_SEND_SHORTCUT.ENTER);
+  assert.equal(
+    normalizeClaudeIntegrationConfig({ sendShortcut: 'ctrl-enter' }).sendShortcut,
+    CLAUDE_SEND_SHORTCUT.CTRL_ENTER,
+  );
 });
 
 test('Claude transcript keeps user, thinking, tools, result and full final answer', () => {
@@ -87,6 +97,54 @@ test('Claude AskUserQuestion is exposed as a needs-input event', () => {
   assert.equal(parsed.task.activity, CLAUDE_ACTIVITY.NEEDS_INPUT);
   assert.equal(parsed.unread.kind, 'question');
   assert.equal(parsed.unread.questions[0].question, '选择模式');
+});
+
+test('Claude tool activity after a previous turn does not emit repeated completion events', () => {
+  const completedRows = [
+    { type: 'user', sessionId: 'tool-chain', timestamp: '2026-08-01T01:00:00Z', message: { content: 'first' } },
+    { type: 'assistant', sessionId: 'tool-chain', uuid: 'first-final', timestamp: '2026-08-01T01:00:01Z', message: {
+      stop_reason: 'end_turn', content: [{ type: 'text', text: 'first done' }],
+    } },
+  ];
+  const completed = parseClaudeTranscript(transcript(completedRows), {
+    enabledAtMs: Date.parse('2026-08-01T00:00:00Z'),
+  });
+  assert.match(completed.unread.id, /first-final:ready$/);
+
+  const running = parseClaudeTranscript(transcript([
+    ...completedRows,
+    { type: 'user', sessionId: 'tool-chain', uuid: 'second-user', timestamp: '2026-08-01T01:01:00Z', message: { content: 'second' } },
+    { type: 'assistant', sessionId: 'tool-chain', uuid: 'second-thinking', timestamp: '2026-08-01T01:01:01Z', message: {
+      stop_reason: 'end_turn', content: [{ type: 'thinking', thinking: 'working' }],
+    } },
+    { type: 'assistant', sessionId: 'tool-chain', uuid: 'second-tool', timestamp: '2026-08-01T01:01:02Z', message: {
+      stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 'call-two', name: 'Bash', input: { command: 'npm test' } }],
+    } },
+    { type: 'user', sessionId: 'tool-chain', uuid: 'second-result', timestamp: '2026-08-01T01:01:03Z', message: {
+      content: [{ type: 'tool_result', tool_use_id: 'call-two', content: 'ok' }],
+    } },
+  ]), {
+    enabledAtMs: Date.parse('2026-08-01T00:00:00Z'),
+    nowMs: Date.parse('2026-08-01T01:01:04Z'),
+  });
+  assert.equal(running.task.activity, CLAUDE_ACTIVITY.RUNNING);
+  assert.equal(running.unread, null);
+});
+
+test('Claude completion identity remains stable when turn-duration metadata is appended', () => {
+  const rows = [
+    { type: 'user', sessionId: 'stable-complete', timestamp: '2026-08-01T01:00:00Z', message: { content: 'work' } },
+    { type: 'assistant', sessionId: 'stable-complete', uuid: 'stable-final', timestamp: '2026-08-01T01:00:01Z', message: {
+      stop_reason: 'end_turn', content: [{ type: 'text', text: 'done' }],
+    } },
+  ];
+  const options = { enabledAtMs: Date.parse('2026-08-01T00:00:00Z') };
+  const before = parseClaudeTranscript(transcript(rows), options);
+  const after = parseClaudeTranscript(transcript([
+    ...rows,
+    { type: 'system', subtype: 'turn_duration', sessionId: 'stable-complete', uuid: 'duration-row', timestamp: '2026-08-01T01:00:02Z' },
+  ]), options);
+  assert.equal(after.unread.id, before.unread.id);
 });
 
 test('old or acknowledged Claude failures do not keep the pet blocked forever', () => {
@@ -140,6 +198,7 @@ test('Claude client bridge carries focus, paste and shortcut controls', async ()
     processId: 42,
     paste: false,
     shortcut: 'ctrl-enter',
+    preferForeground: true,
     focusDelayMs: 125,
     execFileImpl: (executable, args, options, callback) => {
       invocation = { executable, args, options };
@@ -150,6 +209,7 @@ test('Claude client bridge carries focus, paste and shortcut controls', async ()
   assert.equal(invocation.options.env.MONITOR_CLAUDE_PROCESS_ID, '42');
   assert.equal(invocation.options.env.MONITOR_CLAUDE_PASTE, '0');
   assert.equal(invocation.options.env.MONITOR_CLAUDE_SHORTCUT, 'ctrl-enter');
+  assert.equal(invocation.options.env.MONITOR_CLAUDE_PREFER_FOREGROUND, '1');
   assert.equal(invocation.options.env.MONITOR_CLAUDE_FOCUS_DELAY_MS, '125');
 });
 

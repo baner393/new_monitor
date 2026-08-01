@@ -17,6 +17,7 @@ import {
   CODEX_ACTIVITY,
   CODEX_CONNECTION,
   CODEX_NEW_MESSAGE_VIEW,
+  CODEX_SEND_SHORTCUT,
   buildCodexVisibleTasks,
   cleanCodexUserMessage,
   compactCodexTechnicalPreview,
@@ -59,15 +60,17 @@ test('Codex config is portable, versioned and bounds persisted read events', () 
     manualHome: ' C:\\Users\\demo\\.codex ',
     readEventIds: [...Array.from({ length: 1100 }, (_, index) => `event-${index}`), 'event-1099'],
   });
-  assert.equal(normalized.version, 2);
+  assert.equal(normalized.version, 3);
   assert.equal(normalized.homeMode, 'manual');
   assert.equal(normalized.manualHome, 'C:\\Users\\demo\\.codex');
   assert.equal(normalized.replyTransport, 'direct');
+  assert.equal(normalized.sendShortcut, CODEX_SEND_SHORTCUT.ENTER);
   assert.equal(normalized.newMessageView, CODEX_NEW_MESSAGE_VIEW.CONVERSATION);
   assert.equal(normalized.readEventIds.length, 1024);
   assert.ok(normalized.enabledAtMs > 0);
   assert.equal(normalizeCodexIntegrationConfig({ replyTransport: 'desktop' }).replyTransport, 'desktop');
   assert.equal(normalizeCodexIntegrationConfig({ replyTransport: 'unknown' }).replyTransport, 'direct');
+  assert.equal(normalizeCodexIntegrationConfig({ sendShortcut: 'ctrl-enter' }).sendShortcut, CODEX_SEND_SHORTCUT.CTRL_ENTER);
   assert.equal(normalizeCodexIntegrationConfig({ newMessageView: 'tasks' }).newMessageView, CODEX_NEW_MESSAGE_VIEW.TASK_ACTIVITY);
   assert.equal(normalizeCodexIntegrationConfig({ newMessageView: 'unknown' }).newMessageView, CODEX_NEW_MESSAGE_VIEW.CONVERSATION);
 });

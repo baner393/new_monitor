@@ -304,19 +304,21 @@ ipcMain.handle('claude-reply', async (_event, payload = {}) => {
   clipboard.writeText(text);
   let opened = false;
   let bridge = null;
-  let paste = true;
   try {
     const ide = /vscode/i.test(String(task?.entrypoint || owner?.entrypoint || ''))
       ? resolveClaudeIdeTarget(claudeHome, task?.cwd || owner?.cwd || '')
       : null;
     if (ide) {
-      await shell.openExternal(claudeVsCodeUri({ sessionId: result.sessionId, prompt: text, scheme: ide.scheme }));
+      await shell.openExternal(claudeVsCodeUri({ sessionId: result.sessionId, scheme: ide.scheme }));
       opened = true;
-      paste = false;
-      bridge = await submitClaudeClientClipboard({ processId: ide.pid || owner?.pid || 0, paste: false, shortcut: 'enter' });
+      const bridgeOptions = { processId: ide.pid || owner?.pid || 0, paste: true, preferForeground: true };
+      try { bridge = await submitClaudeClientClipboard({ ...bridgeOptions, shortcut: 'enter' }); }
+      catch { bridge = await submitClaudeClientClipboard({ ...bridgeOptions, shortcut: 'ctrl-enter', focusDelayMs: 150 }); }
     } else if (owner?.pid) {
       opened = true;
-      bridge = await submitClaudeClientClipboard({ processId: owner.pid, paste: true, shortcut: 'enter', focusDelayMs: 150 });
+      const bridgeOptions = { processId: owner.pid, paste: true, focusDelayMs: 150 };
+      try { bridge = await submitClaudeClientClipboard({ ...bridgeOptions, shortcut: 'enter' }); }
+      catch { bridge = await submitClaudeClientClipboard({ ...bridgeOptions, shortcut: 'ctrl-enter' }); }
     } else {
       const executable = resolveClaudeExecutables().find((candidate) => !path.isAbsolute(candidate) || fs.existsSync(candidate));
       launchClaudeTerminalSession({
@@ -331,9 +333,10 @@ ipcMain.handle('claude-reply', async (_event, payload = {}) => {
     if (!recorded && bridge) {
       await submitClaudeClientClipboard({
         processId: owner?.pid || bridge.processId || 0,
-        paste,
+        paste: false,
         shortcut: 'ctrl-enter',
         focusDelayMs: 100,
+        preferForeground: Boolean(ide),
       });
       recorded = await waitForClaudeMessage(result.sessionId, text, submittedAtMs, 20);
     }

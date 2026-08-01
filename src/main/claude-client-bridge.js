@@ -19,6 +19,20 @@ public static class ClaudeClientWindow {
 '@
 
 Start-Sleep -Milliseconds ([int]$env:MONITOR_CLAUDE_FOCUS_DELAY_MS)
+$names = @('Code','Cursor','Windsurf','WindowsTerminal','wt','powershell','pwsh','cmd')
+$foreground = [ClaudeClientWindow]::GetForegroundWindow()
+$foregroundPid = [uint32]0
+[void][ClaudeClientWindow]::GetWindowThreadProcessId($foreground, [ref]$foregroundPid)
+$target = $null
+$targetHandle = [IntPtr]::Zero
+if ($env:MONITOR_CLAUDE_PREFER_FOREGROUND -eq '1') {
+  $foregroundProcess = Get-Process -Id $foregroundPid -ErrorAction SilentlyContinue
+  if ($null -ne $foregroundProcess -and $names -contains $foregroundProcess.ProcessName) {
+    $target = $foregroundProcess
+    $targetHandle = $foreground
+  }
+}
+
 $requestedPid = 0
 [void][int]::TryParse($env:MONITOR_CLAUDE_PROCESS_ID, [ref]$requestedPid)
 $candidateIds = New-Object System.Collections.Generic.List[int]
@@ -32,31 +46,34 @@ if ($requestedPid -gt 0) {
   }
 }
 
-$target = $null
-foreach ($candidateId in $candidateIds) {
-  $candidate = Get-Process -Id $candidateId -ErrorAction SilentlyContinue
-  if ($null -ne $candidate -and $candidate.MainWindowHandle -ne 0) { $target = $candidate; break }
+if ($null -eq $target) {
+  foreach ($candidateId in $candidateIds) {
+    $candidate = Get-Process -Id $candidateId -ErrorAction SilentlyContinue
+    if ($null -ne $candidate -and $candidate.MainWindowHandle -ne 0) {
+      $target = $candidate
+      $targetHandle = $candidate.MainWindowHandle
+      break
+    }
+  }
 }
 if ($null -eq $target) {
-  $names = @('Code','Cursor','Windsurf','WindowsTerminal','wt','powershell','pwsh','cmd')
   $candidates = @(Get-Process -Name $names -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 })
-  $foreground = [ClaudeClientWindow]::GetForegroundWindow()
-  $foregroundPid = [uint32]0
-  [void][ClaudeClientWindow]::GetWindowThreadProcessId($foreground, [ref]$foregroundPid)
   $target = $candidates | Where-Object { $_.Id -eq $foregroundPid } | Select-Object -First 1
   if ($null -eq $target) { $target = $candidates | Sort-Object StartTime -Descending | Select-Object -First 1 }
+  if ($null -ne $target) { $targetHandle = $target.MainWindowHandle }
 }
 if ($null -eq $target) { throw 'Claude Code client window was not found' }
+if ($targetHandle -eq [IntPtr]::Zero) { $targetHandle = $target.MainWindowHandle }
 
-[void][ClaudeClientWindow]::ShowWindowAsync($target.MainWindowHandle, 9)
+[void][ClaudeClientWindow]::ShowWindowAsync($targetHandle, 9)
 [object]$windowShell = New-Object -ComObject WScript.Shell
 if (-not $windowShell.AppActivate([int]$target.Id)) { throw 'Claude Code client window activation failed' }
-[void][ClaudeClientWindow]::SetForegroundWindow($target.MainWindowHandle)
+[void][ClaudeClientWindow]::SetForegroundWindow($targetHandle)
 Start-Sleep -Milliseconds 220
 $foreground = [ClaudeClientWindow]::GetForegroundWindow()
 $foregroundPid = [uint32]0
 [void][ClaudeClientWindow]::GetWindowThreadProcessId($foreground, [ref]$foregroundPid)
-if ($foregroundPid -ne [uint32]$target.Id) { throw 'Claude Code client did not keep keyboard focus' }
+if ($foreground -ne $targetHandle) { throw 'Claude Code client did not keep the requested window focus' }
 
 if ($env:MONITOR_CLAUDE_PASTE -eq '1') {
   [System.Windows.Forms.SendKeys]::SendWait('^v')
@@ -126,6 +143,7 @@ export function submitClaudeClientClipboard({
   processId = 0,
   paste = true,
   shortcut = 'enter',
+  preferForeground = false,
   focusDelayMs = 900,
   execFileImpl = execFile,
   env = process.env,
@@ -144,6 +162,7 @@ export function submitClaudeClientClipboard({
           MONITOR_CLAUDE_PROCESS_ID: String(Number(processId) || 0),
           MONITOR_CLAUDE_PASTE: paste ? '1' : '0',
           MONITOR_CLAUDE_SHORTCUT: shortcut === 'none' ? 'none' : shortcut === 'ctrl-enter' ? 'ctrl-enter' : 'enter',
+          MONITOR_CLAUDE_PREFER_FOREGROUND: preferForeground ? '1' : '0',
           MONITOR_CLAUDE_FOCUS_DELAY_MS: String(Math.max(0, Number(focusDelayMs) || 0)),
         },
       },

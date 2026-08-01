@@ -1,4 +1,4 @@
-export const CODEX_INTEGRATION_CONFIG_VERSION = 2;
+export const CODEX_INTEGRATION_CONFIG_VERSION = 3;
 
 export const CODEX_ACTIVITY = Object.freeze({
   DISCONNECTED: 'disconnected',
@@ -28,6 +28,11 @@ export const CODEX_NEW_MESSAGE_VIEW = Object.freeze({
   TASK_ACTIVITY: 'tasks',
 });
 
+export const CODEX_SEND_SHORTCUT = Object.freeze({
+  ENTER: 'enter',
+  CTRL_ENTER: 'ctrl-enter',
+});
+
 export const DEFAULT_CODEX_INTEGRATION_CONFIG = Object.freeze({
   version: CODEX_INTEGRATION_CONFIG_VERSION,
   enabled: false,
@@ -35,6 +40,7 @@ export const DEFAULT_CODEX_INTEGRATION_CONFIG = Object.freeze({
   manualHome: '',
   managedReplies: true,
   replyTransport: CODEX_REPLY_TRANSPORT.DIRECT,
+  sendShortcut: CODEX_SEND_SHORTCUT.ENTER,
   newMessageView: CODEX_NEW_MESSAGE_VIEW.CONVERSATION,
   enabledAtMs: 0,
   notificationMode: 'important',
@@ -76,6 +82,9 @@ export function normalizeCodexIntegrationConfig(value = {}) {
     replyTransport: value.replyTransport === CODEX_REPLY_TRANSPORT.DESKTOP
       ? CODEX_REPLY_TRANSPORT.DESKTOP
       : CODEX_REPLY_TRANSPORT.DIRECT,
+    sendShortcut: value.sendShortcut === CODEX_SEND_SHORTCUT.CTRL_ENTER
+      ? CODEX_SEND_SHORTCUT.CTRL_ENTER
+      : CODEX_SEND_SHORTCUT.ENTER,
     newMessageView: value.newMessageView === CODEX_NEW_MESSAGE_VIEW.TASK_ACTIVITY
       ? CODEX_NEW_MESSAGE_VIEW.TASK_ACTIVITY
       : CODEX_NEW_MESSAGE_VIEW.CONVERSATION,

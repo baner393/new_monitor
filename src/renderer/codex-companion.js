@@ -301,6 +301,7 @@ export class CodexCompanion {
         <label class="codex-switch-row"><span><strong class="codex-control-setting-label"></strong><small class="codex-control-setting-note"></small></span><input class="codex-managed" type="checkbox"><i></i></label>
         <div class="codex-choice-row"><span><strong class="codex-new-message-view-label"></strong><small class="codex-new-message-view-note"></small></span><div class="codex-segmented codex-new-message-view" role="radiogroup"><label><input type="radio" name="codex-new-message-view" value="conversation"><span class="codex-new-message-conversation"></span></label><label><input type="radio" name="codex-new-message-view" value="tasks"><span class="codex-new-message-tasks"></span></label></div></div>
         <label class="codex-select-row"><span><strong class="codex-reply-transport-label"></strong><small class="codex-reply-transport-note"></small></span><select class="codex-reply-transport"><option value="direct"></option><option value="desktop"></option></select></label>
+        <label class="codex-select-row agent-send-shortcut-row"><span><strong class="agent-send-shortcut-label"></strong><small class="agent-send-shortcut-note"></small></span><select class="agent-send-shortcut"><option value="enter">Enter</option><option value="ctrl-enter">Ctrl+Enter</option></select></label>
         <div class="codex-config-note"></div>
       </details>
       <footer class="codex-config-actions"><button class="codex-quiet-button codex-config-refresh" type="button"></button></footer>
@@ -346,10 +347,13 @@ export class CodexCompanion {
       if (this.viewState.threadId) this.drafts.set(this.viewState.threadId, event.target.value);
     });
     this.bubble.querySelector('textarea').addEventListener('keydown', (event) => {
-      if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
-        event.preventDefault();
-        this.#sendText();
-      }
+      if (event.key !== 'Enter' || event.isComposing || event.shiftKey) return;
+      const provider = this.#currentProvider();
+      const shortcut = this.configs[provider]?.sendShortcut || 'enter';
+      const shouldSend = shortcut === 'enter' || event.ctrlKey || event.metaKey;
+      if (!shouldSend) return;
+      event.preventDefault();
+      this.#sendText();
     });
     this.bubble.querySelector('.codex-bubble-scroll').addEventListener('scroll', () => this.#onScroll());
     this.bubble.querySelector('.codex-message-list').addEventListener('click', (event) => {
@@ -379,6 +383,7 @@ export class CodexCompanion {
       input.addEventListener('change', () => this.#commitConfig({ enabled: this.config?.enabled === true }));
     });
     this.configPanel.querySelector('.codex-reply-transport').addEventListener('change', () => this.#commitConfig({ enabled: this.config?.enabled === true }));
+    this.configPanel.querySelector('.agent-send-shortcut').addEventListener('change', () => this.#commitConfig({ enabled: this.config?.enabled === true }));
     this.configPanel.querySelector('.codex-advanced').addEventListener('toggle', () => this.updatePosition(true));
     this.configPanel.querySelector('.codex-config-refresh').addEventListener('click', async () => {
       this.#setConfigBusy(true);
@@ -641,12 +646,14 @@ export class CodexCompanion {
     })[activity] || this.t('statusSilent');
   }
 
-  #connectionLabel(state) {
+  #connectionLabel(state, provider = 'codex') {
     return ({
       [CODEX_CONNECTION.WAITING_IDLE]: this.t('connWaitingIdle'),
       [CODEX_CONNECTION.CONNECTING]: this.t('connConnecting'),
       [CODEX_CONNECTION.CONNECTED]: this.t('connConnected'),
-      [CODEX_CONNECTION.TEMPORARY_READ_ONLY]: this.t('connReadOnly'),
+      [CODEX_CONNECTION.TEMPORARY_READ_ONLY]: provider === 'claude'
+        ? (this.locale === 'en-US' ? 'Claude Code is running; temporarily read-only' : 'Claude Code 正在运行，暂时只读')
+        : this.t('connReadOnly'),
       [CODEX_CONNECTION.ERROR]: this.t('connError'),
     })[state] || this.t('connDisconnected');
   }
@@ -760,8 +767,16 @@ export class CodexCompanion {
     const providerConfig = this.configs[provider] || {};
     const desktopCompatible = providerConfig.replyTransport === 'desktop';
     this.bubble.querySelector('.codex-open-app').textContent = provider === 'claude' ? '打开 Claude Code' : this.t('openCodex');
-    this.bubble.querySelector('.codex-send-button').textContent = this.t(desktopCompatible ? 'handoff' : 'send');
-    textarea.placeholder = this.t(desktopCompatible ? 'desktopPlaceholder' : 'replyPlaceholder');
+    this.bubble.querySelector('.codex-send-button').textContent = provider === 'claude' && desktopCompatible
+      ? (this.locale === 'en-US' ? 'Send through Claude Code' : '通过 Claude Code 发送')
+      : this.t(desktopCompatible ? 'handoff' : 'send');
+    const sendHint = (providerConfig.sendShortcut || 'enter') === 'ctrl-enter' ? 'Ctrl+Enter' : 'Enter';
+    textarea.placeholder = provider === 'claude'
+      ? (this.locale === 'en-US'
+          ? `${desktopCompatible ? 'Reply through the same Claude Code session' : 'Reply to this Claude Code task'}… (${sendHint} to send)`
+          : `${desktopCompatible ? '发送到 Claude Code 同一会话' : '回复这个 Claude Code 任务'}…（${sendHint} 发送）`)
+      : `${this.t(desktopCompatible ? 'desktopPlaceholder' : 'replyPlaceholder')}${this.locale === 'en-US'
+          ? ` (${sendHint} to send)` : `（${sendHint} 发送）`}`;
     if (document.activeElement !== textarea) textarea.value = this.drafts.get(this.viewState.threadId) || '';
 
     const compose = this.bubble.querySelector('.codex-bubble-compose');
@@ -777,7 +792,7 @@ export class CodexCompanion {
     else if (event.requestId && event.supported !== false) this.#renderApprovalActions(event, actions);
     else if (event.requestId && event.supported === false) this.#renderOpenCodexAction(actions);
     else if (task?.capabilities?.reply === true) compose.hidden = false;
-    else if (task?.connectionState && task.connectionState !== CODEX_CONNECTION.CONNECTED) notice.textContent = this.#connectionLabel(task.connectionState);
+    else if (task?.connectionState && task.connectionState !== CODEX_CONNECTION.CONNECTED) notice.textContent = this.#connectionLabel(task.connectionState, provider);
 
     const page = this.messagePages.get(this.viewState.threadId);
     if (!page?.loaded) this.#loadMessages(false, true);
@@ -857,7 +872,7 @@ export class CodexCompanion {
       const roleLabel = message.role === 'user' ? this.t('you')
         : message.role === 'tool'
           ? (message.kind === 'tool-result' ? this.t('toolResult') : this.t('toolCall'))
-          : (provider === 'claude' ? 'Claude' : this.t('codex'));
+          : (provider === 'claude' ? 'Claude Code' : this.t('codex'));
       if (message.role === 'tool') {
         const messageKey = message.id || `${message.role}:${message.createdAtMs}:${message.message}`;
         const disclosure = element('details', 'codex-tool-disclosure');
@@ -977,7 +992,11 @@ export class CodexCompanion {
       const result = await this.#api(provider).reply(sourceId, text);
       const clientMode = result?.mode === 'desktop-submit' || result?.mode === 'client-submit';
       if (clientMode && result?.submitted !== true) {
-        throw new Error(result?.submitError || result?.openError || this.t('desktopSubmitFailed'));
+        throw new Error(result?.submitError || result?.openError || (provider === 'claude'
+          ? (this.locale === 'en-US'
+              ? 'The message was copied and Claude Code opened, but automatic submission was not confirmed. The draft was preserved.'
+              : '消息已复制并打开 Claude Code，但未确认自动提交；草稿已保留。')
+          : this.t('desktopSubmitFailed')));
       }
       this.inlineError = '';
       textarea.value = '';
@@ -991,7 +1010,7 @@ export class CodexCompanion {
           kind: 'task',
           activity: CODEX_ACTIVITY.RUNNING,
           message: provider === 'claude'
-            ? (clientMode ? '消息已通过 Claude Code 原窗口提交，正在等待回复。' : '消息已发送，正在等待 Claude 回复。')
+            ? (clientMode ? '消息已通过 Claude Code 原窗口提交，正在等待回复。' : '消息已发送，正在等待 Claude Code 回复。')
             : this.t(clientMode ? 'handedOff' : 'sent'),
         },
       };
@@ -1116,6 +1135,12 @@ export class CodexCompanion {
           ? (replyTransport === 'desktop' ? 'Open the connected IDE first, then fall back to the matching terminal session.' : 'Monitor resumes this session through the local Claude Code CLI.')
           : (replyTransport === 'desktop' ? '优先唤起已连接的 IDE；没有 IDE 时恢复对应 Claude Code 终端会话。' : 'Monitor 通过本机 Claude Code CLI 续接此会话。'))
       : this.t(replyTransport === 'desktop' ? 'replyDesktopNote' : 'replyDirectNote');
+    const sendShortcut = config.sendShortcut === 'ctrl-enter' ? 'ctrl-enter' : 'enter';
+    this.configPanel.querySelector('.agent-send-shortcut').value = sendShortcut;
+    this.configPanel.querySelector('.agent-send-shortcut-label').textContent = this.locale === 'en-US' ? 'Send shortcut' : '发送快捷键';
+    this.configPanel.querySelector('.agent-send-shortcut-note').textContent = this.locale === 'en-US'
+      ? (sendShortcut === 'enter' ? 'Enter sends; Shift+Enter inserts a new line.' : 'Ctrl+Enter sends; Enter inserts a new line.')
+      : (sendShortcut === 'enter' ? 'Enter 发送；Shift+Enter 换行。' : 'Ctrl+Enter 发送；Enter 换行。');
     this.configPanel.dataset.mode = config.homeMode || 'auto';
     this.configPanel.dataset.manualHome = config.manualHome || '';
     this.#setPendingMode(config.homeMode || 'auto');
@@ -1158,6 +1183,7 @@ export class CodexCompanion {
         enabled,
         managedReplies: this.configPanel.querySelector('.codex-managed').checked,
         replyTransport: this.configPanel.querySelector('.codex-reply-transport').value,
+        sendShortcut: this.configPanel.querySelector('.agent-send-shortcut').value,
         homeMode: this.configPanel.dataset.mode,
         manualHome: this.configPanel.dataset.manualHome || '',
       });
@@ -1237,8 +1263,10 @@ export class CodexCompanion {
       copy.append(element('strong', '', task.title || providerName));
       const desktopCompatible = config.replyTransport === 'desktop';
       const status = desktopCompatible
-        ? this.t('clientUnified')
-        : task.connectionError || this.#connectionLabel(task.connectionState);
+        ? (provider === 'claude'
+            ? (this.locale === 'en-US' ? 'Unified through Claude Code client' : '由 Claude Code 客户端统一')
+            : this.t('clientUnified'))
+        : task.connectionError || this.#connectionLabel(task.connectionState, provider);
       copy.append(element('small', '', `${task.project || providerName} · ${status}`));
       openButton.appendChild(copy);
       openButton.addEventListener('click', () => {

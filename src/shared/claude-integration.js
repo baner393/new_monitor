@@ -10,11 +10,15 @@ import {
   sortCodexUnreadEvents,
 } from './codex-integration.js';
 
-export const CLAUDE_INTEGRATION_CONFIG_VERSION = 1;
+export const CLAUDE_INTEGRATION_CONFIG_VERSION = 2;
 export const CLAUDE_ACTIVITY = CODEX_ACTIVITY;
 export const CLAUDE_CONNECTION = CODEX_CONNECTION;
 export const CLAUDE_REPLY_TRANSPORT = CODEX_REPLY_TRANSPORT;
 export const CLAUDE_NEW_MESSAGE_VIEW = CODEX_NEW_MESSAGE_VIEW;
+export const CLAUDE_SEND_SHORTCUT = Object.freeze({
+  ENTER: 'enter',
+  CTRL_ENTER: 'ctrl-enter',
+});
 
 export const DEFAULT_CLAUDE_INTEGRATION_CONFIG = Object.freeze({
   version: CLAUDE_INTEGRATION_CONFIG_VERSION,
@@ -23,6 +27,7 @@ export const DEFAULT_CLAUDE_INTEGRATION_CONFIG = Object.freeze({
   manualHome: '',
   managedReplies: true,
   replyTransport: CLAUDE_REPLY_TRANSPORT.DIRECT,
+  sendShortcut: CLAUDE_SEND_SHORTCUT.ENTER,
   enabledAtMs: 0,
   desiredSessionIds: Object.freeze([]),
   readEventIds: Object.freeze([]),
@@ -52,6 +57,9 @@ export function normalizeClaudeIntegrationConfig(value = {}) {
     replyTransport: value.replyTransport === CLAUDE_REPLY_TRANSPORT.DESKTOP
       ? CLAUDE_REPLY_TRANSPORT.DESKTOP
       : CLAUDE_REPLY_TRANSPORT.DIRECT,
+    sendShortcut: value.sendShortcut === CLAUDE_SEND_SHORTCUT.CTRL_ENTER
+      ? CLAUDE_SEND_SHORTCUT.CTRL_ENTER
+      : CLAUDE_SEND_SHORTCUT.ENTER,
     enabledAtMs: enabled && enabledAtMs <= 0 ? Date.now() : enabledAtMs,
     desiredSessionIds: boundedStringList(value.desiredSessionIds, 128, 240),
     readEventIds: boundedStringList(value.readEventIds, 1024, 240),
