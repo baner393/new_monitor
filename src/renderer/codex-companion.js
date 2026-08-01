@@ -2,10 +2,13 @@ import {
   CODEX_ACTIVITY,
   CODEX_CONNECTION,
   CODEX_NEW_MESSAGE_VIEW,
+  buildCodexVisibleTasks,
   codexMoodForActivity,
   compactCodexTechnicalPreview,
   normalizeCodexLocale,
+  resolveCodexActivity,
   shouldShowCodexConnectionList,
+  sortCodexUnreadEvents,
 } from '../shared/codex-integration.js';
 import {
   closeCodexTask,
@@ -24,6 +27,70 @@ function element(tag, className, text = '') {
 
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), Math.max(min, max));
+}
+
+const PROVIDERS = Object.freeze({
+  codex: { id: 'codex', name: 'Codex', mark: 'C' },
+  claude: { id: 'claude', name: 'Claude Code', mark: '✦' },
+});
+
+export function providerTask(provider, task) {
+  const sourceId = String(task?.threadId || task?.sessionId || task?.id || '');
+  const sourceParentThreadId = String(task?.parentThreadId || '');
+  return {
+    ...task,
+    id: `${provider}:${sourceId}`,
+    threadId: `${provider}:${sourceId}`,
+    sourceId,
+    sourceParentThreadId,
+    parentThreadId: sourceParentThreadId ? `${provider}:${sourceParentThreadId}` : '',
+    provider,
+    events: (task?.events || []).map((event) => providerEvent(provider, event)),
+  };
+}
+
+export function providerEvent(provider, event) {
+  const sourceThreadId = String(event?.threadId || event?.sessionId || '');
+  return {
+    ...event,
+    id: `${provider}:${String(event?.id || '')}`,
+    sourceEventId: String(event?.id || ''),
+    threadId: `${provider}:${sourceThreadId}`,
+    sourceThreadId,
+    provider,
+  };
+}
+
+export function combineProviderSnapshots(snapshots) {
+  const tasks = [];
+  const unread = [];
+  const alerts = [];
+  for (const provider of Object.keys(PROVIDERS)) {
+    const snapshot = snapshots[provider];
+    tasks.push(...(snapshot?.tasks || []).map((task) => providerTask(provider, task)));
+    unread.push(...(snapshot?.unread || []).map((event) => providerEvent(provider, event)));
+    alerts.push(...(snapshot?.alerts || []).map((event) => providerEvent(provider, event)));
+  }
+  const sortedUnread = sortCodexUnreadEvents(unread);
+  const summary = buildCodexVisibleTasks(tasks, sortedUnread);
+  return {
+    configured: Object.values(snapshots).some((snapshot) => snapshot?.configured),
+    enabled: Object.values(snapshots).some((snapshot) => snapshot?.enabled),
+    connected: Object.values(snapshots).some((snapshot) => snapshot?.connected),
+    locale: snapshots.codex?.locale || 'zh-CN',
+    activity: resolveCodexActivity({ connected: true, tasks, unread: sortedUnread }),
+    tasks,
+    unread: sortedUnread,
+    alerts: sortCodexUnreadEvents(alerts),
+    unreadCount: sortedUnread.length,
+    ...summary,
+    providerCounts: Object.fromEntries(Object.keys(PROVIDERS).map((provider) => [provider, {
+      tasks: (snapshots[provider]?.visibleTasks || []).length,
+      unread: Number(snapshots[provider]?.unreadCount || 0),
+      running: Number(snapshots[provider]?.runningCount || 0),
+    }])),
+    updatedAtMs: Math.max(...Object.values(snapshots).map((snapshot) => Number(snapshot?.updatedAtMs || 0)), Date.now()),
+  };
 }
 
 const TEXT = {
@@ -85,6 +152,10 @@ export class CodexCompanion {
     this.onConfigClosed = onConfigClosed;
     this.onMoodChange = onMoodChange;
     this.config = null;
+    this.configs = { codex: null, claude: null };
+    this.snapshots = { codex: null, claude: null };
+    this.activeProvider = 'codex';
+    this.taskFilter = 'all';
     this.snapshot = null;
     this.viewState = createCodexViewState();
     this.trayOpen = false;
@@ -95,7 +166,7 @@ export class CodexCompanion {
     this.anchor = { x: window.innerWidth / 2, y: 180 };
     this.alertFreshUntil = 0;
     this.lastMood = 'idle';
-    this.unsubscribe = null;
+    this.unsubscribes = [];
     this.readInFlight = new Set();
     this.notifiedInFlight = new Set();
     this.drafts = new Map();
@@ -111,16 +182,44 @@ export class CodexCompanion {
   t(key) { return TEXT[this.locale]?.[key] || TEXT['zh-CN'][key] || key; }
 
   async initialize() {
-    this.config = await window.electronAPI.codex.getConfig();
-    this.snapshot = await window.electronAPI.codex.getStatus();
-    this.unsubscribe = window.electronAPI.codex.onStatus((snapshot) => this.update(snapshot));
-    this.update(this.snapshot);
+    const [codexConfig, claudeConfig, codexSnapshot, claudeSnapshot] = await Promise.all([
+      window.electronAPI.codex.getConfig(),
+      window.electronAPI.claude.getConfig(),
+      window.electronAPI.codex.getStatus(),
+      window.electronAPI.claude.getStatus(),
+    ]);
+    this.configs = { codex: codexConfig, claude: claudeConfig };
+    this.config = this.configs.codex;
+    this.snapshots = { codex: codexSnapshot, claude: claudeSnapshot };
+    this.unsubscribes = [
+      window.electronAPI.codex.onStatus((snapshot) => this.updateProvider('codex', snapshot)),
+      window.electronAPI.claude.onStatus((snapshot) => this.updateProvider('claude', snapshot)),
+    ];
+    this.#updateCombinedSnapshot();
   }
 
   destroy() {
-    this.unsubscribe?.();
+    for (const unsubscribe of this.unsubscribes) unsubscribe?.();
     this.resizeObserver?.disconnect();
     this.root.remove();
+  }
+
+  updateProvider(provider, snapshot) {
+    if (!PROVIDERS[provider] || !snapshot) return;
+    this.snapshots[provider] = snapshot;
+    this.#updateCombinedSnapshot();
+  }
+
+  #updateCombinedSnapshot() {
+    this.update(combineProviderSnapshots(this.snapshots));
+  }
+
+  #api(provider = this.#currentProvider()) {
+    return window.electronAPI[provider] || window.electronAPI.codex;
+  }
+
+  #currentProvider() {
+    return this.viewState.event?.provider || this.#currentTask()?.provider || this.activeProvider || 'codex';
   }
 
   #build() {
@@ -130,6 +229,7 @@ export class CodexCompanion {
     this.badge = element('button', 'codex-pet-signal');
     this.badge.type = 'button';
     this.badge.hidden = true;
+    this.badge.innerHTML = '<span class="agent-badge agent-badge-codex"><i>C</i><b>0</b></span><span class="agent-badge agent-badge-claude"><i>✦</i><b>0</b></span>';
     this.root.appendChild(this.badge);
 
     this.taskTray = element('section', 'codex-task-tray');
@@ -139,6 +239,11 @@ export class CodexCompanion {
         <div><div class="codex-config-kicker">LIVE TASKS</div><strong class="codex-live-title"></strong></div>
         <button class="codex-icon-button codex-tray-close" type="button">×</button>
       </header>
+      <div class="agent-task-filters" role="tablist">
+        <button type="button" data-provider="all" class="active">全部 <b>0</b></button>
+        <button type="button" data-provider="codex"><i>C</i> Codex <b>0</b></button>
+        <button type="button" data-provider="claude"><i>✦</i> Claude <b>0</b></button>
+      </div>
       <div class="codex-task-list"></div>
       <div class="codex-task-empty"></div>`;
     this.root.appendChild(this.taskTray);
@@ -172,11 +277,15 @@ export class CodexCompanion {
     this.configPanel.hidden = true;
     this.configPanel.innerHTML = `
       <header class="codex-config-head">
-        <div><div class="codex-config-kicker">PET LINK / CODEX</div><h2 class="codex-config-title"></h2></div>
+        <div><div class="codex-config-kicker">PET LINK / AI TASKS</div><h2 class="codex-config-title"></h2></div>
         <button class="codex-icon-button codex-config-close" type="button">×</button>
       </header>
       <p class="codex-config-intro"></p>
-      <div class="codex-link-rail" aria-hidden="true"><span>PET</span><i></i><span>CODEX</span></div>
+      <div class="agent-provider-cards" role="tablist">
+        <button type="button" data-provider="codex" class="active"><span class="agent-provider-mark">C</span><span><strong>Codex</strong><small class="agent-provider-codex-status"></small></span><i></i></button>
+        <button type="button" data-provider="claude"><span class="agent-provider-mark">✦</span><span><strong>Claude Code</strong><small class="agent-provider-claude-status"></small></span><i></i></button>
+      </div>
+      <div class="codex-link-rail" aria-hidden="true"><span>PET</span><i></i><span class="agent-link-provider">CODEX</span></div>
       <div class="codex-config-status" data-state="checking"><span class="codex-status-light"></span><div><strong></strong><small></small></div></div>
       <div class="codex-capability-grid">
         <div><span class="codex-sync-label"></span><strong class="codex-sync-state"></strong></div>
@@ -212,6 +321,15 @@ export class CodexCompanion {
     for (const node of [this.bubble, this.taskTray, this.configPanel, this.badge]) this.resizeObserver?.observe(node);
 
     this.badge.addEventListener('click', () => this.toggleTaskTray());
+    this.badge.querySelectorAll('.agent-badge').forEach((badge) => badge.addEventListener('click', (event) => {
+      event.stopPropagation();
+      this.taskFilter = badge.classList.contains('agent-badge-claude') ? 'claude' : 'codex';
+      this.toggleTaskTray(true);
+    }));
+    this.taskTray.querySelectorAll('.agent-task-filters button').forEach((button) => button.addEventListener('click', () => {
+      this.taskFilter = button.dataset.provider || 'all';
+      this.#renderTaskTray();
+    }));
     this.taskTray.querySelector('.codex-tray-close').addEventListener('click', () => this.closeTaskTray());
     this.bubble.querySelector('.codex-task-back').addEventListener('click', async () => {
       await this.#closeDetail(true);
@@ -219,7 +337,7 @@ export class CodexCompanion {
       this.#renderTaskTray();
     });
     this.bubble.querySelector('.codex-bubble-close').addEventListener('click', () => this.#closeDetail(true));
-    this.bubble.querySelector('.codex-open-app').addEventListener('click', () => this.#openInCodex());
+    this.bubble.querySelector('.codex-open-app').addEventListener('click', () => this.#openInProvider());
     this.bubble.querySelector('.codex-page-up').addEventListener('click', () => this.#page(-1));
     this.bubble.querySelector('.codex-page-down').addEventListener('click', () => this.#page(1));
     this.bubble.querySelector('.codex-load-older').addEventListener('click', () => this.#loadMessages(true));
@@ -239,9 +357,15 @@ export class CodexCompanion {
       if (!link) return;
       event.preventDefault();
       const href = link.dataset.href;
-      if (href) window.electronAPI.codex.openLink(href).catch((error) => this.#showBubbleError(error?.message || String(error)));
+      if (href) this.#api().openLink(href).catch((error) => this.#showBubbleError(error?.message || String(error)));
     });
 
+    this.configPanel.querySelectorAll('.agent-provider-cards button').forEach((button) => button.addEventListener('click', () => {
+      this.activeProvider = button.dataset.provider === 'claude' ? 'claude' : 'codex';
+      this.config = this.configs[this.activeProvider];
+      this.#fillConfig();
+      this.updatePosition(true);
+    }));
     this.configPanel.querySelector('.codex-config-close').addEventListener('click', () => this.closeConfig());
     this.configPanel.querySelector('.codex-select-home').addEventListener('click', () => this.#selectHome());
     this.configPanel.querySelector('.codex-use-auto').addEventListener('click', async () => {
@@ -258,7 +382,10 @@ export class CodexCompanion {
     this.configPanel.querySelector('.codex-advanced').addEventListener('toggle', () => this.updatePosition(true));
     this.configPanel.querySelector('.codex-config-refresh').addEventListener('click', async () => {
       this.#setConfigBusy(true);
-      try { this.update(await window.electronAPI.codex.refresh()); }
+      try {
+        this.snapshots[this.activeProvider] = await this.#api(this.activeProvider).refresh();
+        this.#updateCombinedSnapshot();
+      }
       finally { this.#setConfigBusy(false); }
     });
     this.#localizeStatic();
@@ -385,7 +512,7 @@ export class CodexCompanion {
 
   #presentNewMessages(allowPresentation) {
     const previousEventId = this.viewState.eventId;
-    const useTaskActivity = this.config?.newMessageView === CODEX_NEW_MESSAGE_VIEW.TASK_ACTIVITY;
+    const useTaskActivity = this.configs.codex?.newMessageView === CODEX_NEW_MESSAGE_VIEW.TASK_ACTIVITY;
     if (useTaskActivity && this.viewState.mode === 'notification') this.viewState = closeCodexTask();
     this.viewState = reconcileCodexViewState(this.viewState, this.snapshot, {
       allowNotification: allowPresentation && !useTaskActivity,
@@ -478,7 +605,11 @@ export class CodexCompanion {
       || (!this.bubble.hidden
         && (this.bubble.matches(':hover') || this.bubble.contains(document.activeElement)));
   }
-  get activity() { return this.config?.enabled === true ? (this.snapshot?.activity || CODEX_ACTIVITY.SILENT) : CODEX_ACTIVITY.SILENT; }
+  get activity() {
+    return Object.values(this.configs).some((config) => config?.enabled === true)
+      ? (this.snapshot?.activity || CODEX_ACTIVITY.SILENT)
+      : CODEX_ACTIVITY.SILENT;
+  }
   get motionEventKey() {
     if (this.activity === CODEX_ACTIVITY.RUNNING) {
       return (this.snapshot?.visibleTasks || [])
@@ -521,20 +652,31 @@ export class CodexCompanion {
   }
 
   #renderBadge() {
-    const unreadCount = Number(this.snapshot?.unreadTaskCount ?? this.snapshot?.unreadCount ?? 0);
-    const runningCount = Number(this.snapshot?.runningCount || 0);
-    const count = unreadCount > 0 ? unreadCount : runningCount;
-    this.badge.hidden = count <= 0 || this.configOpen || this.bubblesSuppressed;
+    const counts = this.snapshot?.providerCounts || {};
+    const active = Object.keys(PROVIDERS).filter((provider) => {
+      const providerCount = counts[provider] || {};
+      return Number(providerCount.unread || 0) > 0 || Number(providerCount.running || 0) > 0;
+    });
+    this.badge.hidden = active.length === 0 || this.configOpen || this.bubblesSuppressed;
     if (this.badge.hidden) return;
-    this.badge.textContent = count > 9 ? '9+' : String(count);
-    this.badge.dataset.mode = unreadCount > 0 ? 'unread' : 'running';
-    this.badge.dataset.activity = unreadCount > 0 ? (this.snapshot?.activity || CODEX_ACTIVITY.READY) : CODEX_ACTIVITY.RUNNING;
-    this.badge.setAttribute('aria-label', `${count} · ${unreadCount > 0 ? this.t('statusReady') : this.t('statusRunning')}`);
+    for (const provider of Object.keys(PROVIDERS)) {
+      const providerCount = counts[provider] || {};
+      const unread = Number(providerCount.unread || 0);
+      const running = Number(providerCount.running || 0);
+      const count = unread > 0 ? unread : running;
+      const node = this.badge.querySelector(`.agent-badge-${provider}`);
+      node.hidden = count <= 0;
+      node.querySelector('b').textContent = count > 99 ? '99+' : String(count);
+      node.dataset.mode = unread > 0 ? 'unread' : 'running';
+    }
+    this.badge.classList.toggle('single-provider', active.length === 1);
+    this.badge.dataset.activity = this.snapshot?.activity || CODEX_ACTIVITY.RUNNING;
+    this.badge.setAttribute('aria-label', active.map((provider) => `${PROVIDERS[provider].name} ${counts[provider]?.unread || counts[provider]?.running || 0}`).join('，'));
   }
 
-  toggleTaskTray() {
+  toggleTaskTray(forceOpen = false) {
     if (this.configOpen || this.bubblesSuppressed) return;
-    this.trayOpen = !this.trayOpen;
+    this.trayOpen = forceOpen ? true : !this.trayOpen;
     if (this.trayOpen) this.bubble.hidden = true;
     else if (this.viewState.mode !== 'closed') this.#renderBubble();
     this.#renderTaskTray();
@@ -552,16 +694,27 @@ export class CodexCompanion {
   #renderTaskTray() {
     this.taskTray.hidden = !this.trayOpen || this.configOpen || this.bubblesSuppressed;
     const host = this.taskTray.querySelector('.codex-task-list');
-    const tasks = this.snapshot?.visibleTasks || [];
+    const allTasks = this.snapshot?.visibleTasks || [];
+    const tasks = this.taskFilter === 'all'
+      ? allTasks
+      : allTasks.filter((task) => task.provider === this.taskFilter);
+    for (const button of this.taskTray.querySelectorAll('.agent-task-filters button')) {
+      const provider = button.dataset.provider || 'all';
+      button.classList.toggle('active', provider === this.taskFilter);
+      const count = provider === 'all' ? allTasks.length : allTasks.filter((task) => task.provider === provider).length;
+      button.querySelector('b').textContent = String(count);
+    }
     host.replaceChildren();
     for (const task of tasks) {
       const button = element('button', 'codex-task-item');
       button.type = 'button';
+      button.dataset.provider = task.provider || 'codex';
       button.dataset.activity = task.activity || CODEX_ACTIVITY.SILENT;
-      button.innerHTML = '<span class="codex-task-state" aria-hidden="true"></span><span class="codex-task-copy"><strong></strong><small></small></span><span class="codex-task-count"></span>';
-      button.querySelector('strong').textContent = task.title || 'Codex';
+      button.innerHTML = '<span class="codex-task-state" aria-hidden="true"></span><span class="agent-task-provider" aria-hidden="true"></span><span class="codex-task-copy"><strong></strong><small></small></span><span class="codex-task-count"></span>';
+      button.querySelector('.agent-task-provider').textContent = PROVIDERS[task.provider]?.mark || 'C';
+      button.querySelector('strong').textContent = task.title || PROVIDERS[task.provider]?.name || 'Codex';
       const children = task.runningChildren > 0 ? ` · ${task.runningChildren} ${this.t('childRunning')}` : '';
-      button.querySelector('small').textContent = `${task.project || 'Codex'} · ${this.#statusLabel(task.activity)}${children}`;
+      button.querySelector('small').textContent = `${task.project || PROVIDERS[task.provider]?.name || 'Codex'} · ${this.#statusLabel(task.activity)}${children}`;
       const count = button.querySelector('.codex-task-count');
       count.textContent = task.unreadCount > 0 ? String(task.unreadCount) : (task.activity === CODEX_ACTIVITY.RUNNING ? 'RUN' : 'LINK');
       count.dataset.mode = task.unreadCount > 0 ? 'unread' : 'running';
@@ -595,13 +748,18 @@ export class CodexCompanion {
     this.bubble.hidden = !event || this.configOpen || this.bubblesSuppressed || this.trayOpen;
     if (this.bubble.hidden) return;
     const task = this.#currentTask();
+    const provider = task?.provider || event.provider || 'codex';
+    const providerName = PROVIDERS[provider]?.name || 'Codex';
+    this.bubble.dataset.provider = provider;
     this.bubble.dataset.activity = event.activity || task?.activity || CODEX_ACTIVITY.SILENT;
-    this.bubble.querySelector('.codex-bubble-project').textContent = event.project || task?.project || 'Codex';
-    this.bubble.querySelector('.codex-bubble-title').textContent = task?.title || event.title || 'Codex';
+    this.bubble.querySelector('.codex-bubble-project').textContent = `${PROVIDERS[provider]?.mark || 'C'} ${providerName} · ${event.project || task?.project || providerName}`;
+    this.bubble.querySelector('.codex-bubble-title').textContent = task?.title || event.title || providerName;
     this.bubble.querySelector('.codex-bubble-state').textContent = this.#statusLabel(event.activity || task?.activity);
     this.bubble.querySelector('.codex-inline-error').textContent = this.inlineError;
     const textarea = this.bubble.querySelector('textarea');
-    const desktopCompatible = this.config?.replyTransport === 'desktop';
+    const providerConfig = this.configs[provider] || {};
+    const desktopCompatible = providerConfig.replyTransport === 'desktop';
+    this.bubble.querySelector('.codex-open-app').textContent = provider === 'claude' ? '打开 Claude Code' : this.t('openCodex');
     this.bubble.querySelector('.codex-send-button').textContent = this.t(desktopCompatible ? 'handoff' : 'send');
     textarea.placeholder = this.t(desktopCompatible ? 'desktopPlaceholder' : 'replyPlaceholder');
     if (document.activeElement !== textarea) textarea.value = this.drafts.get(this.viewState.threadId) || '';
@@ -631,6 +789,9 @@ export class CodexCompanion {
   async #loadMessages(older = false, force = false) {
     const threadId = this.viewState.threadId;
     if (!threadId) return;
+    const task = this.#currentTask();
+    const provider = task?.provider || this.viewState.event?.provider || 'codex';
+    const sourceId = task?.sourceId || this.viewState.event?.sourceThreadId || threadId.replace(/^[^:]+:/, '');
     const current = this.messagePages.get(threadId) || {
       messages: [], nextCursor: null, total: 0, loaded: false, loading: false,
       scrollTop: null, sourceUpdatedAtMs: 0, refreshPending: false,
@@ -647,7 +808,7 @@ export class CodexCompanion {
     const previousHeight = scroller.scrollHeight;
     const wasAtBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= 24;
     try {
-      const result = await window.electronAPI.codex.getMessages(threadId, older ? current.nextCursor : null, 50);
+      const result = await this.#api(provider).getMessages(sourceId, older ? current.nextCursor : null, 50);
       if (this.viewState.threadId !== threadId) return;
       const merged = older ? [...result.messages, ...current.messages] : result.messages;
       const seen = new Set();
@@ -685,6 +846,7 @@ export class CodexCompanion {
 
   #renderMessages() {
     const page = this.messagePages.get(this.viewState.threadId);
+    const provider = this.#currentProvider();
     const host = this.bubble.querySelector('.codex-message-list');
     const empty = this.bubble.querySelector('.codex-bubble-empty');
     host.replaceChildren();
@@ -695,7 +857,7 @@ export class CodexCompanion {
       const roleLabel = message.role === 'user' ? this.t('you')
         : message.role === 'tool'
           ? (message.kind === 'tool-result' ? this.t('toolResult') : this.t('toolCall'))
-          : this.t('codex');
+          : (provider === 'claude' ? 'Claude' : this.t('codex'));
       if (message.role === 'tool') {
         const messageKey = message.id || `${message.role}:${message.createdAtMs}:${message.message}`;
         const disclosure = element('details', 'codex-tool-disclosure');
@@ -770,9 +932,10 @@ export class CodexCompanion {
   }
 
   #renderOpenCodexAction(host) {
-    const button = element('button', 'codex-save-button', this.t('goHandle'));
+    const provider = this.#currentProvider();
+    const button = element('button', 'codex-save-button', provider === 'claude' ? '前往 Claude Code 处理' : this.t('goHandle'));
     button.type = 'button';
-    button.addEventListener('click', () => this.#openInCodex());
+    button.addEventListener('click', () => this.#openInProvider());
     host.appendChild(button);
   }
 
@@ -806,10 +969,14 @@ export class CodexCompanion {
     const text = textarea.value.trim();
     const threadId = this.viewState.threadId;
     if (!threadId || !text) return;
+    const task = this.#currentTask();
+    const provider = task?.provider || this.viewState.event?.provider || 'codex';
+    const sourceId = task?.sourceId || this.viewState.event?.sourceThreadId || threadId.replace(/^[^:]+:/, '');
     this.#setBubbleBusy(true);
     try {
-      const result = await window.electronAPI.codex.reply(threadId, text);
-      if (result?.mode === 'desktop-submit' && result?.submitted !== true) {
+      const result = await this.#api(provider).reply(sourceId, text);
+      const clientMode = result?.mode === 'desktop-submit' || result?.mode === 'client-submit';
+      if (clientMode && result?.submitted !== true) {
         throw new Error(result?.submitError || result?.openError || this.t('desktopSubmitFailed'));
       }
       this.inlineError = '';
@@ -823,10 +990,12 @@ export class CodexCompanion {
           requestId: null,
           kind: 'task',
           activity: CODEX_ACTIVITY.RUNNING,
-          message: this.t(result?.mode === 'desktop-submit' ? 'handedOff' : 'sent'),
+          message: provider === 'claude'
+            ? (clientMode ? '消息已通过 Claude Code 原窗口提交，正在等待回复。' : '消息已发送，正在等待 Claude 回复。')
+            : this.t(clientMode ? 'handedOff' : 'sent'),
         },
       };
-      if (result?.mode !== 'desktop-submit') await this.#loadMessages(false, true);
+      if (!clientMode) await this.#loadMessages(false, true);
       this.#renderBubble();
     } catch (error) { this.#showBubbleError(error?.message || String(error)); }
     finally { this.#setBubbleBusy(false); }
@@ -845,15 +1014,22 @@ export class CodexCompanion {
 
   async #markRead(eventId) {
     if (!eventId || eventId.startsWith('task:') || this.readInFlight.has(eventId)) return;
+    const event = this.snapshot?.unread?.find((item) => item.id === eventId);
+    const provider = event?.provider || String(eventId).split(':', 1)[0] || 'codex';
+    const sourceEventId = event?.sourceEventId || String(eventId).replace(/^[^:]+:/, '');
     this.readInFlight.add(eventId);
-    try { await window.electronAPI.codex.markRead(eventId); }
+    try { await this.#api(provider).markRead(sourceEventId); }
     finally { this.readInFlight.delete(eventId); }
   }
 
   async #markNotified(eventId) {
     if (!eventId || this.notifiedInFlight.has(eventId)) return;
+    const event = this.snapshot?.alerts?.find((item) => item.id === eventId)
+      || this.snapshot?.unread?.find((item) => item.id === eventId);
+    const provider = event?.provider || String(eventId).split(':', 1)[0] || 'codex';
+    const sourceEventId = event?.sourceEventId || String(eventId).replace(/^[^:]+:/, '');
     this.notifiedInFlight.add(eventId);
-    try { await window.electronAPI.codex.markNotified(eventId); }
+    try { await this.#api(provider).markNotified(sourceEventId); }
     finally { this.notifiedInFlight.delete(eventId); }
   }
 
@@ -886,15 +1062,45 @@ export class CodexCompanion {
     this.bubble.querySelector('.codex-page-status').textContent = `${page} / ${pages} · ${pageState?.messages?.length || 0}/${pageState?.total || 0}`;
   }
 
-  async #openInCodex() {
-    try { await window.electronAPI.codex.openApp(this.viewState.threadId, this.#currentTask()?.title || this.viewState.event?.title); }
+  async #openInProvider() {
+    const task = this.#currentTask();
+    const provider = task?.provider || this.viewState.event?.provider || 'codex';
+    const sourceId = task?.sourceId || this.viewState.event?.sourceThreadId || this.viewState.threadId.replace(/^[^:]+:/, '');
+    try { await this.#api(provider).openApp(sourceId, task?.title || this.viewState.event?.title); }
     catch (error) { this.#showBubbleError(error?.message || String(error)); }
   }
 
   #fillConfig() {
-    const config = this.config || {};
+    const provider = this.activeProvider === 'claude' ? 'claude' : 'codex';
+    const providerMeta = PROVIDERS[provider];
+    const config = this.configs[provider] || {};
+    this.config = config;
+    this.configPanel.dataset.provider = provider;
+    this.configPanel.querySelector('.codex-config-title').textContent = this.locale === 'en-US'
+      ? `${providerMeta.name} integration`
+      : `${providerMeta.name} 接入设置`;
+    this.configPanel.querySelector('.codex-config-intro').textContent = provider === 'claude'
+      ? (this.locale === 'en-US' ? 'Read local Claude Code sessions and let the pet follow task activity.' : '读取本机 Claude Code 会话，并允许宠物跟随任务状态。')
+      : this.t('configIntro');
+    this.configPanel.querySelector('.codex-control-label').textContent = provider === 'claude'
+      ? (this.locale === 'en-US' ? 'Bubble reply' : '气泡回复') : this.t('control');
+    this.configPanel.querySelector('.codex-control-setting-label').textContent = provider === 'claude'
+      ? (this.locale === 'en-US' ? 'Allow bubble replies' : '允许气泡回复') : this.t('allowControl');
+    this.configPanel.querySelector('.codex-control-setting-note').textContent = provider === 'claude'
+      ? (this.locale === 'en-US' ? 'Send through the local Claude Code CLI or an open Claude Code client.' : '通过本机 Claude Code CLI，或通过已打开的 Claude Code 客户端发送消息。')
+      : this.t('allowControlNote');
+    this.configPanel.querySelector('.codex-config-note').textContent = provider === 'claude'
+      ? (this.locale === 'en-US' ? 'Session data is read only from the local .claude folder; no additional API key is needed.' : '会话数据只从本机 .claude 目录读取，不需要额外 API Key。')
+      : this.t('localOnly');
+    this.configPanel.querySelector('.agent-link-provider').textContent = provider === 'claude' ? 'CLAUDE' : 'CODEX';
+    this.configPanel.querySelectorAll('.agent-provider-cards button').forEach((button) => {
+      const active = button.dataset.provider === provider;
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-selected', String(active));
+    });
     this.configPanel.querySelector('.codex-managed').checked = config.managedReplies !== false;
-    const newMessageView = config.newMessageView === CODEX_NEW_MESSAGE_VIEW.TASK_ACTIVITY
+    const sharedConfig = this.configs.codex || {};
+    const newMessageView = sharedConfig.newMessageView === CODEX_NEW_MESSAGE_VIEW.TASK_ACTIVITY
       ? CODEX_NEW_MESSAGE_VIEW.TASK_ACTIVITY : CODEX_NEW_MESSAGE_VIEW.CONVERSATION;
     const newMessageChoice = this.configPanel.querySelector(`.codex-new-message-view input[value="${newMessageView}"]`);
     if (newMessageChoice) newMessageChoice.checked = true;
@@ -903,7 +1109,13 @@ export class CodexCompanion {
     );
     const replyTransport = config.replyTransport === 'desktop' ? 'desktop' : 'direct';
     this.configPanel.querySelector('.codex-reply-transport').value = replyTransport;
-    this.configPanel.querySelector('.codex-reply-transport-note').textContent = this.t(replyTransport === 'desktop' ? 'replyDesktopNote' : 'replyDirectNote');
+    this.configPanel.querySelector('.codex-reply-transport option[value="desktop"]').textContent = provider === 'claude'
+      ? (this.locale === 'en-US' ? 'Claude Code client compatible' : 'Claude Code 客户端兼容') : this.t('replyDesktop');
+    this.configPanel.querySelector('.codex-reply-transport-note').textContent = provider === 'claude'
+      ? (this.locale === 'en-US'
+          ? (replyTransport === 'desktop' ? 'Open the connected IDE first, then fall back to the matching terminal session.' : 'Monitor resumes this session through the local Claude Code CLI.')
+          : (replyTransport === 'desktop' ? '优先唤起已连接的 IDE；没有 IDE 时恢复对应 Claude Code 终端会话。' : 'Monitor 通过本机 Claude Code CLI 续接此会话。'))
+      : this.t(replyTransport === 'desktop' ? 'replyDesktopNote' : 'replyDirectNote');
     this.configPanel.dataset.mode = config.homeMode || 'auto';
     this.configPanel.dataset.manualHome = config.manualHome || '';
     this.#setPendingMode(config.homeMode || 'auto');
@@ -915,12 +1127,13 @@ export class CodexCompanion {
     this.configPanel.dataset.mode = mode === 'manual' ? 'manual' : 'auto';
     const manual = this.configPanel.dataset.mode === 'manual';
     this.configPanel.querySelector('.codex-path-value').textContent = manual
-      ? (this.configPanel.dataset.manualHome || this.t('noPath')) : this.t('autoPath');
+      ? (this.configPanel.dataset.manualHome || this.t('noPath'))
+      : this.activeProvider === 'claude' ? '自动检测 ~/.claude' : this.t('autoPath');
     this.configPanel.querySelector('.codex-use-auto').hidden = !manual;
   }
 
   async #selectHome() {
-    const selected = await window.electronAPI.codex.selectHome();
+    const selected = await this.#api(this.activeProvider).selectHome();
     if (!selected) return;
     this.configPanel.dataset.manualHome = selected;
     this.#setPendingMode('manual');
@@ -931,66 +1144,102 @@ export class CodexCompanion {
     this.#setConfigBusy(true);
     this.configPanel.querySelector('.codex-config-error').textContent = '';
     try {
-      this.config = await window.electronAPI.codex.saveConfig({
-        ...this.config,
+      const selectedNewMessageView = this.configPanel.querySelector('.codex-new-message-view input:checked')?.value
+        || CODEX_NEW_MESSAGE_VIEW.CONVERSATION;
+      if (this.configs.codex?.newMessageView !== selectedNewMessageView) {
+        this.configs.codex = await window.electronAPI.codex.saveConfig({
+          ...this.configs.codex,
+          newMessageView: selectedNewMessageView,
+        });
+      }
+      const provider = this.activeProvider;
+      this.config = await this.#api(provider).saveConfig({
+        ...this.configs[provider],
         enabled,
         managedReplies: this.configPanel.querySelector('.codex-managed').checked,
-        newMessageView: this.configPanel.querySelector('.codex-new-message-view input:checked')?.value
-          || CODEX_NEW_MESSAGE_VIEW.CONVERSATION,
         replyTransport: this.configPanel.querySelector('.codex-reply-transport').value,
         homeMode: this.configPanel.dataset.mode,
         manualHome: this.configPanel.dataset.manualHome || '',
       });
-      this.update(await window.electronAPI.codex.refresh());
+      this.configs[provider] = this.config;
+      this.snapshots[provider] = await this.#api(provider).refresh();
+      this.#updateCombinedSnapshot();
       this.#fillConfig();
     } catch (error) { this.configPanel.querySelector('.codex-config-error').textContent = error?.message || String(error); }
     finally { this.#setConfigBusy(false); }
   }
 
   #renderConfigStatus() {
-    if (!this.configPanel || !this.snapshot) return;
+    if (!this.configPanel) return;
+    for (const provider of Object.keys(PROVIDERS)) {
+      const providerSnapshot = this.snapshots[provider] || {};
+      const providerConfig = this.configs[provider] || {};
+      const providerConnected = providerSnapshot.connected === true;
+      const providerState = providerConnected ? 'connected' : providerConfig.enabled ? 'attention' : 'ready';
+      const activityCount = Array.isArray(providerSnapshot.visibleTasks)
+        ? providerSnapshot.visibleTasks.length : providerSnapshot.tasks?.length || 0;
+      const card = this.configPanel.querySelector(`.agent-provider-cards button[data-provider="${provider}"]`);
+      const status = card?.querySelector(`.agent-provider-${provider}-status`);
+      if (card) card.dataset.state = providerState;
+      if (status) status.textContent = providerConnected
+        ? `${activityCount} 个动态 · ${providerSnapshot.unreadCount || 0} 条新消息`
+        : providerConfig.enabled ? (providerSnapshot.reason || '正在连接') : '尚未启用';
+    }
+    const provider = this.activeProvider === 'claude' ? 'claude' : 'codex';
+    const snapshot = this.snapshots[provider] || {};
+    const config = this.configs[provider] || {};
     const strong = this.configPanel.querySelector('.codex-config-status strong');
     const small = this.configPanel.querySelector('.codex-config-status small');
     const light = this.configPanel.querySelector('.codex-status-light');
-    const connected = this.snapshot.connected === true;
-    const enabled = this.config?.enabled === true;
+    const connected = snapshot.connected === true;
+    const enabled = config.enabled === true;
     const state = connected ? 'connected' : enabled ? 'attention' : 'ready';
     this.configPanel.querySelector('.codex-config-status').dataset.state = state;
     light.dataset.state = state;
-    strong.textContent = connected ? this.t('connected') : enabled ? this.t('attention') : this.t('readyConnect');
-    const active = this.snapshot.tasks?.filter((task) => task.activity === CODEX_ACTIVITY.RUNNING).length || 0;
+    const connectedLabel = this.locale === 'en-US' ? 'Messages synced' : '消息已同步';
+    strong.textContent = `${PROVIDERS[provider].name} · ${connected ? connectedLabel : enabled ? this.t('attention') : this.t('readyConnect')}`;
+    const active = snapshot.tasks?.filter((task) => task.activity === CODEX_ACTIVITY.RUNNING).length || 0;
     small.textContent = connected
-      ? `${this.snapshot.homeLabel} · ${active} ${this.t('statusRunning')} · ${this.snapshot.unreadCount || 0} ${this.t('statusReady')}`
-      : enabled ? (this.snapshot.reason || this.t('controlWaiting')) : this.t('disabled');
+      ? `${snapshot.homeLabel || PROVIDERS[provider].name} · ${active} ${this.t('statusRunning')} · ${snapshot.unreadCount || 0} ${this.t('statusReady')}`
+      : enabled ? (snapshot.reason || this.t('controlWaiting')) : this.t('disabled');
     this.configPanel.querySelector('.codex-sync-state').textContent = connected ? this.t('messagesNormal') : enabled ? this.t('connConnecting') : this.t('disabled');
-    this.configPanel.querySelector('.codex-reply-state').textContent = !this.config?.managedReplies
+    this.configPanel.querySelector('.codex-reply-state').textContent = !config.managedReplies
       ? this.t('disabled')
-      : this.config?.replyTransport === 'desktop'
-        ? this.t('replyDesktop')
-        : this.snapshot.controlConnected ? this.t('controlReady') : enabled ? this.t('controlWaiting') : this.t('disabled');
+      : config.replyTransport === 'desktop'
+        ? (provider === 'claude'
+            ? (this.locale === 'en-US' ? 'Claude Code client compatible' : 'Claude Code 客户端兼容')
+            : this.t('replyDesktop'))
+        : snapshot.controlConnected ? this.t('controlReady') : enabled ? this.t('controlWaiting') : this.t('disabled');
     const connectButton = this.configPanel.querySelector('.codex-connect-button');
     connectButton.hidden = connected;
-    connectButton.textContent = this.t('enable');
+    connectButton.textContent = this.locale === 'en-US'
+      ? `Enable ${PROVIDERS[provider].name}`
+      : `启用 ${PROVIDERS[provider].name} 接入`;
     this.configPanel.querySelector('.codex-disconnect-button').hidden = !enabled;
   }
 
   #renderConnectionList() {
     if (!this.configPanel || !this.configOpen) return;
+    const provider = this.activeProvider === 'claude' ? 'claude' : 'codex';
+    const providerName = PROVIDERS[provider].name;
+    const snapshot = this.snapshots[provider] || {};
+    const config = this.configs[provider] || {};
     const host = this.configPanel.querySelector('.codex-connection-list');
     host.replaceChildren();
-    for (const task of (this.snapshot?.tasks || [])) {
+    for (const sourceTask of (snapshot.tasks || [])) {
+      const task = providerTask(provider, sourceTask);
       const row = element('div', 'codex-connection-row');
       row.dataset.state = task.connectionState || CODEX_CONNECTION.DISCONNECTED;
       const openButton = element('button', 'codex-connection-open');
       openButton.type = 'button';
-      openButton.setAttribute('aria-label', `${this.t('openConversation')}: ${task.title || 'Codex'}`);
+      openButton.setAttribute('aria-label', `${this.t('openConversation')}: ${task.title || providerName}`);
       const copy = element('div', 'codex-connection-copy');
-      copy.append(element('strong', '', task.title || 'Codex'));
-      const desktopCompatible = this.config?.replyTransport === 'desktop';
+      copy.append(element('strong', '', task.title || providerName));
+      const desktopCompatible = config.replyTransport === 'desktop';
       const status = desktopCompatible
         ? this.t('clientUnified')
         : task.connectionError || this.#connectionLabel(task.connectionState);
-      copy.append(element('small', '', `${task.project || 'Codex'} · ${status}`));
+      copy.append(element('small', '', `${task.project || providerName} · ${status}`));
       openButton.appendChild(copy);
       openButton.addEventListener('click', () => {
         this.closeConfig();
@@ -1000,21 +1249,24 @@ export class CodexCompanion {
       const button = element(
         'button',
         desktopCompatible || connected ? 'codex-quiet-button' : 'codex-save-button',
-        desktopCompatible ? this.t('openCodex') : connected ? this.t('disconnect') : this.t('connect'),
+        desktopCompatible ? `打开 ${providerName}` : connected ? this.t('disconnect') : this.t('connect'),
       );
       button.type = 'button';
       button.addEventListener('click', async () => {
         button.disabled = true;
         try {
           if (desktopCompatible) {
-            await window.electronAPI.codex.openApp(task.id, task.title);
+            await this.#api(provider).openApp(task.sourceId, task.title);
             return;
           }
-          const snapshot = connected
-            ? await window.electronAPI.codex.disconnectThread(task.id)
-            : await window.electronAPI.codex.connectThread(task.id);
-          this.config = await window.electronAPI.codex.getConfig();
-          this.update(snapshot);
+          const providerApi = this.#api(provider);
+          const nextSnapshot = connected
+            ? await providerApi[provider === 'claude' ? 'disconnectSession' : 'disconnectThread'](task.sourceId)
+            : await providerApi[provider === 'claude' ? 'connectSession' : 'connectThread'](task.sourceId);
+          this.configs[provider] = await providerApi.getConfig();
+          this.config = this.configs[provider];
+          this.snapshots[provider] = nextSnapshot;
+          this.#updateCombinedSnapshot();
         } catch (error) { this.configPanel.querySelector('.codex-config-error').textContent = error?.message || String(error); }
         finally { button.disabled = false; }
       });
@@ -1022,7 +1274,7 @@ export class CodexCompanion {
       host.appendChild(row);
     }
     const section = this.configPanel.querySelector('.codex-thread-connections');
-    section.hidden = !shouldShowCodexConnectionList(this.config?.replyTransport, host.childElementCount);
+    section.hidden = !shouldShowCodexConnectionList(config.replyTransport, host.childElementCount);
   }
 
   #setBubbleBusy(busy) {

@@ -34,6 +34,8 @@ function taskEvent(task, previous = null) {
     ...(previous || {}),
     id: previous?.id || `task:${task.threadId || task.id}`,
     threadId: task.threadId || task.id,
+    sourceThreadId: task.sourceId || task.threadId || task.id,
+    provider: task.provider || previous?.provider || 'codex',
     title: task.title,
     project: task.project,
     activity: task.activity || CODEX_ACTIVITY.SILENT,

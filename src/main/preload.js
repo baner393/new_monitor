@@ -85,6 +85,28 @@ contextBridge.exposeInMainWorld('electronAPI', {
     },
   },
 
+  /** Local Claude Code session sync and Codex-compatible dual reply modes. */
+  claude: {
+    getConfig: () => ipcRenderer.invoke('claude-config-get'),
+    saveConfig: (config) => ipcRenderer.invoke('claude-config-set', config),
+    selectHome: () => ipcRenderer.invoke('claude-home-select'),
+    getStatus: () => ipcRenderer.invoke('claude-status-get'),
+    getMessages: (sessionId, cursor = null, limit = 50) => ipcRenderer.invoke('claude-messages-get', { sessionId, cursor, limit }),
+    refresh: () => ipcRenderer.invoke('claude-refresh'),
+    markRead: (eventId) => ipcRenderer.invoke('claude-mark-read', eventId),
+    markNotified: (eventId) => ipcRenderer.invoke('claude-mark-notified', eventId),
+    connectSession: (sessionId) => ipcRenderer.invoke('claude-session-connect', sessionId),
+    disconnectSession: (sessionId) => ipcRenderer.invoke('claude-session-disconnect', sessionId),
+    reply: (sessionId, text) => ipcRenderer.invoke('claude-reply', { sessionId, text }),
+    openApp: (sessionId, title) => ipcRenderer.invoke('claude-open-app', { sessionId, title }),
+    openLink: (href) => ipcRenderer.invoke('codex-open-link', href),
+    onStatus: (callback) => {
+      const listener = (_event, snapshot) => callback(snapshot);
+      ipcRenderer.on('claude-status', listener);
+      return () => ipcRenderer.removeListener('claude-status', listener);
+    },
+  },
+
   /**
    * Resize the BrowserWindow.
    * @param {{ width: number, height: number }} bounds

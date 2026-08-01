@@ -17,10 +17,21 @@ import {
 } from './window-lifecycle.js';
 import { CodexMonitor, resolveCodexHome } from './codex-monitor.js';
 import { submitCodexDesktopClipboard, waitForCodexDesktopUserMessage } from './codex-desktop-bridge.js';
+import { ClaudeMonitor, resolveClaudeExecutables, resolveClaudeHome } from './claude-monitor.js';
+import {
+  claudeVsCodeUri,
+  launchClaudeTerminalSession,
+  resolveClaudeIdeTarget,
+  submitClaudeClientClipboard,
+} from './claude-client-bridge.js';
 import {
   DEFAULT_CODEX_INTEGRATION_CONFIG,
   normalizeCodexIntegrationConfig,
 } from '../shared/codex-integration.js';
+import {
+  DEFAULT_CLAUDE_INTEGRATION_CONFIG,
+  normalizeClaudeIntegrationConfig,
+} from '../shared/claude-integration.js';
 
 let mainWindow;
 let customWindow;
@@ -28,6 +39,7 @@ let canvasWindow;
 let regionWindow;
 let systemMonitor;
 let codexMonitor;
+let claudeMonitor;
 let mainWindowInputGuard;
 let mainWindowRefreshCoordinator;
 let pendingWindowRecovery = null;
@@ -99,6 +111,7 @@ const DEFAULT_SETTINGS = {
   monitorVisibility: toLegacyMonitorVisibility(DEFAULT_MONITOR_PANEL),
   monitorPanel: DEFAULT_MONITOR_PANEL,
   codexIntegration: DEFAULT_CODEX_INTEGRATION_CONFIG,
+  claudeIntegration: DEFAULT_CLAUDE_INTEGRATION_CONFIG,
 };
 
 let currentSettings = { ...DEFAULT_SETTINGS };
@@ -113,6 +126,7 @@ function loadSettings() {
         : migrateLegacyMonitorVisibility(data.monitorVisibility, DEFAULT_MONITOR_PANEL);
       currentSettings.monitorVisibility = toLegacyMonitorVisibility(currentSettings.monitorPanel);
       currentSettings.codexIntegration = normalizeCodexIntegrationConfig(data.codexIntegration);
+      currentSettings.claudeIntegration = normalizeClaudeIntegrationConfig(data.claudeIntegration);
       console.log('[Settings] Loaded from', SETTINGS_PATH);
     }
   } catch (err) {
@@ -153,6 +167,7 @@ ipcMain.handle('monitor-settings-get', () => ({
 ipcMain.handle('monitor-panel-config-get', () => normalizeMonitorPanelConfig(currentSettings.monitorPanel));
 
 ipcMain.handle('codex-config-get', () => normalizeCodexIntegrationConfig(currentSettings.codexIntegration));
+ipcMain.handle('claude-config-get', () => normalizeClaudeIntegrationConfig(currentSettings.claudeIntegration));
 
 ipcMain.handle('codex-config-set', (_event, config) => {
   currentSettings.codexIntegration = codexMonitor
@@ -232,6 +247,124 @@ ipcMain.handle('codex-open-link', async (_event, value) => {
   return { opened: true };
 });
 
+ipcMain.handle('claude-config-set', (_event, config) => {
+  currentSettings.claudeIntegration = claudeMonitor
+    ? claudeMonitor.updateConfig(config)
+    : normalizeClaudeIntegrationConfig(config);
+  if (!claudeMonitor) saveSettings();
+  return currentSettings.claudeIntegration;
+});
+ipcMain.handle('claude-home-select', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: '选择 Claude Code 数据目录',
+    properties: ['openDirectory'],
+    defaultPath: resolveClaudeHome(currentSettings.claudeIntegration) || app.getPath('home'),
+  });
+  if (result.canceled || !result.filePaths.length) return null;
+  return result.filePaths[0];
+});
+ipcMain.handle('claude-status-get', () => claudeMonitor?.getSnapshot() || null);
+ipcMain.handle('claude-messages-get', async (_event, payload = {}) => await claudeMonitor?.getMessages(
+  payload.sessionId || payload.threadId,
+  { cursor: payload.cursor ?? null, limit: payload.limit ?? 50 },
+) || { threadId: String(payload.sessionId || payload.threadId || ''), messages: [], nextCursor: null, total: 0 });
+ipcMain.handle('claude-refresh', async () => {
+  await claudeMonitor?.scan(true);
+  return claudeMonitor?.getSnapshot() || null;
+});
+ipcMain.handle('claude-mark-read', (_event, eventId) => claudeMonitor?.markRead(eventId) || null);
+ipcMain.handle('claude-mark-notified', (_event, eventId) => claudeMonitor?.markNotified(eventId) || null);
+ipcMain.handle('claude-session-connect', (_event, sessionId) => claudeMonitor?.connectSession(sessionId));
+ipcMain.handle('claude-session-disconnect', (_event, sessionId) => claudeMonitor?.disconnectSession(sessionId));
+
+async function waitForClaudeMessage(sessionId, text, sinceMs, attempts = 40) {
+  return waitForCodexDesktopUserMessage({
+    text,
+    sinceMs,
+    attempts,
+    readMessages: async () => {
+      await claudeMonitor?.scan(true);
+      return (await claudeMonitor?.getMessages(sessionId, { limit: 100 }))?.messages || [];
+    },
+  });
+}
+
+function claudeTask(sessionId) {
+  return claudeMonitor?.getSnapshot()?.tasks?.find((task) => String(task.id) === String(sessionId)) || null;
+}
+
+ipcMain.handle('claude-reply', async (_event, payload = {}) => {
+  const submittedAtMs = Date.now();
+  const text = String(payload.text || '');
+  const result = await claudeMonitor?.reply(payload.sessionId || payload.threadId, text);
+  if (!result?.openClient) return result;
+  const task = claudeTask(result.sessionId);
+  const owner = task?.owner || result.owner || null;
+  const claudeHome = resolveClaudeHome(currentSettings.claudeIntegration);
+  clipboard.writeText(text);
+  let opened = false;
+  let bridge = null;
+  let paste = true;
+  try {
+    const ide = /vscode/i.test(String(task?.entrypoint || owner?.entrypoint || ''))
+      ? resolveClaudeIdeTarget(claudeHome, task?.cwd || owner?.cwd || '')
+      : null;
+    if (ide) {
+      await shell.openExternal(claudeVsCodeUri({ sessionId: result.sessionId, prompt: text, scheme: ide.scheme }));
+      opened = true;
+      paste = false;
+      bridge = await submitClaudeClientClipboard({ processId: ide.pid || owner?.pid || 0, paste: false, shortcut: 'enter' });
+    } else if (owner?.pid) {
+      opened = true;
+      bridge = await submitClaudeClientClipboard({ processId: owner.pid, paste: true, shortcut: 'enter', focusDelayMs: 150 });
+    } else {
+      const executable = resolveClaudeExecutables().find((candidate) => !path.isAbsolute(candidate) || fs.existsSync(candidate));
+      launchClaudeTerminalSession({
+        executable,
+        cwd: task?.cwd || app.getPath('home'),
+        sessionId: result.sessionId,
+        prompt: text,
+      });
+      opened = true;
+    }
+    let recorded = await waitForClaudeMessage(result.sessionId, text, submittedAtMs, 28);
+    if (!recorded && bridge) {
+      await submitClaudeClientClipboard({
+        processId: owner?.pid || bridge.processId || 0,
+        paste,
+        shortcut: 'ctrl-enter',
+        focusDelayMs: 100,
+      });
+      recorded = await waitForClaudeMessage(result.sessionId, text, submittedAtMs, 20);
+    }
+    if (!recorded) throw new Error('Claude Code 客户端已打开并预填消息，但没有确认提交；消息仍保留在原窗口中');
+    return { ...result, copied: true, opened, submitted: true, clientProcessId: bridge?.processId || owner?.pid || 0 };
+  } catch (error) {
+    return { ...result, copied: true, opened, submitted: false, submitError: error?.message || String(error) };
+  }
+});
+
+ipcMain.handle('claude-open-app', async (_event, payload = {}) => {
+  const sessionId = String(payload.sessionId || payload.threadId || '').trim();
+  const task = claudeTask(sessionId);
+  const owner = task?.owner || null;
+  const claudeHome = resolveClaudeHome(currentSettings.claudeIntegration);
+  const ide = /vscode/i.test(String(task?.entrypoint || owner?.entrypoint || ''))
+    ? resolveClaudeIdeTarget(claudeHome, task?.cwd || owner?.cwd || '')
+    : null;
+  if (ide) {
+    await shell.openExternal(claudeVsCodeUri({ sessionId, scheme: ide.scheme }));
+    return { opened: true, exact: true, surface: ide.ideName || ide.scheme };
+  }
+  if (owner?.pid) {
+    await submitClaudeClientClipboard({ processId: owner.pid, paste: false, shortcut: 'none', focusDelayMs: 100 });
+    return { opened: true, exact: true, surface: 'terminal' };
+  }
+  const executable = resolveClaudeExecutables().find((candidate) => !path.isAbsolute(candidate) || fs.existsSync(candidate));
+  launchClaudeTerminalSession({ executable, cwd: task?.cwd || app.getPath('home'), sessionId, prompt: '' });
+  return { opened: true, exact: true, surface: 'terminal' };
+});
+
 ipcMain.on('monitor-panel-config-set', (_event, config) => {
   currentSettings.monitorPanel = normalizeMonitorPanelConfig(config);
   currentSettings.monitorVisibility = toLegacyMonitorVisibility(currentSettings.monitorPanel);
@@ -279,8 +412,10 @@ ipcMain.handle('settings-reset', () => {
     monitorPanel,
     monitorVisibility: toLegacyMonitorVisibility(monitorPanel),
     codexIntegration: normalizeCodexIntegrationConfig(DEFAULT_CODEX_INTEGRATION_CONFIG),
+    claudeIntegration: normalizeClaudeIntegrationConfig(DEFAULT_CLAUDE_INTEGRATION_CONFIG),
   };
   codexMonitor?.updateConfig(currentSettings.codexIntegration);
+  claudeMonitor?.updateConfig(currentSettings.claudeIntegration);
   saveSettings();
   return { ...currentSettings };
 });
@@ -505,6 +640,10 @@ function createWindow({ show = true } = {}) {
     codexMonitor.setWindow(browserWindow);
     codexMonitor.scan(true);
   }
+  if (claudeMonitor) {
+    claudeMonitor.setWindow(browserWindow);
+    claudeMonitor.scan(true);
+  }
   return browserWindow;
 }
 
@@ -517,7 +656,15 @@ app.whenReady().then(() => {
       saveSettings();
     },
   });
+  claudeMonitor = new ClaudeMonitor({
+    config: currentSettings.claudeIntegration,
+    onConfigChange: (config) => {
+      currentSettings.claudeIntegration = config;
+      saveSettings();
+    },
+  });
   codexMonitor.start();
+  claudeMonitor.start();
   createWindow();
   powerMonitor.on('on-battery', () => systemMonitor?.setActivityState({ onBattery: true }));
   powerMonitor.on('on-ac', () => systemMonitor?.setActivityState({ onBattery: false }));
@@ -526,6 +673,7 @@ app.whenReady().then(() => {
     systemMonitor?.setActivityState({ suspended: false });
     systemMonitor?.requestSnapshot();
     codexMonitor?.scan(true);
+    claudeMonitor?.scan(true);
   });
 });
 
@@ -572,6 +720,7 @@ ipcMain.on('request-system-data', () => {
     systemMonitor.requestSnapshot();
   }
   codexMonitor?.scan(true);
+  claudeMonitor?.scan(true);
 });
 
 ipcMain.on('monitor-activity-set', (event, state = {}) => {
@@ -1041,6 +1190,7 @@ process.on('uncaughtException', (err) => {
 app.on('window-all-closed', () => {
   if (systemMonitor) systemMonitor.stop();
   codexMonitor?.stop();
+  claudeMonitor?.stop();
   if (process.platform !== 'darwin') {
     app.quit();
   }
@@ -1048,6 +1198,7 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   codexMonitor?.stop();
+  claudeMonitor?.stop();
   if (__IS_SPONSOR__) {
     if (canvasWindow && !canvasWindow.isDestroyed()) {
       canvasWindow.destroy();
