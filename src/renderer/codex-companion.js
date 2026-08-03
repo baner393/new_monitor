@@ -792,6 +792,7 @@ export class CodexCompanion {
     else if (event.requestId && event.supported !== false) this.#renderApprovalActions(event, actions);
     else if (event.requestId && event.supported === false) this.#renderOpenCodexAction(actions);
     else if (task?.capabilities?.reply === true) compose.hidden = false;
+    else if (task?.connectionError) notice.textContent = task.connectionError;
     else if (task?.connectionState && task.connectionState !== CODEX_CONNECTION.CONNECTED) notice.textContent = this.#connectionLabel(task.connectionState, provider);
 
     const page = this.messagePages.get(this.viewState.threadId);

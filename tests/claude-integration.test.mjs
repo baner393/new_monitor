@@ -6,9 +6,12 @@ import test from 'node:test';
 import { EventEmitter } from 'node:events';
 
 import {
+  buildClaudeDirectArgs,
   ClaudeMonitor,
+  formatClaudeManagedError,
   parseClaudeTranscript,
   resolveClaudeHome,
+  shouldRetryClaudeWithLowEffort,
 } from '../src/main/claude-monitor.js';
 import {
   claudeVsCodeUri,
@@ -263,6 +266,49 @@ test('Claude Monitor direct mode resumes the selected local session', async () =
     monitor.stop();
     fs.rmSync(root, { recursive: true, force: true });
   }
+});
+
+test('Claude direct arguments only forward supported session settings', () => {
+  assert.deepEqual(buildClaudeDirectArgs({
+    sessionId: 'session-one', message: 'continue', permissionMode: 'plan', effort: 'max',
+  }), [
+    '-p', '--resume', 'session-one', '--output-format', 'stream-json', '--verbose',
+    '--include-partial-messages', '--permission-mode', 'plan', '--effort', 'max', 'continue',
+  ]);
+  const args = buildClaudeDirectArgs({
+    sessionId: 'session-one', message: 'continue', permissionMode: 'unexpected', effort: 'turbo',
+  });
+  assert.equal(args.includes('--permission-mode'), false);
+  assert.equal(args.includes('--effort'), false);
+});
+
+test('Claude transcript exposes the session permission, effort and model', () => {
+  const parsed = parseClaudeTranscript(transcript([
+    { type: 'user', sessionId: 'metadata-session', cwd: 'C:\\work', timestamp: '2026-08-03T01:00:00Z', message: { content: 'work' } },
+    { type: 'assistant', sessionId: 'metadata-session', permissionMode: 'acceptEdits', effort: 'high', timestamp: '2026-08-03T01:00:01Z', message: {
+      model: 'gateway-model', stop_reason: 'end_turn', content: [{ type: 'text', text: 'done' }],
+    } },
+  ]));
+  assert.equal(parsed.task.permissionMode, 'acceptEdits');
+  assert.equal(parsed.task.effort, 'high');
+  assert.equal(parsed.task.model, 'gateway-model');
+});
+
+test('Claude direct mode only retries clear effort-related 400 failures', () => {
+  assert.equal(shouldRetryClaudeWithLowEffort('API Error: 400 unsupported reasoning effort', 'max', 'claude-opus'), true);
+  assert.equal(shouldRetryClaudeWithLowEffort('API Error: 400 Bad Request', 'high', 'gateway-model'), true);
+  assert.equal(shouldRetryClaudeWithLowEffort('API Error: 400 invalid API key', 'max', 'claude-opus'), false);
+  assert.equal(shouldRetryClaudeWithLowEffort('API Error: 500 server error', 'max', 'gateway-model'), false);
+  assert.equal(shouldRetryClaudeWithLowEffort('API Error: 400 unsupported effort', 'low', 'gateway-model'), false);
+});
+
+test('Claude managed errors are readable and redact API keys', () => {
+  const message = formatClaudeManagedError('API Error: 400 unsupported effort; sk-ant-secretvalue', {
+    effort: 'max', retried: true,
+  });
+  assert.match(message, /400/);
+  assert.match(message, /low/);
+  assert.doesNotMatch(message, /secretvalue/);
 });
 
 test('combined task snapshots retain provider identity and priority', () => {

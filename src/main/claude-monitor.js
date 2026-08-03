@@ -19,9 +19,58 @@ const MAX_FILE_BYTES = 6 * 1024 * 1024;
 const MAX_MESSAGES = 500;
 const RUNNING_STALE_MS = 45 * 60 * 1000;
 const DEFAULT_POLL_MS = 3000;
+const CLAUDE_PERMISSION_MODES = new Set(['default', 'manual', 'acceptEdits', 'plan', 'auto', 'dontAsk', 'bypassPermissions']);
+const CLAUDE_EFFORT_LEVELS = new Set(['low', 'medium', 'high', 'xhigh', 'max', 'ultracode']);
 
 function cleanText(value, limit = 100_000) {
   return String(value ?? '').replace(/\u0000/g, '').trim().slice(0, limit);
+}
+
+export function normalizeClaudePermissionMode(value) {
+  const mode = cleanText(value, 40);
+  return CLAUDE_PERMISSION_MODES.has(mode) ? mode : '';
+}
+
+export function normalizeClaudeEffort(value) {
+  const effort = cleanText(value, 20).toLowerCase();
+  return CLAUDE_EFFORT_LEVELS.has(effort) ? effort : '';
+}
+
+export function buildClaudeDirectArgs({ sessionId = '', message = '', permissionMode = '', effort = '' } = {}) {
+  const args = [
+    '-p', '--resume', cleanText(sessionId, 240),
+    '--output-format', 'stream-json', '--verbose', '--include-partial-messages',
+  ];
+  const normalizedMode = normalizeClaudePermissionMode(permissionMode);
+  const normalizedEffort = normalizeClaudeEffort(effort);
+  if (normalizedMode) args.push('--permission-mode', normalizedMode);
+  if (normalizedEffort) args.push('--effort', normalizedEffort);
+  args.push(cleanText(message));
+  return args;
+}
+
+export function shouldRetryClaudeWithLowEffort(diagnostic, effort, model = '') {
+  const normalizedEffort = normalizeClaudeEffort(effort);
+  if (!['high', 'xhigh', 'max', 'ultracode'].includes(normalizedEffort)) return false;
+  const text = String(diagnostic || '');
+  if (!/(?:\b400\b|bad\s*request|invalid_request)/i.test(text)) return false;
+  if (/(?:effort|thinking|reasoning).{0,100}(?:unsupported|not supported|invalid|unknown|unavailable)|(?:unsupported|not supported|invalid|unknown).{0,100}(?:effort|thinking|reasoning)/i.test(text)) return true;
+  return Boolean(model) && !/^claude(?:-|$)/i.test(String(model));
+}
+
+export function formatClaudeManagedError(diagnostic, { effort = '', retried = false } = {}) {
+  const cleaned = String(diagnostic || '')
+    .replace(/\u001b\[[0-9;]*m/g, '')
+    .replace(/sk-[A-Za-z0-9_-]+/g, 'TOKEN')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (/(?:\b400\b|bad\s*request|invalid_request)/i.test(cleaned)
+    && /effort|thinking|reasoning/i.test(cleaned)) {
+    return retried
+      ? `Claude Code API 400：当前模型不接受 ${normalizeClaudeEffort(effort) || '该'} 推理强度，降级到 low 后仍失败。`
+      : `Claude Code API 400：当前模型不接受 ${normalizeClaudeEffort(effort) || '该'} 推理强度。`;
+  }
+  return cleaned ? `Claude Code 直连失败：${cleaned.slice(0, 500)}` : 'Claude Code 直连进程异常退出。';
 }
 
 function timestampMs(value, fallback = 0) {
@@ -88,6 +137,8 @@ export function createClaudeTranscriptState({ filePath = '', modifiedAtMs = 0 } 
     lastFailureEventKey: '',
     lastMessageUuid: '',
     permissionMode: '',
+    effort: '',
+    model: '',
   };
 }
 
@@ -97,6 +148,7 @@ function applyClaudeRow(state, row) {
   state.cwd = cleanText(row.cwd || state.cwd, 2048);
   state.entrypoint = cleanText(row.entrypoint || state.entrypoint, 80);
   state.permissionMode = cleanText(row.permissionMode || state.permissionMode, 40);
+  state.effort = normalizeClaudeEffort(row.effort || state.effort);
   const at = timestampMs(row.timestamp, state.modifiedAtMs);
   state.lastActivityAtMs = Math.max(state.lastActivityAtMs, at);
   if (row.uuid) state.lastMessageUuid = String(row.uuid);
@@ -127,6 +179,8 @@ function applyClaudeRow(state, row) {
     return;
   }
   if (row.type === 'assistant') {
+    const rowModel = cleanText(row.message?.model || row.model, 200);
+    if (rowModel && rowModel !== '<synthetic>') state.model = rowModel;
     state.lastAssistantAtMs = Math.max(state.lastAssistantAtMs, at);
     if ((row.isApiErrorMessage || row.error) && at >= state.lastFailureAtMs) {
       state.lastFailureAtMs = at;
@@ -215,6 +269,8 @@ export function parseClaudeTranscript(text, {
     cwd: state.cwd,
     entrypoint: state.entrypoint,
     permissionMode: state.permissionMode,
+    effort: state.effort,
+    model: state.model,
     activity,
     updatedAtMs: state.lastActivityAtMs,
     messages: state.messages.map(({ key, ...message }) => message),
@@ -399,6 +455,7 @@ export class ClaudeMonitor {
     this.fileCache = new Map();
     this.owners = new Map();
     this.managedProcesses = new Map();
+    this.managedErrors = new Map();
     this.lastSnapshot = this.#emptySnapshot();
   }
 
@@ -410,6 +467,7 @@ export class ClaudeMonitor {
     this.timer = null;
     for (const child of this.managedProcesses.values()) child.kill?.();
     this.managedProcesses.clear();
+    this.managedErrors.clear();
   }
   getConfig() {
     return {
@@ -527,9 +585,11 @@ export class ClaudeMonitor {
     const tasks = [...this.tasks.values()].map((task) => {
       const owner = this.owners.get(task.id);
       const hasBlockedUnread = allUnread.some((event) => event.threadId === task.id && event.activity === CLAUDE_ACTIVITY.BLOCKED);
-      const currentTask = task.activity === CLAUDE_ACTIVITY.BLOCKED && !hasBlockedUnread
+      const managedError = this.managedErrors.get(task.id) || '';
+      const currentTask = task.activity === CLAUDE_ACTIVITY.BLOCKED && !hasBlockedUnread && !managedError
         ? { ...task, activity: CLAUDE_ACTIVITY.SILENT } : task;
-      const displayedTask = owner?.name ? { ...currentTask, title: sanitizeTaskTitle(owner.name) } : currentTask;
+      const taskWithManagedError = managedError ? { ...currentTask, activity: CLAUDE_ACTIVITY.BLOCKED } : currentTask;
+      const displayedTask = owner?.name ? { ...taskWithManagedError, title: sanitizeTaskTitle(owner.name) } : taskWithManagedError;
       const managed = this.managedProcesses.has(task.id);
       let connectionState = CLAUDE_CONNECTION.DISCONNECTED;
       if (this.config.replyTransport === CLAUDE_REPLY_TRANSPORT.DESKTOP) connectionState = CLAUDE_CONNECTION.CONNECTED;
@@ -546,9 +606,9 @@ export class ClaudeMonitor {
         provider: 'claude',
         owner: owner || null,
         connectionState,
-        connectionError: owner && !managed && desired.has(task.id)
+        connectionError: managedError || (owner && !managed && desired.has(task.id)
           ? '该会话正在原终端或 IDE 中运行，请使用客户端兼容模式'
-          : '',
+          : ''),
         canReply,
         capabilities: { reply: canReply, approve: false, jump: true },
       };
@@ -645,11 +705,22 @@ export class ClaudeMonitor {
       try { return fs.existsSync(candidate); } catch { return false; }
     });
     if (!executable) throw new Error('没有找到 Claude Code CLI，请先安装或设置 CLAUDE_CLI_PATH');
-    const args = [
-      '-p', '--resume', id,
-      '--output-format', 'stream-json', '--verbose', '--include-partial-messages',
-      '--permission-mode', 'auto', message,
-    ];
+    this.managedErrors.delete(id);
+    await this.#startManagedTurn({
+      id,
+      message,
+      task,
+      executable,
+      permissionMode: task.permissionMode,
+      effort: task.effort,
+      model: task.model,
+      retried: false,
+    });
+    return { accepted: true, mode: 'turn-start', openClient: false, sessionId: id, threadId: id };
+  }
+
+  async #startManagedTurn({ id, message, task, executable, permissionMode, effort, model, retried }) {
+    const args = buildClaudeDirectArgs({ sessionId: id, message, permissionMode, effort });
     const child = this.spawnImpl(executable, args, {
       cwd: task.cwd || os.homedir(),
       env: { ...process.env },
@@ -661,17 +732,41 @@ export class ClaudeMonitor {
       child.once('error', reject);
     });
     this.managedProcesses.set(id, child);
+    this.managedErrors.delete(id);
     const base = this.tasks.get(id);
     if (base) this.tasks.set(id, { ...base, activity: CLAUDE_ACTIVITY.RUNNING, updatedAtMs: Date.now() });
     let diagnostic = '';
-    child.stderr?.on('data', (chunk) => { diagnostic = `${diagnostic}${String(chunk || '')}`.slice(-2000); });
+    const collectDiagnostic = (chunk) => { diagnostic = `${diagnostic}${String(chunk || '')}`.slice(-6000); };
+    child.stderr?.on('data', collectDiagnostic);
+    child.stdout?.on('data', (chunk) => {
+      const text = String(chunk || '');
+      if (/\b400\b|bad\s*request|invalid_request|unsupported|not supported/i.test(text)) collectDiagnostic(text);
+    });
     child.once('exit', (code) => {
+      if (this.managedProcesses.get(id) !== child) return;
       this.managedProcesses.delete(id);
-      if (code && code !== 0) console.warn('[Claude] Managed turn exited:', diagnostic.trim() || code);
+      if (!code || code === 0) {
+        this.managedErrors.delete(id);
+        void this.scan(true);
+        return;
+      }
+      if (!retried && shouldRetryClaudeWithLowEffort(diagnostic, effort, model)) {
+        this.managedErrors.set(id, `当前模型不接受 ${normalizeClaudeEffort(effort)} 推理强度，正在降级到 low 重试一次。`);
+        this.#rebuildSnapshot();
+        void this.#startManagedTurn({
+          id, message, task, executable, permissionMode, effort: 'low', model, retried: true,
+        }).catch((error) => {
+          this.managedErrors.set(id, formatClaudeManagedError(error?.message || error, { effort: 'low', retried: true }));
+          this.#rebuildSnapshot();
+        });
+        return;
+      }
+      const errorMessage = formatClaudeManagedError(diagnostic || code, { effort, retried });
+      this.managedErrors.set(id, errorMessage);
+      console.warn('[Claude] Managed turn exited:', errorMessage);
       void this.scan(true);
     });
     this.#rebuildSnapshot();
-    return { accepted: true, mode: 'turn-start', openClient: false, sessionId: id, threadId: id };
   }
 
   #persistConfig() { this.onConfigChange?.(this.getConfig()); }
