@@ -42,20 +42,14 @@ export function buildClaudeDirectArgs({ sessionId = '', message = '', permission
     '--output-format', 'stream-json', '--verbose', '--include-partial-messages',
   ];
   const normalizedMode = normalizeClaudePermissionMode(permissionMode);
-  const normalizedEffort = normalizeClaudeEffort(effort);
   if (normalizedMode) args.push('--permission-mode', normalizedMode);
-  if (normalizedEffort) args.push('--effort', normalizedEffort);
+  // Do not forward transcript effort as a CLI override. Claude Code can resume
+  // sessions through gateways whose thinking schema differs from the local CLI;
+  // --effort takes precedence over the working user/project configuration and
+  // can make the follow-up request after a tool result fail with API 400.
+  void effort;
   args.push(cleanText(message));
   return args;
-}
-
-export function shouldRetryClaudeWithLowEffort(diagnostic, effort, model = '') {
-  const normalizedEffort = normalizeClaudeEffort(effort);
-  if (!['high', 'xhigh', 'max', 'ultracode'].includes(normalizedEffort)) return false;
-  const text = String(diagnostic || '');
-  if (!/(?:\b400\b|bad\s*request|invalid_request)/i.test(text)) return false;
-  if (/(?:effort|thinking|reasoning).{0,100}(?:unsupported|not supported|invalid|unknown|unavailable)|(?:unsupported|not supported|invalid|unknown).{0,100}(?:effort|thinking|reasoning)/i.test(text)) return true;
-  return Boolean(model) && !/^claude(?:-|$)/i.test(String(model));
 }
 
 export function formatClaudeManagedError(diagnostic, { effort = '', retried = false } = {}) {
@@ -64,6 +58,10 @@ export function formatClaudeManagedError(diagnostic, { effort = '', retried = fa
     .replace(/sk-[A-Za-z0-9_-]+/g, 'TOKEN')
     .replace(/\s+/g, ' ')
     .trim();
+  if (/(?:\b400\b|bad\s*request|invalid_request)/i.test(cleaned)
+    && /['"]?type['"]?.{0,80}(?:enabled|disabled).{0,40}auto/i.test(cleaned)) {
+    return 'Claude Code API 400：模型网关拒绝了本次请求中的 thinking 类型。Monitor 直连已停止覆盖推理强度，请更新客户端后重新建立直连。';
+  }
   if (/(?:\b400\b|bad\s*request|invalid_request)/i.test(cleaned)
     && /effort|thinking|reasoning/i.test(cleaned)) {
     return retried
@@ -712,15 +710,12 @@ export class ClaudeMonitor {
       task,
       executable,
       permissionMode: task.permissionMode,
-      effort: task.effort,
-      model: task.model,
-      retried: false,
     });
     return { accepted: true, mode: 'turn-start', openClient: false, sessionId: id, threadId: id };
   }
 
-  async #startManagedTurn({ id, message, task, executable, permissionMode, effort, model, retried }) {
-    const args = buildClaudeDirectArgs({ sessionId: id, message, permissionMode, effort });
+  async #startManagedTurn({ id, message, task, executable, permissionMode }) {
+    const args = buildClaudeDirectArgs({ sessionId: id, message, permissionMode });
     const child = this.spawnImpl(executable, args, {
       cwd: task.cwd || os.homedir(),
       env: { ...process.env },
@@ -750,18 +745,7 @@ export class ClaudeMonitor {
         void this.scan(true);
         return;
       }
-      if (!retried && shouldRetryClaudeWithLowEffort(diagnostic, effort, model)) {
-        this.managedErrors.set(id, `当前模型不接受 ${normalizeClaudeEffort(effort)} 推理强度，正在降级到 low 重试一次。`);
-        this.#rebuildSnapshot();
-        void this.#startManagedTurn({
-          id, message, task, executable, permissionMode, effort: 'low', model, retried: true,
-        }).catch((error) => {
-          this.managedErrors.set(id, formatClaudeManagedError(error?.message || error, { effort: 'low', retried: true }));
-          this.#rebuildSnapshot();
-        });
-        return;
-      }
-      const errorMessage = formatClaudeManagedError(diagnostic || code, { effort, retried });
+      const errorMessage = formatClaudeManagedError(diagnostic || code);
       this.managedErrors.set(id, errorMessage);
       console.warn('[Claude] Managed turn exited:', errorMessage);
       void this.scan(true);

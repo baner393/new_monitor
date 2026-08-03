@@ -11,7 +11,6 @@ import {
   formatClaudeManagedError,
   parseClaudeTranscript,
   resolveClaudeHome,
-  shouldRetryClaudeWithLowEffort,
 } from '../src/main/claude-monitor.js';
 import {
   claudeVsCodeUri,
@@ -268,12 +267,12 @@ test('Claude Monitor direct mode resumes the selected local session', async () =
   }
 });
 
-test('Claude direct arguments only forward supported session settings', () => {
+test('Claude direct arguments inherit gateway thinking settings instead of overriding effort', () => {
   assert.deepEqual(buildClaudeDirectArgs({
     sessionId: 'session-one', message: 'continue', permissionMode: 'plan', effort: 'max',
   }), [
     '-p', '--resume', 'session-one', '--output-format', 'stream-json', '--verbose',
-    '--include-partial-messages', '--permission-mode', 'plan', '--effort', 'max', 'continue',
+    '--include-partial-messages', '--permission-mode', 'plan', 'continue',
   ]);
   const args = buildClaudeDirectArgs({
     sessionId: 'session-one', message: 'continue', permissionMode: 'unexpected', effort: 'turbo',
@@ -294,14 +293,6 @@ test('Claude transcript exposes the session permission, effort and model', () =>
   assert.equal(parsed.task.model, 'gateway-model');
 });
 
-test('Claude direct mode only retries clear effort-related 400 failures', () => {
-  assert.equal(shouldRetryClaudeWithLowEffort('API Error: 400 unsupported reasoning effort', 'max', 'claude-opus'), true);
-  assert.equal(shouldRetryClaudeWithLowEffort('API Error: 400 Bad Request', 'high', 'gateway-model'), true);
-  assert.equal(shouldRetryClaudeWithLowEffort('API Error: 400 invalid API key', 'max', 'claude-opus'), false);
-  assert.equal(shouldRetryClaudeWithLowEffort('API Error: 500 server error', 'max', 'gateway-model'), false);
-  assert.equal(shouldRetryClaudeWithLowEffort('API Error: 400 unsupported effort', 'low', 'gateway-model'), false);
-});
-
 test('Claude managed errors are readable and redact API keys', () => {
   const message = formatClaudeManagedError('API Error: 400 unsupported effort; sk-ant-secretvalue', {
     effort: 'max', retried: true,
@@ -309,6 +300,12 @@ test('Claude managed errors are readable and redact API keys', () => {
   assert.match(message, /400/);
   assert.match(message, /low/);
   assert.doesNotMatch(message, /secretvalue/);
+});
+
+test('Claude managed errors identify gateway thinking-type incompatibility', () => {
+  const message = formatClaudeManagedError("API Error: 400 'type' must be in [\"enabled\", \"disabled\", \"auto\"]");
+  assert.match(message, /thinking/);
+  assert.match(message, /停止覆盖推理强度/);
 });
 
 test('combined task snapshots retain provider identity and priority', () => {
