@@ -113,11 +113,19 @@
   });
 
   function loadConverterFile(file) {
-    if (!file || !file.type.startsWith('image/')) return;
+    if (!file || file.type !== 'image/png') {
+      setStatus('请选择 PNG 格式的正面宠物皮肤');
+      return;
+    }
     const reader = new FileReader();
     reader.onload = (ev) => {
       const img = new Image();
       img.onload = () => {
+        const maxSide = Math.max(img.width, img.height);
+        if (maxSide < 24 || maxSide > 512) {
+          setStatus(`素材尺寸 ${img.width}×${img.height} 不在支持的 24–512 范围内`);
+          return;
+        }
         converterImage = img;
         // Show original
         originalCanvas.width = img.width;
@@ -133,7 +141,9 @@
         converterPreview.style.display = '';
         convertBtn.disabled = false;
         convertPreviewBtn.disabled = false;
-        setStatus(`皮肤已加载: ${file.name} (${img.width}×${img.height})`);
+        const shapeWarning = img.width === img.height ? '' : '；非正方形素材会缩放到方形目标画布';
+        setStatus(`基础皮肤已加载: ${file.name} (${img.width}×${img.height})${shapeWarning}`);
+        document.querySelectorAll('.generator-steps span').forEach((step, index) => step.classList.toggle('active', index === 1));
         // Show region controls for auto expression generator
         if (typeof showRegionControlsAfterLoad === 'function') showRegionControlsAfterLoad();
       };
@@ -463,6 +473,29 @@
     setStatus('已导出 pixel-skin.png');
   });
 
+  document.getElementById('canvasUseAsBaseBtn')?.addEventListener('click', () => {
+    const canvas = gridToImageData(pixelGrid, canvasGridSize, canvasGridSize);
+    canvas.toBlob((blob) => {
+      if (!blob) {
+        setStatus('当前画布转换失败');
+        return;
+      }
+      loadConverterFile(new File([blob], 'drawn-base-skin.png', { type: 'image/png' }));
+      switchTab('converter');
+      setStatus('已将自由绘画结果送入表情生成向导');
+    }, 'image/png');
+  });
+
+  document.getElementById('canvasSendToExpressionBtn')?.addEventListener('click', () => {
+    const expressionId = document.getElementById('canvasTargetExpression')?.value || 'idle';
+    if (!exprData[expressionId]) return;
+    exprData[expressionId] = { grid: cloneGrid(pixelGrid), size: canvasGridSize, loaded: true };
+    refreshThumbnail(expressionId);
+    switchTab('expressions');
+    selectExpression(expressionId);
+    setStatus(`已将自由绘画结果加入 ${expressionId} 状态`);
+  });
+
   // Fullscreen via IPC
   fullscreenBtn?.addEventListener('click', () => {
     if (window.electronAPI?.openCanvasWindow) {
@@ -558,9 +591,14 @@
       triggerDiv.className = 'trigger';
       triggerDiv.textContent = exp.trigger;
 
+      const statusDiv = document.createElement('div');
+      statusDiv.className = 'state-status';
+      statusDiv.textContent = '未加载 · 可直接绘制';
+
       card.appendChild(thumb);
       card.appendChild(nameDiv);
       card.appendChild(triggerDiv);
+      card.appendChild(statusDiv);
 
       card.addEventListener('click', () => selectExpression(exp.id));
       expressionGrid.appendChild(card);
@@ -581,6 +619,10 @@
     const thumb = cardCanvases[exprId];
     if (!thumb) return;
     const data = exprData[exprId];
+    const card = document.querySelector(`.expression-card[data-id="${exprId}"]`);
+    card?.classList.toggle('loaded', Boolean(data?.loaded));
+    const status = card?.querySelector('.state-status');
+    if (status) status.textContent = data?.dirty ? '已修改 · 尚未保存' : data?.loaded ? '已加载' : '未加载 · 可直接绘制';
     const ctx = thumb.getContext('2d');
     ctx.clearRect(0, 0, 48, 48);
     drawCheckerboard(ctx, 48, 48, 6);
@@ -726,7 +768,16 @@
       exprHistoryIndex[currentExprId] = idx - 1;
       pixelGrid = cloneGrid(exprHistory[currentExprId][exprHistoryIndex[currentExprId]]);
       redrawExprCanvas();
+      commitExpressionEdit();
     }
+  }
+
+  function commitExpressionEdit() {
+    if (!currentExprId || !exprData[currentExprId]) return;
+    exprData[currentExprId].grid = cloneGrid(pixelGrid);
+    exprData[currentExprId].loaded = true;
+    exprData[currentExprId].dirty = true;
+    refreshThumbnail(currentExprId);
   }
 
   function exprGetPixelPos(e) {
@@ -820,7 +871,7 @@
       return;
     }
     exprIsDrawing = true;
-    if (exprCurrentTool === 'fill') { exprFloodFill(x, y, exprPenColorInput.value); pushExprHistory(); refreshThumbnail(currentExprId); }
+    if (exprCurrentTool === 'fill') { exprFloodFill(x, y, exprPenColorInput.value); pushExprHistory(); commitExpressionEdit(); }
     else if (exprCurrentTool === 'pen') exprDrawPixel(x, y, exprPenColorInput.value);
     else exprErasePixel(x, y);
   });
@@ -836,7 +887,7 @@
     if (e.button === 0 && exprIsDrawing && currentExprId) {
       exprIsDrawing = false;
       pushExprHistory();
-      refreshThumbnail(currentExprId);
+      commitExpressionEdit();
     }
   });
 
@@ -844,7 +895,7 @@
     if (exprIsDrawing && currentExprId) {
       exprIsDrawing = false;
       pushExprHistory();
-      refreshThumbnail(currentExprId);
+      commitExpressionEdit();
     }
   });
 
@@ -914,6 +965,49 @@
 
   // ── Load existing skins ──
   loadSkinsBtn?.addEventListener('click', () => skinFilesInput?.click());
+
+  document.getElementById('loadActiveSkinBtn')?.addEventListener('click', async () => {
+    try {
+      const current = await window.electronAPI?.skinGetCurrent?.();
+      if (!current?.success) throw new Error(current?.error || '没有找到当前皮肤');
+      const stateMap = { idle: 'idle', hover: 'hover', pull: 'pull', happy: 'happy', pain: 'pain', blink_closed: 'blink', blink: 'blink' };
+      let loaded = 0;
+      await Promise.all(Object.entries(current.frames || {}).map(async ([state, url]) => {
+        const expressionId = stateMap[state];
+        if (!expressionId || !exprData[expressionId]) return;
+        const image = await new Promise((resolve, reject) => {
+          const candidate = new Image();
+          candidate.onload = () => resolve(candidate);
+          candidate.onerror = () => reject(new Error(`读取 ${state} 失败`));
+          candidate.src = url;
+        });
+        const size = Math.max(image.width, image.height, Number(current.baseSize) || 0);
+        const canvas = document.createElement('canvas');
+        canvas.width = size;
+        canvas.height = size;
+        const context = canvas.getContext('2d');
+        context.imageSmoothingEnabled = false;
+        context.drawImage(image, 0, 0, size, size);
+        const imageData = context.getImageData(0, 0, size, size);
+        const grid = createEmptyGrid(size);
+        for (let y = 0; y < size; y++) {
+          for (let x = 0; x < size; x++) {
+            const offset = (y * size + x) * 4;
+            if (imageData.data[offset + 3] > 128) {
+              grid[y][x] = `rgb(${imageData.data[offset]},${imageData.data[offset + 1]},${imageData.data[offset + 2]})`;
+            }
+          }
+        }
+        exprData[expressionId] = { grid, size, loaded: true };
+        loaded++;
+      }));
+      refreshAllThumbnails();
+      selectExpression(exprData.idle?.loaded ? 'idle' : EXPRESSIONS.find((item) => exprData[item.id]?.loaded)?.id || 'idle');
+      setStatus(`已载入当前皮肤 ${current.skinId} 的 ${loaded} 个状态`);
+    } catch (error) {
+      setStatus(`载入当前皮肤失败：${error.message}`);
+    }
+  });
 
   skinFilesInput?.addEventListener('change', (e) => {
     const files = e.target.files;
@@ -1122,6 +1216,7 @@
     mouth: { region: null, pixels: [] },
     mode: null,
     resolution: null,  // from fullscreen marker, null = use original image size
+    coordinateSpace: 'original',
     baseGrid: null, baseSize: 0, results: {},
   };
   let selStart = null, selCur = null;
@@ -1172,6 +1267,7 @@
     autoExpr.rightEye = { region: null, pixels: [] };
     autoExpr.mouth = { region: null, pixels: [] };
     autoExpr.resolution = null;
+    autoExpr.coordinateSpace = 'original';
     updateRegionStatus(); updateGenerateBtn();
     drawSelOverlay();
     if (autoExprPreview) autoExprPreview.style.display = 'none';
@@ -1207,6 +1303,7 @@
         if (regions.resolution) {
           autoExpr.resolution = regions.resolution;
         }
+        autoExpr.coordinateSpace = regions.coordinateSpace || 'original';
         updateRegionStatus();
         updateGenerateBtn();
         drawSelOverlay();
@@ -1271,6 +1368,9 @@
   function drawSelOverlay() {
     if (!selCtx || !selOverlay) return;
     selCtx.clearRect(0, 0, selOverlay.width, selOverlay.height);
+    const previewScale = autoExpr.coordinateSpace === 'target' && autoExpr.resolution
+      ? Math.max(originalCanvas.width, originalCanvas.height) / autoExpr.resolution
+      : 1;
     // Draw regions and pixels for each feature
     const features = [
       { key: 'leftEye', color: 'rgba(100,200,255,0.35)', stroke: '#66ccff', label: '左眼' },
@@ -1282,7 +1382,12 @@
       if (!d) continue;
       // Draw region bounding box
       if (d.region) {
-        const r = d.region;
+        const r = {
+          x: d.region.x * previewScale,
+          y: d.region.y * previewScale,
+          w: d.region.w * previewScale,
+          h: d.region.h * previewScale,
+        };
         selCtx.strokeStyle = f.stroke;
         selCtx.lineWidth = 2;
         selCtx.setLineDash([4, 4]);
@@ -1297,7 +1402,7 @@
         for (const p of d.pixels) {
           selCtx.fillStyle = f.stroke;
           selCtx.globalAlpha = 0.6;
-          selCtx.fillRect(p.x, p.y, 1, 1);
+          selCtx.fillRect(p.x * previewScale, p.y * previewScale, Math.max(1, previewScale), Math.max(1, previewScale));
           selCtx.globalAlpha = 1;
         }
       }
@@ -1495,6 +1600,65 @@
 
   // ── Generate expressions ──
   generateExprBtn?.addEventListener('click', () => {
+    const generator = window.TurtleExpressionGenerator;
+    if (!generator) {
+      setStatus('表情生成引擎未加载，请关闭自定义模式后重新打开');
+      return;
+    }
+    if (generator) {
+      try {
+        const img = converterImage;
+        if (!img) throw new Error('请先载入基础皮肤');
+        const targetSize = autoExpr.resolution || Math.max(img.width, img.height);
+        const baseGrid = createEmptyGrid(targetSize);
+        const canvas = document.createElement('canvas');
+        canvas.width = targetSize;
+        canvas.height = targetSize;
+        const context = canvas.getContext('2d');
+        context.imageSmoothingEnabled = false;
+        context.drawImage(img, 0, 0, targetSize, targetSize);
+        const imageData = context.getImageData(0, 0, targetSize, targetSize);
+        for (let y = 0; y < targetSize; y++) {
+          for (let x = 0; x < targetSize; x++) {
+            const offset = (y * targetSize + x) * 4;
+            if (imageData.data[offset + 3] > 128) {
+              baseGrid[y][x] = `rgb(${imageData.data[offset]},${imageData.data[offset + 1]},${imageData.data[offset + 2]})`;
+            }
+          }
+        }
+        const originalSize = Math.max(img.width, img.height);
+        const scale = autoExpr.coordinateSpace === 'target' ? 1 : targetSize / originalSize;
+        const scaleFeature = (feature) => ({
+          region: {
+            x: Math.round(feature.region.x * scale),
+            y: Math.round(feature.region.y * scale),
+            w: Math.max(1, Math.round(feature.region.w * scale)),
+            h: Math.max(1, Math.round(feature.region.h * scale)),
+          },
+          pixels: feature.pixels.map((point) => ({ x: Math.round(point.x * scale), y: Math.round(point.y * scale) })),
+        });
+        const features = {
+          leftEye: scaleFeature(autoExpr.leftEye),
+          rightEye: scaleFeature(autoExpr.rightEye),
+          mouth: scaleFeature(autoExpr.mouth),
+        };
+        const strength = document.getElementById('autoExprStrength')?.value || 'standard';
+        const generated = generator.generateExpressions(baseGrid, targetSize, features, { strength });
+        autoExpr.baseGrid = baseGrid;
+        autoExpr.baseSize = targetSize;
+        autoExpr.results = generated.results;
+        for (const [exprId, result] of Object.entries(autoExpr.results)) {
+          exprData[exprId] = { grid: cloneGrid(result.grid), size: result.size, loaded: true };
+        }
+        renderAutoExprPreview();
+        refreshAllThumbnails();
+        document.querySelectorAll('.generator-steps span').forEach((step, index) => step.classList.toggle('active', index === 2));
+        setStatus(generated.warnings.length ? `已生成六种状态；${generated.warnings.join('；')}` : '已生成六种状态，请逐个检查');
+      } catch (error) {
+        setStatus(`生成前检查未通过：${error.message}`);
+      }
+      return;
+    }
     if (!autoExpr.leftEye || !autoExpr.rightEye || !autoExpr.mouth || !converterImage) return;
     if (!autoExpr.leftEye.region || !autoExpr.rightEye.region || !autoExpr.mouth.region) return;
     if (!autoExpr.leftEye.pixels?.length || !autoExpr.rightEye.pixels?.length || !autoExpr.mouth.pixels?.length) return;
@@ -1617,7 +1781,18 @@
       const trigDiv = document.createElement('div');
       trigDiv.style.cssText = 'font-size:10px; color:#888; margin-top:2px;';
       trigDiv.textContent = def.trigger;
-      card.appendChild(cvs); card.appendChild(nameDiv); card.appendChild(trigDiv);
+      const editButton = document.createElement('button');
+      editButton.className = 'btn';
+      editButton.style.cssText = 'margin-top:7px; padding:4px 8px; min-height:26px; font-size:10px;';
+      editButton.textContent = '检查并编辑';
+      editButton.addEventListener('click', () => {
+        exprData[def.id] = { grid: cloneGrid(data.grid), size: data.size, loaded: true };
+        refreshThumbnail(def.id);
+        switchTab('expressions');
+        selectExpression(def.id);
+        setStatus(`正在校对 ${def.id} 状态`);
+      });
+      card.appendChild(cvs); card.appendChild(nameDiv); card.appendChild(trigDiv); card.appendChild(editButton);
       autoExprGrid.appendChild(card);
     });
   }
@@ -1639,7 +1814,9 @@
       exprData[id] = { grid: cloneGrid(data.grid), size: data.size, loaded: true };
     }
     refreshAllThumbnails();
-    setStatus('已应用到表情编辑器');
+    switchTab('expressions');
+    selectExpression('idle');
+    setStatus('六种状态已应用到表情编辑器，请逐个校对');
   });
 
   // ── Export all expressions ──
@@ -1772,6 +1949,7 @@
           // Map blink → blink_closed (file name is blink.png, state key is blink_closed)
           const stateKey = exp.id === 'blink' ? 'blink_closed' : exp.id;
           frames[stateKey] = saveResult.path;
+          data.dirty = false;
           saved++;
         } else {
           console.warn('[SkinLib] Failed to save:', exp.id, saveResult.error);
@@ -1815,6 +1993,7 @@
       }
 
       await window.electronAPI.skinImportWriteJson(config);
+      refreshAllThumbnails();
       importToLibraryBtn.disabled = false;
       setStatus('✅ 已导入 ' + saved + ' 个表情到皮肤库: ' + displayName);
     } catch (err) {
@@ -1880,6 +2059,7 @@
         if (exprData[id]) {
           exprData[id].grid = cloneGrid(payload.grid);
           exprData[id].loaded = true;
+          exprData[id].dirty = true;
           refreshThumbnail(id);
           // If currently editing this expression, reload it
           if (currentExprId === id) {
@@ -2214,11 +2394,12 @@
   function init() {
     buildExpressionCards();
     initDrawCanvas();
+    selectExpression('idle');
     // Load skin library
     if (window.electronAPI?.skinImportReadJson) {
       loadSkinLibrary();
     }
-    setStatus('就绪 — 选择标签页开始编辑');
+    setStatus('就绪 — 可从基础皮肤、自由绘画或现有状态开始');
   }
 
   // Wait for DOM to be ready

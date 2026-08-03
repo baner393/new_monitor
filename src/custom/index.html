@@ -726,6 +726,329 @@
       letter-spacing: 1px;
       font-family: 'Mojang', 'Unifont', 'Microsoft YaHei', sans-serif;
     }
+
+    /* ── Sponsor custom studio refresh ───────────────────── */
+    :root {
+      --studio-bg: #10141b;
+      --studio-panel: #171d27;
+      --studio-raised: #202936;
+      --studio-line: #313c4c;
+      --studio-text: #e7edf4;
+      --studio-muted: #93a0ae;
+      --studio-accent: #73d39d;
+      --studio-accent-strong: #42b979;
+      --studio-warn: #e6b566;
+      --studio-danger: #dd7373;
+      --title-color: var(--studio-accent);
+      --text-color: var(--studio-text);
+      --hint-color: var(--studio-muted);
+      --accent: var(--studio-accent);
+    }
+    body {
+      background-color: var(--studio-bg);
+      background-image:
+        linear-gradient(rgba(255,255,255,.015) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,.012) 1px, transparent 1px);
+      background-size: 4px 4px;
+      font-family: 'Microsoft YaHei UI', 'Microsoft YaHei', 'Unifont', sans-serif;
+    }
+    .titlebar {
+      height: 38px;
+      padding-inline: 14px 8px;
+      background: #0c1016;
+      border: 0;
+      border-bottom: 1px solid var(--studio-line);
+      box-shadow: none;
+    }
+    .titlebar .title { font-size: 12px; letter-spacing: .3px; }
+    .titlebar .badge {
+      background: rgba(115,211,157,.12);
+      color: var(--studio-accent);
+      border: 1px solid rgba(115,211,157,.32);
+      box-shadow: none;
+      border-radius: 4px;
+    }
+    .tabs {
+      height: 54px;
+      background: #121720;
+      border-bottom: 1px solid var(--studio-line);
+      box-shadow: none;
+    }
+    .tab {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 0 12px;
+      margin: 0;
+      border: 0;
+      border-right: 1px solid rgba(49,60,76,.5);
+      color: #8793a3;
+      font-size: 13px;
+    }
+    .tab .icon { display: inline; margin: 0; font-size: 15px; color: #657489; }
+    .tab:hover { background: rgba(115,211,157,.04); }
+    .tab.active {
+      color: var(--studio-text);
+      background: #181f29;
+      border-bottom: 2px solid var(--studio-accent);
+      text-shadow: none;
+    }
+    .tab.active .icon { color: var(--studio-accent); }
+    .tab.active::after { display: none; }
+    .tab-content { padding: 14px 16px; background: transparent; }
+    .section-title {
+      margin-bottom: 10px;
+      padding-bottom: 8px;
+      color: var(--studio-text);
+      font-size: 16px;
+      text-shadow: none;
+      border-bottom: 1px solid var(--studio-line);
+      box-shadow: none;
+    }
+    .section-title::after { width: 44px; background: var(--studio-accent); box-shadow: none; }
+    .hint {
+      padding: 9px 11px;
+      margin-bottom: 12px;
+      background: rgba(32,41,54,.55);
+      border: 1px solid var(--studio-line);
+      border-left: 3px solid #526276;
+      color: var(--studio-muted);
+      line-height: 1.55;
+    }
+    .btn, .tool-btn {
+      min-height: 32px;
+      border: 1px solid var(--studio-line);
+      border-radius: 4px;
+      background: var(--studio-raised);
+      box-shadow: none;
+      color: var(--studio-text);
+      text-shadow: none;
+      transition: background-color .12s ease, border-color .12s ease, color .12s ease;
+    }
+    .btn:hover, .tool-btn:hover { background: #293445; border-color: #4a596d; box-shadow: none; }
+    .btn:active, .tool-btn:active { background: #151b24; border-color: var(--studio-accent); box-shadow: none; }
+    .btn.primary {
+      background: var(--studio-accent-strong);
+      color: #07160e;
+      border-color: #82dfaa;
+      box-shadow: none;
+      font-weight: 700;
+    }
+    .btn.primary:hover { background: #69d69a; box-shadow: none; }
+    .btn:disabled { opacity: .38; }
+    select, input[type="text"] {
+      min-height: 32px;
+      background: #111720 !important;
+      border: 1px solid var(--studio-line) !important;
+      border-radius: 4px !important;
+      color: var(--studio-text) !important;
+    }
+    .group-box {
+      background: rgba(23,29,39,.75);
+      border: 1px solid var(--studio-line);
+      border-radius: 5px;
+      box-shadow: none;
+    }
+    .group-box-label { color: #a9b5c2; letter-spacing: .4px; text-transform: none; }
+    .drop-zone {
+      background: rgba(17,23,32,.7);
+      border: 1px dashed #465469;
+      border-radius: 6px;
+      box-shadow: none;
+    }
+    .drop-zone::before { display: none; }
+    .drop-zone:hover, .drop-zone.dragover { border-color: var(--studio-accent); background: rgba(115,211,157,.04); box-shadow: none; }
+    .preview-box {
+      background-color: #0e131a;
+      background-image:
+        linear-gradient(45deg, #161d26 25%, transparent 25%),
+        linear-gradient(-45deg, #161d26 25%, transparent 25%),
+        linear-gradient(45deg, transparent 75%, #161d26 75%),
+        linear-gradient(-45deg, transparent 75%, #161d26 75%);
+      background-size: 16px 16px;
+      background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+      border: 1px solid var(--studio-line);
+      border-radius: 5px;
+      box-shadow: none;
+    }
+    .toolbar {
+      padding: 6px;
+      background: #151b24;
+      border: 1px solid var(--studio-line);
+      border-radius: 5px;
+      box-shadow: none;
+    }
+    .tool-btn.active { background: rgba(115,211,157,.16); border-color: var(--studio-accent); box-shadow: none; }
+    .statusbar { background: #0c1016; border-top: 1px solid var(--studio-line); box-shadow: none; }
+    .generator-steps {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1px;
+      margin-bottom: 12px;
+      overflow: hidden;
+      border: 1px solid var(--studio-line);
+      border-radius: 5px;
+      background: var(--studio-line);
+    }
+    .generator-steps span { padding: 8px 10px; background: #151b24; color: var(--studio-muted); font-size: 11px; }
+    .generator-steps span.active { color: var(--studio-accent); background: rgba(115,211,157,.08); }
+    .inline-guidance { margin-top: 8px; color: var(--studio-muted); font-size: 11px; }
+    .field-inline { display: flex; align-items: center; gap: 7px; color: var(--studio-muted); font-size: 11px; }
+    .canvas-flow-actions {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      margin-left: auto;
+    }
+
+    /* Expression editor: keep the complete workspace visible from first entry. */
+    #panel-expressions.active {
+      display: grid;
+      grid-template-columns: 142px minmax(0, 1fr);
+      grid-template-rows: auto auto minmax(0, 1fr);
+      grid-template-areas: "title title" "source source" "states editor";
+      gap: 10px 12px;
+      height: 100%;
+      min-height: 0;
+    }
+    #panel-expressions > .section-title { grid-area: title; margin: 0; }
+    #panel-expressions > .hint { display: none; }
+    #panel-expressions > .group-box {
+      grid-area: source;
+      margin: 0;
+      padding: 8px 10px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      overflow-x: auto;
+    }
+    #panel-expressions > .group-box .group-box-label { display: none; }
+    #panel-expressions > .group-box > div { margin: 0 !important; padding: 0 !important; border: 0 !important; flex: 0 0 auto; }
+    #panel-expressions .expression-grid {
+      grid-area: states;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      min-height: 0;
+      margin: 0;
+      overflow-y: auto;
+    }
+    #panel-expressions .expression-card {
+      display: grid;
+      grid-template-columns: 38px 1fr;
+      grid-template-rows: auto auto auto;
+      column-gap: 8px;
+      align-items: center;
+      flex: 0 0 auto;
+      min-height: 58px;
+      padding: 7px;
+      text-align: left;
+      background: #141a23;
+      border: 1px solid var(--studio-line);
+      border-radius: 5px;
+      box-shadow: none;
+      transition: background-color .12s ease, border-color .12s ease;
+    }
+    #panel-expressions .expression-card canvas { grid-row: 1 / 4; width: 38px !important; height: 38px !important; }
+    #panel-expressions .expression-card .name { margin: 0; font-size: 12px; }
+    #panel-expressions .expression-card .trigger { margin: 0; font-size: 9px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    #panel-expressions .expression-card .state-status { font-size: 9px; color: #728095; }
+    #panel-expressions .expression-card.loaded .state-status { color: var(--studio-accent); }
+    #panel-expressions .expression-card.active { background: rgba(115,211,157,.09); border-color: var(--studio-accent); box-shadow: none; }
+    #expressionEditor {
+      grid-area: editor;
+      display: block !important;
+      min-width: 0;
+      min-height: 0;
+      overflow: hidden;
+    }
+    #expressionEditor > div { height: 100%; gap: 10px !important; }
+    #expressionEditor > div > div:first-child {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      min-height: 0;
+      overflow-y: auto;
+    }
+    #expressionEditor .toolbar { flex: 0 0 auto; margin-bottom: 8px; }
+    #exprCanvasContainer { flex: 1 1 180px; min-height: 160px; margin-bottom: 8px; }
+    #expressionEditor .group-box { flex: 0 0 auto; margin: 0 !important; padding: 8px 10px; }
+    #expressionEditor > div > div:last-child { width: 158px !important; flex: 0 0 158px; overflow-y: auto; }
+
+    #panel-skin-import.active {
+      display: grid;
+      grid-template-columns: minmax(300px, .9fr) minmax(320px, 1.1fr);
+      grid-template-rows: auto minmax(0, 1fr);
+      gap: 12px;
+      height: 100%;
+      overflow: hidden;
+    }
+    #panel-skin-import > .section-title { grid-column: 1 / -1; margin: 0; }
+    #panel-skin-import > .group-box {
+      min-height: 0;
+      margin: 0 !important;
+      overflow: auto;
+    }
+    #panel-skin-import .library-intro { color: var(--studio-muted) !important; line-height: 1.65; }
+
+    @media (max-width: 760px) {
+      .tab { padding-inline: 7px; gap: 5px; font-size: 11px; }
+      .tab-content { padding: 9px 10px; }
+      #panel-expressions.active {
+        grid-template-columns: minmax(0, 1fr);
+        grid-template-rows: auto auto 66px minmax(0, 1fr);
+        grid-template-areas: "title" "source" "states" "editor";
+        gap: 7px;
+      }
+      #panel-expressions > .section-title { font-size: 13px; padding-bottom: 5px; }
+      #panel-expressions > .group-box { padding: 5px 7px; white-space: nowrap; overflow-x: auto; }
+      #panel-expressions .expression-grid { flex-direction: row; overflow-x: auto; overflow-y: hidden; }
+      #panel-expressions .expression-card {
+        grid-template-columns: 30px 68px;
+        min-width: 108px;
+        min-height: 58px;
+        padding: 5px;
+      }
+      #panel-expressions .expression-card canvas { width: 30px !important; height: 30px !important; }
+      #panel-expressions .expression-card .trigger { display: none; }
+      #expressionEditor > div > div:last-child { display: none; }
+      #exprCanvasContainer { min-height: 120px; }
+      .canvas-flow-actions { flex-basis: 100%; margin-left: 0; }
+      #panel-skin-import.active {
+        grid-template-columns: minmax(0, 1fr);
+        grid-template-rows: auto auto minmax(120px, 1fr);
+        overflow-y: auto;
+      }
+      #panel-skin-import > .section-title { grid-column: auto; }
+      #panel-skin-import > .group-box { overflow: visible; }
+    }
+
+    @media (max-height: 560px) {
+      .titlebar { height: 32px; }
+      .tabs { height: 44px; }
+      .tab-content { padding-block: 7px; }
+      #panel-expressions > .section-title { display: none; }
+      #panel-expressions.active { grid-template-rows: auto 62px minmax(0, 1fr); grid-template-areas: "source source" "states editor" "states editor"; }
+      #panel-expressions > .group-box { max-height: 58px; overflow: auto; }
+      #expressionEditor .group-box { display: none; }
+      #panel-canvas > .section-title, #panel-canvas > .hint { display: none; }
+      #panel-canvas .toolbar { margin-bottom: 7px; }
+      #canvasContainer { min-height: 180px; margin: 0; }
+    }
+
+    @media (max-width: 760px) and (max-height: 560px) {
+      #panel-expressions.active {
+        grid-template-columns: minmax(0, 1fr);
+        grid-template-rows: 54px 62px minmax(0, 1fr);
+        grid-template-areas: "source" "states" "editor";
+      }
+      #panel-expressions > .group-box { max-height: none; }
+      #panel-expressions .expression-grid { flex-direction: row; overflow-x: auto; overflow-y: hidden; }
+      #panel-expressions .expression-card { min-width: 108px; height: 58px; }
+      #expressionEditor > div > div:last-child { display: none; }
+      .canvas-flow-actions .btn { padding-inline: 10px; font-size: 11px; }
+    }
   </style>
 </head>
 <body>
@@ -739,20 +1062,20 @@
   <!-- Tab Navigation -->
   <div class="tabs">
     <div class="tab active" data-tab="converter">
-      <span class="icon">🖼️</span>
-      皮肤转换器
+      <span class="icon">✦</span>
+      表情生成
     </div>
     <div class="tab" data-tab="canvas">
-      <span class="icon">🎨</span>
+      <span class="icon">▦</span>
       像素画布
     </div>
     <div class="tab" data-tab="expressions">
-      <span class="icon">😊</span>
+      <span class="icon">◉</span>
       表情编辑
     </div>
     <div class="tab" data-tab="skin-import">
-      <span class="icon">📦</span>
-      皮肤导入与管理
+      <span class="icon">◇</span>
+      皮肤库
     </div>
   </div>
 
@@ -761,16 +1084,20 @@
 
     <!-- Tab 1: 皮肤转换器 -->
     <div class="tab-panel active" id="panel-converter">
-      <h2 class="section-title">🖼️ 皮肤转换器</h2>
+      <h2 class="section-title">基础皮肤表情生成向导</h2>
       <p class="hint">
-        上传一张 PNG 图片，自动转换为宠物可用的皮肤格式。<br>
-        默认转换为 idle（待机）状态，后续可在表情编辑中补充其他动作。
+        基于一张已经准备好的正面宠物皮肤，生成待机、悬停、拖拽、开心、受伤和眨眼六种状态。<br>
+        适合主体居中、背景透明的像素风 PNG；照片、截图和复杂背景素材需要先自行处理。
       </p>
+
+      <div class="generator-steps" aria-label="生成步骤">
+        <span class="active">1&nbsp; 载入基础皮肤</span><span>2&nbsp; 标记五官</span><span>3&nbsp; 生成并校对</span>
+      </div>
 
       <div class="drop-zone" id="dropZone">
         <div class="icon">📁</div>
-        <div>拖拽 PNG 文件到这里，或点击选择</div>
-        <div style="font-size:11px; margin-top:4px;">支持 24×24 到 512×512 的 PNG 图片</div>
+        <div>拖入正面宠物皮肤 PNG，或点击选择</div>
+        <div style="font-size:11px; margin-top:4px;">建议正方形、透明背景，支持 24×24 到 512×512</div>
       </div>
       <input type="file" id="fileInput" accept="image/png" style="display:none" />
 
@@ -786,36 +1113,32 @@
       </div>
 
       <div style="display:flex; gap:8px;">
-        <button class="btn primary" id="convertBtn" disabled>转换并导出</button>
-        <button class="btn" id="convertPreviewBtn" disabled>预览</button>
+        <button class="btn" id="convertBtn" disabled>仅导出待机帧</button>
+        <button class="btn" id="convertPreviewBtn" disabled>检查素材信息</button>
       </div>
 
       <!-- ══ 区域选择 ══ -->
       <div id="regionControls" style="display:none; margin-top:12px;">
         <div class="group-box">
-          <div class="group-box-label">🎯 标记区域</div>
+          <div class="group-box-label">第 2 步 · 标记左眼、右眼与嘴巴</div>
           <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
-            <button class="btn primary" id="fullscreenMarkBtn" title="打开全屏窗口进行两步标记（推荐）" style="background:rgba(30,100,30,0.8); border-color:#2a8e2a;">⛶ 全屏标记（推荐）</button>
-            <div class="separator" style="height:18px;"></div>
-            <button class="btn" id="selectEyesBtn" title="在原图上拖拽选择眼睛区域" disabled>👁️ 标记眼睛</button>
-            <button class="btn" id="selectMouthBtn" title="在原图上拖拽选择嘴巴区域" disabled>👄 标记嘴巴</button>
-            <button class="btn" id="clearRegionsBtn">🗑️ 清除</button>
+            <button class="btn primary" id="fullscreenMarkBtn" title="打开精确标记向导">打开五官标记向导</button>
+            <button class="btn" id="clearRegionsBtn">清除标记</button>
             <span id="regionStatus" style="font-size:12px; color:#888899;"></span>
           </div>
-          <div style="margin-top:8px; font-size:11px; color:#ff9966;">
-            ⚠️ 请点击「⛶ 全屏标记」打开全屏窗口进行精确的两步标记（框选区域 → 标记像素）<br>
-            💡 标记的是预览图中原始图片的对应部位位置，不在转换后的图片上标记。
+          <div class="inline-guidance">
+            小图仅用于检查结果。精确标记统一在大画布中完成，避免缩放造成误操作。
           </div>
         </div>
 
         <div class="group-box" style="margin-top:12px;">
-          <div class="group-box-label">✨ 自动生成表情 <span style="color:#ff9944; font-size:10px;">(内测)</span></div>
-          <div style="display:flex; align-items:center; gap:12px;">
-            <button class="btn primary" id="generateExprBtn" disabled>生成所有表情</button>
-            <span style="font-size:11px; color:#888899;">需先标记眼睛和嘴巴区域</span>
-          </div>
-          <div style="margin-top:6px; font-size:11px; color:#ff9944;">
-            ⚠️ 内测功能，生成的眉毛/嘴巴位置可能不准确，建议生成后在表情编辑器中手动调整。
+          <div class="group-box-label">第 3 步 · 生成六种状态</div>
+          <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+            <label class="field-inline">表情强度
+              <select id="autoExprStrength"><option value="subtle">轻微</option><option value="standard" selected>标准</option><option value="bold">夸张</option></select>
+            </label>
+            <button class="btn primary" id="generateExprBtn" disabled>生成并进入校对</button>
+            <span style="font-size:11px; color:#888899;">完成三处五官标记后可用</span>
           </div>
         </div>
       </div>
@@ -823,11 +1146,11 @@
       <!-- ══ 自动生成的表情预览 ══ -->
       <div id="autoExprPreview" style="display:none; margin-top:12px;">
         <div class="group-box">
-          <div class="group-box-label">📦 生成的表情</div>
+          <div class="group-box-label">生成结果 · 可逐个检查后继续编辑</div>
           <div id="autoExprGrid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(100px, 1fr)); gap:8px;"></div>
           <div style="margin-top:12px; display:flex; gap:8px;">
-            <button class="btn primary" id="exportAutoExprBtn">📦 导出所有表情</button>
-            <button class="btn" id="applyToEditorBtn">✏️ 应用到表情编辑器</button>
+            <button class="btn" id="exportAutoExprBtn">导出六种状态</button>
+            <button class="btn primary" id="applyToEditorBtn">进入表情编辑器校对</button>
           </div>
         </div>
       </div>
@@ -879,7 +1202,17 @@
         <button class="tool-btn" id="toolZoomOut" title="缩小 (-)">🔍−</button>
         <button class="btn primary" id="toolFullscreen" title="展开全屏画布 (F11)" style="padding:6px 16px; font-size:13px; letter-spacing:1px;">⛶ 全屏绘制</button>
         <div class="separator"></div>
-        <button class="btn" id="exportCanvasBtn">导出 PNG</button>
+        <div class="canvas-flow-actions">
+          <button class="btn" id="exportCanvasBtn">导出 PNG</button>
+          <button class="btn primary" id="canvasUseAsBaseBtn">作为基础皮肤生成表情</button>
+          <label class="field-inline">加入
+            <select id="canvasTargetExpression">
+              <option value="idle">Idle</option><option value="hover">Hover</option><option value="pull">Pull</option>
+              <option value="happy">Happy</option><option value="pain">Pain</option><option value="blink">Blink</option>
+            </select>
+          </label>
+          <button class="btn" id="canvasSendToExpressionBtn">发送到状态编辑</button>
+        </div>
       </div>
 
       <div id="canvasContainer" class="preview-box" style="text-align:center; overflow:auto; position:relative;">
@@ -901,7 +1234,8 @@
       <div class="group-box">
         <div class="group-box-label">📂 加载皮肤</div>
         <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
-          <button class="btn primary" id="loadSkinsBtn">📁 加载现有皮肤</button>
+          <button class="btn primary" id="loadSkinsBtn">加载一组状态图片</button>
+          <button class="btn" id="loadActiveSkinBtn">载入当前使用的皮肤</button>
           <label style="font-size:12px; color:#aaa; display:flex; align-items:center; gap:4px; cursor:pointer;">
             <input type="checkbox" id="applyAllCheckbox" style="cursor:pointer;" />
             应用到所有状态帧
@@ -926,7 +1260,7 @@
         </div>
         <!-- ══ 加载选中的表情 ══ -->
         <div style="margin-top:8px; padding-top:8px; border-top:1px solid var(--border-mid); display:flex; align-items:center; gap:8px;">
-          <button class="btn primary" id="loadCurrentSkinBtn" title="先点击一个表情卡片选中它，再点击此按钮选择图片加载到该表情">📂 加载表情</button>
+          <button class="btn primary" id="loadCurrentSkinBtn" title="为当前状态选择一张图片">加载当前状态图片</button>
           <span id="currentSkinLabel" style="font-size:11px; color:#888;"></span>
         </div>
       </div>
@@ -1020,22 +1354,22 @@
       </div>
     </div>
 
-    <!-- Tab 4: 皮肤导入与管理 -->
+    <!-- Tab 4: 皮肤库 -->
     <div class="tab-panel" id="panel-skin-import">
-      <h2 class="section-title">📦 皮肤导入与管理</h2>
+      <h2 class="section-title">皮肤库</h2>
 
       <!-- ══ Section 1: 皮肤导入 ══ -->
-      <div class="group-box" style="margin-bottom:20px;">
-        <div class="group-box-label">📥 皮肤导入</div>
-        <p style="font-size:11px; color:#888; margin-bottom:12px;">
-          将同一系列皮肤的不同状态文件夹导入到皮肤库中。系统会自动识别 idle, hover, pull, happy, pain, blink_closed 等状态文件。
+      <div class="group-box">
+        <div class="group-box-label">导入一套状态皮肤</div>
+        <p class="library-intro" style="font-size:11px; margin-bottom:12px;">
+          选择包含同系列状态图片的文件夹。系统会识别 idle、hover、pull、happy、pain、blink_closed 等文件名。
         </p>
 
         <!-- Step 1: Select Folder -->
         <div style="margin-bottom:12px;">
           <div style="font-size:12px; color:#aaa; margin-bottom:6px;">① 选择皮肤文件夹</div>
           <div id="skinImportDropZone" class="drop-zone" style="margin-bottom:0; padding:20px;">
-            <div class="icon" style="font-size:32px;">📂</div>
+            <div class="icon" style="font-size:32px;">＋</div>
             <div>点击选择文件夹</div>
             <div style="font-size:11px; color:#666; margin-top:4px;">包含 idle.png, hover.png 等状态文件</div>
           </div>
@@ -1067,14 +1401,14 @@
 
         <!-- Step 4: Import Button -->
         <div style="display:none; margin-bottom:8px;" id="skinImportActionBox">
-          <button class="btn primary" id="skinImportBtn" disabled>🚀 导入皮肤</button>
+          <button class="btn primary" id="skinImportBtn" disabled>导入皮肤</button>
           <span id="skinImportStatus" style="font-size:12px; color:#888; margin-left:12px;"></span>
         </div>
       </div>
 
       <!-- ══ Section 2: 皮肤库管理 ══ -->
       <div class="group-box">
-        <div class="group-box-label">🗂️ 皮肤库管理</div>
+        <div class="group-box-label">已导入的皮肤</div>
         <div id="skinLibraryList" style="min-height:60px;">
           <div style="font-size:12px; color:#666;">加载中...</div>
         </div>
@@ -1097,6 +1431,7 @@
     })()">📊</span>
   </div>
 
+  <script src="expression-generator.js"></script>
   <script src="custom.js"></script>
 </body>
 </html>

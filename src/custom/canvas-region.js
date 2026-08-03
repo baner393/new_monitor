@@ -18,8 +18,11 @@
   const pixelRightEyeBtn = document.getElementById('pixelRightEyeBtn');
   const pixelMouthBtn = document.getElementById('pixelMouthBtn');
   const clearBtn = document.getElementById('clearBtn');
+  const undoBtn = document.getElementById('undoBtn');
   const confirmBtn = document.getElementById('confirmBtn');
   const resolutionSelect = document.getElementById('resolutionSelect');
+  const colorTolerance = document.getElementById('colorTolerance');
+  const colorToleranceValue = document.getElementById('colorToleranceValue');
   const regionStatus = document.getElementById('regionStatus');
   const statusText = document.getElementById('statusText');
 
@@ -41,6 +44,8 @@
   let isDragging = false;
   let dragStart = null;
   let dragCur = null;
+  let pixelAction = 'add';
+  const history = [];
 
   const COLORS = {
     leftEye:  { fill: 'rgba(100,200,255,0.35)', stroke: '#66ccff', pixel: '#44aaff', label: '左眼' },
@@ -49,6 +54,63 @@
   };
 
   function setStatus(t) { if (statusText) statusText.textContent = t; }
+
+  function snapshotData() {
+    return Object.fromEntries(Object.entries(data).map(([key, value]) => [key, {
+      region: value.region ? { ...value.region } : null,
+      pixels: [...value.pixels],
+    }]));
+  }
+
+  function pushHistory() {
+    history.push(snapshotData());
+    if (history.length > 40) history.shift();
+    if (undoBtn) undoBtn.disabled = history.length === 0;
+  }
+
+  function restoreSnapshot(snapshot) {
+    for (const key of Object.keys(data)) {
+      data[key].region = snapshot[key]?.region ? { ...snapshot[key].region } : null;
+      data[key].pixels = new Set(snapshot[key]?.pixels || []);
+    }
+    updateStatus();
+    drawOverlay();
+  }
+
+  function colorChannels(color) {
+    const match = String(color || '').match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/i);
+    return match ? match.slice(1, 4).map(Number) : null;
+  }
+
+  function colorDistance(left, right) {
+    const a = colorChannels(left);
+    const b = colorChannels(right);
+    if (!a || !b) return Infinity;
+    return Math.sqrt(a.reduce((sum, value, index) => sum + (value - b[index]) ** 2, 0));
+  }
+
+  function selectConnectedPixels(key, seed) {
+    const region = data[key].region;
+    const seedColor = pixelGrid[seed.y]?.[seed.x];
+    if (!region || !seedColor) return 0;
+    const tolerance = Number(colorTolerance?.value || 24);
+    const queue = [seed];
+    const visited = new Set();
+    let added = 0;
+    while (queue.length) {
+      const point = queue.shift();
+      const pointKey = `${point.x},${point.y}`;
+      if (visited.has(pointKey) || point.x < region.x || point.y < region.y
+        || point.x >= region.x + region.w || point.y >= region.y + region.h) continue;
+      visited.add(pointKey);
+      const color = pixelGrid[point.y]?.[point.x];
+      if (!color || colorDistance(seedColor, color) > tolerance) continue;
+      if (!data[key].pixels.has(pointKey)) added++;
+      data[key].pixels.add(pointKey);
+      queue.push({ x: point.x - 1, y: point.y }, { x: point.x + 1, y: point.y }, { x: point.x, y: point.y - 1 }, { x: point.x, y: point.y + 1 });
+    }
+    return added;
+  }
 
   function updateStatus() {
     const p = [];
@@ -273,6 +335,7 @@
   pixelMouthBtn.addEventListener('click', () => enterMode('pixel-mouth'));
 
   clearBtn.addEventListener('click', () => {
+    pushHistory();
     for (const k of Object.keys(data)) {
       data[k].region = null;
       data[k].pixels = new Set();
@@ -280,6 +343,16 @@
     updateStatus();
     updateButtons();
     drawOverlay();
+  });
+
+  undoBtn?.addEventListener('click', () => {
+    const previous = history.pop();
+    if (previous) restoreSnapshot(previous);
+    undoBtn.disabled = history.length === 0;
+  });
+
+  colorTolerance?.addEventListener('input', () => {
+    colorToleranceValue.textContent = colorTolerance.value;
   });
 
   function updateButtons() {
@@ -293,8 +366,10 @@
 
   // ── Mouse events on overlay ──
   overlayCanvas.addEventListener('mousedown', (e) => {
-    if (!mode || e.button !== 0) return;
+    if (!mode || (e.button !== 0 && e.button !== 2)) return;
+    e.preventDefault();
     isDragging = true;
+    pixelAction = e.button === 2 ? 'remove' : 'add';
     dragStart = getGridPos(e);
     dragCur = { ...dragStart };
     drawOverlay();
@@ -307,12 +382,13 @@
   });
 
   overlayCanvas.addEventListener('mouseup', (e) => {
-    if (!isDragging || !mode || e.button !== 0) return;
+    if (!isDragging || !mode || (e.button !== 0 && e.button !== 2)) return;
     isDragging = false;
     const end = getGridPos(e);
     const key = getKeyFromMode(mode);
 
     if (isRegionMode(mode)) {
+      pushHistory();
       // Region selection: store bounding box
       const x = Math.min(dragStart.x, end.x);
       const y = Math.min(dragStart.y, end.y);
@@ -325,30 +401,40 @@
         setStatus(COLORS[key].label + ' 区域已设置 (' + w + '×' + h + ') — 现在标记像素');
       }
     } else if (isPixelMode(mode)) {
+      pushHistory();
       // Pixel selection: add pixels within drag area
       const minX = Math.min(dragStart.x, end.x);
       const maxX = Math.max(dragStart.x, end.x);
       const minY = Math.min(dragStart.y, end.y);
       const maxY = Math.max(dragStart.y, end.y);
       const r = data[key].region;
-      let added = 0;
+      let changed = 0;
+      const isSinglePoint = minX === maxX && minY === maxY;
+      if (pixelAction === 'add' && isSinglePoint) {
+        changed = selectConnectedPixels(key, { x: minX, y: minY });
+      }
       for (let py = minY; py <= maxY; py++) {
         for (let px = minX; px <= maxX; px++) {
-          // Only add if within region and has actual pixel data
-          if (r && px >= r.x && px < r.x + r.w && py >= r.y && py < r.y + r.h && pixelGrid[py]?.[px]) {
-            data[key].pixels.add(px + ',' + py);
-            added++;
+          if (r && px >= r.x && px < r.x + r.w && py >= r.y && py < r.y + r.h) {
+            const pointKey = px + ',' + py;
+            if (pixelAction === 'remove') {
+              if (data[key].pixels.delete(pointKey)) changed++;
+            } else if (!isSinglePoint && pixelGrid[py]?.[px] && !data[key].pixels.has(pointKey)) {
+              data[key].pixels.add(pointKey);
+              changed++;
+            }
           }
         }
       }
-      console.log('[Region] Added', added, 'pixels for', key, '- total:', data[key].pixels.size);
-      setStatus(COLORS[key].label + ' 已选择 ' + data[key].pixels.size + ' 个像素');
+      setStatus(`${COLORS[key].label} ${pixelAction === 'remove' ? '移除' : '更新'} ${changed} 个像素；当前共 ${data[key].pixels.size} 个`);
     }
 
     dragStart = dragCur = null;
     updateStatus();
     drawOverlay();
   });
+
+  overlayCanvas.addEventListener('contextmenu', (event) => event.preventDefault());
 
   // ── Wheel zoom ──
   canvasArea.addEventListener('wheel', (e) => {
@@ -382,38 +468,18 @@
 
   // ── Confirm ──
   confirmBtn.addEventListener('click', () => {
-    // Convert pixel Sets to arrays for IPC, mapping back to original image coordinates
-    const originalSize = Math.max(originalImage.width, originalImage.height);
-    const scaleFactor = originalSize / gridSize;  // gridSize → original size
-
+    // Keep marker data in the selected target grid. The generator consumes the
+    // same coordinate space, avoiding lossy target → original → target rounding.
     const result = {};
     for (const [key, d] of Object.entries(data)) {
-      // Scale region back to original coordinates
-      let scaledRegion = null;
-      if (d.region) {
-        scaledRegion = {
-          x: Math.round(d.region.x * scaleFactor),
-          y: Math.round(d.region.y * scaleFactor),
-          w: Math.round(d.region.w * scaleFactor),
-          h: Math.round(d.region.h * scaleFactor),
-        };
-      }
-      // Scale pixel coordinates back to original coordinates
-      const scaledPixels = Array.from(d.pixels).map(s => {
+      const pixels = Array.from(d.pixels).map(s => {
         const [x, y] = s.split(',').map(Number);
-        return {
-          x: Math.round(x * scaleFactor),
-          y: Math.round(y * scaleFactor),
-        };
+        return { x, y };
       });
-      result[key] = { region: scaledRegion, pixels: scaledPixels };
+      result[key] = { region: d.region ? { ...d.region } : null, pixels };
     }
-
-    console.log('[Confirm] Grid size:', gridSize, '→ Original:', originalSize, 'Scale:', scaleFactor);
-    console.log('[Confirm] Left eye pixels:', result.leftEye.pixels.length);
-
-    // Pass resolution along with region data
     result.resolution = gridSize;
+    result.coordinateSpace = 'target';
 
     if (window.electronAPI?.regionMarkDone) {
       window.electronAPI.regionMarkDone(result);
@@ -431,6 +497,7 @@
   // ── Init ──
   async function init() {
     try {
+      if (undoBtn) undoBtn.disabled = true;
       const data = await window.electronAPI.requestRegionImage();
       if (!data || !data.dataUrl) {
         setStatus('没有收到图片数据');

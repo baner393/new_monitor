@@ -121,11 +121,29 @@
       font-size: 11px; color: #666688;
       flex-shrink: 0;
     }
+    /* Pixel Studio visual system */
+    :root { --bg:#10141b; --border-mid:#313c4c; --border-light:#3d4b5e; --text:#e7edf4; --title:#73d39d; --accent:#73d39d; }
+    body { font-family:'Microsoft YaHei UI','Microsoft YaHei','Unifont',sans-serif; }
+    .titlebar { height:38px; background:#0c1016; border-bottom-color:var(--border-mid); }
+    .titlebar .title { color:var(--text); font-size:13px; }
+    .titlebar .info { color:#9aa9b8; }
+    .toolbar { height:auto; min-height:48px; padding:7px 12px; gap:7px; flex-wrap:wrap; background:#171d27; }
+    .btn, .tool-btn { background:#202936; border-color:var(--border-mid); border-radius:4px; }
+    .btn:hover, .tool-btn:hover { background:#293445; border-color:#526277; }
+    .btn.primary { background:#42b979; border-color:#82dfaa; color:#07160e; font-weight:700; }
+    .tool-btn.active { background:#73d39d; border-color:#9ce6bb; color:#07160e; }
+    .zoom-label { color:#73d39d; }
+    .canvas-area {
+      background-color:#0e131a;
+      background-image:linear-gradient(45deg,#161d26 25%,transparent 25%),linear-gradient(-45deg,#161d26 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#161d26 75%),linear-gradient(-45deg,transparent 75%,#161d26 75%);
+      background-size:20px 20px; background-position:0 0,0 10px,10px -10px,-10px 0;
+    }
+    .statusbar { height:28px; color:#93a0ae; background:#0c1016; }
   </style>
 </head>
 <body>
   <div class="titlebar">
-    <span class="title">🎨 像素画布 — 全屏模式</span>
+    <span class="title">像素画布 · 大画布模式</span>
     <span class="info" id="sizeInfo">64×64</span>
     <div class="close-btn" id="closeBtn">✕</div>
   </div>

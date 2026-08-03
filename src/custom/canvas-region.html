@@ -30,26 +30,49 @@
     #imageCanvas { image-rendering: pixelated; image-rendering: crisp-edges; }
     #overlayCanvas { position: absolute; pointer-events: none; image-rendering: pixelated; }
     .statusbar { height: 24px; background: rgba(14,16,24,0.95); border-top: 1px solid var(--border-mid); display: flex; align-items: center; padding: 0 16px; font-size: 11px; color: #666688; flex-shrink: 0; }
+    /* Guided marker visual system */
+    :root { --bg:#10141b; --panel:#171d27; --raised:#202936; --line:#313c4c; --text:#e7edf4; --muted:#93a0ae; --title:#73d39d; --accent:#73d39d; }
+    body { font-family:'Microsoft YaHei UI','Microsoft YaHei','Unifont',sans-serif; background:var(--bg); }
+    .titlebar { height:38px; background:#0c1016; border-bottom:1px solid var(--line); }
+    .titlebar .title { color:var(--text); font-size:13px; }
+    .toolbar { height:auto; min-height:86px; padding:8px 12px; gap:7px; flex-wrap:wrap; align-content:center; background:var(--panel); border-bottom:1px solid var(--line); }
+    .step-label { color:var(--accent); background:rgba(115,211,157,.08); border:1px solid rgba(115,211,157,.22); padding:5px 8px; }
+    .btn { min-height:32px; padding:6px 10px; color:var(--text); background:var(--raised); border:1px solid var(--line); border-radius:4px; }
+    .btn:hover { background:#293445; border-color:#526277; }
+    .btn.primary { background:#42b979; border-color:#82dfaa; color:#07160e; font-weight:700; }
+    .btn.primary:disabled { background:#252c36; border-color:var(--line); color:#687687; }
+    .btn.active-region { background:rgba(102,204,255,.12); }
+    .btn.active-pixel { background:rgba(230,181,102,.13); border-color:#e6b566; color:#e6b566; }
+    .btn.done { background:rgba(115,211,157,.1); border-color:#73d39d; color:#73d39d; opacity:1; }
+    select { min-height:30px; background:#111720; border:1px solid var(--line); color:var(--text); }
+    input[type="range"] { accent-color:var(--accent); }
+    .canvas-area {
+      background-color:#0e131a;
+      background-image:linear-gradient(45deg,#161d26 25%,transparent 25%),linear-gradient(-45deg,#161d26 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#161d26 75%),linear-gradient(-45deg,transparent 75%,#161d26 75%);
+      background-size:20px 20px; background-position:0 0,0 10px,10px -10px,-10px 0;
+    }
+    .statusbar { height:28px; color:var(--muted); background:#0c1016; border-top:1px solid var(--line); }
   </style>
 </head>
 <body>
   <div class="titlebar">
-    <span class="title">🎯 标记区域 — 两步标记</span>
+    <span class="title">五官标记向导 — 大画布精确模式</span>
     <div class="close-btn" id="closeBtn">✕</div>
   </div>
 
   <div class="toolbar">
-    <span class="step-label">① 框选区域</span>
+    <span class="step-label">1 · 框选范围</span>
     <button class="btn" id="regionLeftEyeBtn" title="框选左眼区域">◻ 左眼区域</button>
     <button class="btn" id="regionRightEyeBtn" title="框选右眼区域">◻ 右眼区域</button>
     <button class="btn" id="regionMouthBtn" title="框选嘴巴区域">◻ 嘴巴区域</button>
     <div class="sep"></div>
-    <span class="step-label">② 标记像素</span>
+    <span class="step-label">2 · 选择像素</span>
     <button class="btn" id="pixelLeftEyeBtn" title="标记左眼像素">● 左眼像素</button>
     <button class="btn" id="pixelRightEyeBtn" title="标记右眼像素">● 右眼像素</button>
     <button class="btn" id="pixelMouthBtn" title="标记嘴巴像素">● 嘴巴像素</button>
     <div class="sep"></div>
-    <button class="btn" id="clearBtn">🗑️ 清除</button>
+    <button class="btn" id="undoBtn" title="撤销上一步">↶ 撤销</button>
+    <button class="btn" id="clearBtn">清除全部</button>
     <div class="sep"></div>
     <label style="font-size:11px; color:#888899;">分辨率:</label>
     <select id="resolutionSelect">
@@ -60,7 +83,10 @@
       <option value="96">96</option>
       <option value="128">128</option>
     </select>
-    <span style="font-size:10px; color:#666688; margin-left:4px;">⚠ 修改分辨率后导出的表情分辨率也会改变</span>
+    <label style="font-size:11px; color:#888899;">颜色容差
+      <input id="colorTolerance" type="range" min="0" max="120" value="24" style="width:72px; vertical-align:middle;">
+      <span id="colorToleranceValue">24</span>
+    </label>
     <div style="flex:1;"></div>
     <span id="regionStatus" style="font-size:10px; color:#888899;"></span>
     <button class="btn primary" id="confirmBtn" disabled>✓ 确认并返回</button>
@@ -72,7 +98,7 @@
   </div>
 
   <div class="statusbar">
-    <span id="statusText">就绪 — 先框选区域，再标记像素</span>
+    <span id="statusText">先框选五官范围；进入像素步骤后，单击可自动选择相连颜色，拖拽可批量添加，右键可移除</span>
   </div>
 
   <script src="canvas-region.js"></script>
