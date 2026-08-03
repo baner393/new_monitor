@@ -16,6 +16,8 @@ import { InputManager, PET_HIT_PADDING, isPointWithinBounds } from './input.js';
 import { Panel } from './panel.js';
 import { SettingsPanel } from './settings.js';
 import { ROPE_ELASTICITY_STEPS } from './settings.js';
+import { SubscriptionPanel } from './subscription-panel.js';
+import { OnboardingGuide } from './onboarding-guide.js';
 import { SkinSelector } from './skin-selector.js';
 import { CodexCompanion } from './codex-companion.js';
 import { CodexMotionController, codexStatusSymbol } from './codex-motion.js';
@@ -295,7 +297,16 @@ window.addEventListener('beforeunload', () => codexCompanion.destroy());
 if (import.meta.env.DEV) window.__codexCompanionForDiagnostics = codexCompanion;
 
 // ── Settings Panel ─────────────────────────────────────────────────────
-const settingsPanel = new SettingsPanel();
+const onboardingGuide = new OnboardingGuide({
+  settings: window.electronAPI.settings,
+  onVisibilityChange: () => requestAnimationFrame(() => synchronizeMousePassthroughFromSystem(true)),
+});
+const settingsPanel = new SettingsPanel({
+  onReplayOnboarding: () => onboardingGuide.restart(),
+});
+const subscriptionPanel = new SubscriptionPanel({
+  onVisibilityChange: () => requestAnimationFrame(() => synchronizeMousePassthroughFromSystem(true)),
+});
 const petBehaviorSettings = {
   ambientSwingEnabled: true,
   panelMoveStable: true,
@@ -304,6 +315,7 @@ const petBehaviorSettings = {
 // Listen for open-settings from context menu
 function openSettingsPanel() {
   console.log('[Settings] Opening settings panel from context menu');
+  if (subscriptionPanel.isOpen) subscriptionPanel.close();
   if (!settingsPanel.isOpen && !settingsPanel.isAnimating) {
     // Position at center of screen
     settingsPanel.setPosition(window.innerWidth / 2, window.innerHeight / 2);
@@ -313,6 +325,25 @@ function openSettingsPanel() {
 
 window.electronAPI.onOpenSettings(openSettingsPanel);
 if (import.meta.env.DEV) window.__openSettingsPanelForDiagnostics = openSettingsPanel;
+
+function openSubscriptionPanel() {
+  if (settingsPanel.isOpen) settingsPanel.close();
+  subscriptionPanel.open();
+  requestAnimationFrame(() => synchronizeMousePassthroughFromSystem(true));
+}
+
+window.electronAPI.onOpenSubscription(openSubscriptionPanel);
+if (import.meta.env.DEV) window.__openSubscriptionPanelForDiagnostics = openSubscriptionPanel;
+
+window.electronAPI.onOpenOnboarding(() => {
+  if (settingsPanel.isOpen || settingsPanel.isAnimating) settingsPanel.close();
+  if (subscriptionPanel.isOpen) subscriptionPanel.close();
+  if (skinSelector.isOpen) skinSelector.close?.();
+  codexCompanion.closeConfig?.({ notify: true });
+  onboardingGuide.restart();
+});
+window.electronAPI.onContextMenuClosed(() => onboardingGuide.revealCompletion());
+if (import.meta.env.DEV) window.__onboardingGuideForDiagnostics = onboardingGuide;
 
 // Listen for settings-changed (applied from main process)
 window.electronAPI.onSettingsChanged((settings) => {
@@ -503,7 +534,8 @@ const inputManager = new InputManager({
   sprite,
   stateMachine,
   physics,
-  shouldIgnoreEvent: (event) => codexCompanion.ownsEvent(event),
+  shouldIgnoreEvent: (event) => codexCompanion.ownsEvent(event) || onboardingGuide.ownsEvent(event),
+  onGesture: (gesture) => onboardingGuide.completeGesture(gesture),
   beforePetInteraction: () => {
     if (stateMachine.getState() !== 'CODEX_CONFIG_OPEN') return;
     codexCompanion.closeConfig({ notify: false });
@@ -541,7 +573,7 @@ function synchronizeMousePassthrough(x, y, force = false) {
   }
 
   // Keep mouse events when settings panel is open
-  if (settingsPanel.isOpen || settingsPanel.isAnimating) {
+  if (settingsPanel.isOpen || settingsPanel.isAnimating || subscriptionPanel.isOpen) {
     window.electronAPI.setIgnoreMouseEvents(false);
     lastMousePassthrough = false;
     return false;
@@ -557,7 +589,8 @@ function synchronizeMousePassthrough(x, y, force = false) {
   const bounds = sprite.getBounds();
   const overSprite = isPointWithinBounds(bounds, x, y, PET_HIT_PADDING);
   const overCodex = codexCompanion.containsPoint(x, y);
-  const ignore = !(overSprite || overCodex);
+  const overOnboarding = onboardingGuide.containsPoint(x, y);
+  const ignore = !(overSprite || overCodex || overOnboarding);
   const changed = overSprite !== isOverSprite;
   if (changed || force || ignore !== lastMousePassthrough) {
     isOverSprite = overSprite;
@@ -667,7 +700,7 @@ document.addEventListener('mousedown', (e) => {
   window.electronAPI.setIgnoreMouseEvents(false);
 
   // Don't close the system panel if settings panel is open
-  if (settingsPanel.isOpen || settingsPanel.isAnimating) return;
+  if (settingsPanel.isOpen || settingsPanel.isAnimating || subscriptionPanel.isOpen) return;
 
   // Check if click is inside the panel bounds
   const c = panel.container;
@@ -1165,6 +1198,7 @@ pixiApp.ticker.add((delta) => {
   const codexMotionEnabled = (state === 'IDLE' || state === 'HOVER')
     && !settingsPanel.isOpen
     && !settingsPanel.isAnimating
+    && !subscriptionPanel.isOpen
     && !skinSelector.isOpen
     && !codexCompanion.pausesPetMotion;
   if (!codexMotionEnabled && codexMotionWasEnabled) codexMotion.cancelSequence();
@@ -1197,6 +1231,15 @@ pixiApp.ticker.add((delta) => {
   const codexBodyBounds = bodySprite.getBounds();
   const codexVisualX = codexBodyBounds.x + codexBodyBounds.width / 2;
   const codexVisualY = codexBodyBounds.y + codexBodyBounds.height / 2;
+  onboardingGuide.setAnchor(codexVisualX, codexVisualY);
+  onboardingGuide.setPaused(
+    !['IDLE', 'HOVER'].includes(state)
+      || settingsPanel.isOpen
+      || settingsPanel.isAnimating
+      || subscriptionPanel.isOpen
+      || skinSelector.isOpen
+      || codexCompanion.capturesOutsideClicks,
+  );
   for (const emission of codexMotion.drainEmissions()) {
     spawnCodexParticles(emission.kind, emission.count, codexVisualX, codexVisualY);
   }
@@ -1214,7 +1257,7 @@ pixiApp.ticker.add((delta) => {
   const suppressCodexBubbles = [
     'EXPANDING', 'HAPPY', 'PANEL_OPEN', 'COLLAPSING',
     'CODEX_CONFIG_OPENING', 'CODEX_CONFIG_OPEN', 'CODEX_CONFIG_CLOSING',
-  ].includes(state) || settingsPanel.isOpen || settingsPanel.isAnimating || skinSelector.isOpen;
+  ].includes(state) || settingsPanel.isOpen || settingsPanel.isAnimating || subscriptionPanel.isOpen || skinSelector.isOpen;
   codexCompanion.setBubblesSuppressed(suppressCodexBubbles);
   codexCompanion.setAnchor(codexVisualX, codexVisualY);
   codexCompanion.updateFrame();
@@ -1295,6 +1338,7 @@ console.log('🐢 Turtle Monitor renderer ready');
 
   // Load saved settings after full initialization
   loadAndApplySettings();
+  onboardingGuide.initialize();
 
 } // end init
 

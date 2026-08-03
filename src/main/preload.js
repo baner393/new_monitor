@@ -144,6 +144,27 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener('open-skin-selector', listener);
   },
 
+  /** Open the version and subscription center from the native context menu. */
+  onOpenSubscription: (callback) => {
+    const listener = () => callback();
+    ipcRenderer.on('open-subscription', listener);
+    return () => ipcRenderer.removeListener('open-subscription', listener);
+  },
+
+  /** Replay the short pet interaction guide from the native context menu. */
+  onOpenOnboarding: (callback) => {
+    const listener = () => callback();
+    ipcRenderer.on('open-onboarding', listener);
+    return () => ipcRenderer.removeListener('open-onboarding', listener);
+  },
+
+  /** Notify an awaiting guide after the native context menu has closed. */
+  onContextMenuClosed: (callback) => {
+    const listener = () => callback();
+    ipcRenderer.on('context-menu-closed', listener);
+    return () => ipcRenderer.removeListener('context-menu-closed', listener);
+  },
+
   /**
    * Subscribe to DPI change events (window moved between monitors).
    * @param {() => void} callback
@@ -180,10 +201,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
    * @returns {() => void} unsubscribe function
    */
   onSkinsReloaded: (callback) => {
-    if (!__IS_SPONSOR__) {
-      console.warn('[Edition] Skin import is a sponsor-only feature');
-      return () => {};
-    }
     const listener = () => callback();
     ipcRenderer.on('skins-reloaded', listener);
     return () => ipcRenderer.removeListener('skins-reloaded', listener);
@@ -228,4 +245,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
    * Returns { skins: [...], defaultSkin: '...' }
    */
   skinListGet: () => ipcRenderer.invoke('skin-list-get'),
+
+  subscription: {
+    get: () => ipcRenderer.invoke('subscription-get'),
+    startCheckout: (productKey) => ipcRenderer.invoke('subscription-checkout-start', productKey),
+    refresh: () => ipcRenderer.invoke('subscription-refresh'),
+    onChanged: (callback) => {
+      const listener = (_event, status) => callback(status);
+      ipcRenderer.on('subscription-changed', listener);
+      return () => ipcRenderer.removeListener('subscription-changed', listener);
+    },
+  },
 });

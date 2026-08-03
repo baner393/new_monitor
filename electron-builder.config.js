@@ -29,6 +29,11 @@ module.exports = {
       to: 'hardware-sensor',
       filter: ['**/*'],
     },
+    {
+      from: 'resources/subscription',
+      to: 'subscription',
+      filter: ['config.json'],
+    },
   ],
   win: {
     icon: path.join(__dirname, 'build', 'icon.ico'),

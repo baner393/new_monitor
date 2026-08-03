@@ -42,7 +42,7 @@ function eventPoint(canvas, event) {
 }
 
 export class SettingsPanel {
-  constructor() {
+  constructor({ onReplayOnboarding = null } = {}) {
     this._values = { ...PET_SETTINGS_DEFAULTS };
     this._originalValues = { ...PET_SETTINGS_DEFAULTS };
     this._draft = new PetSettingsDraft(this._values);
@@ -56,6 +56,7 @@ export class SettingsPanel {
     this._previewPhysics = new PhysicsEngine();
     this._previewDragging = false;
     this._reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches || false;
+    this._onReplayOnboarding = typeof onReplayOnboarding === 'function' ? onReplayOnboarding : null;
     this._build();
     this._loadSettings();
     this._startPreviewLoop();
@@ -140,10 +141,18 @@ export class SettingsPanel {
     this.panel.append(body);
 
     const footer = element('footer', 'pet-settings-footer');
+    const footerHelp = element('div', 'pet-settings-footer-help');
     this.resetButton = element('button', 'pet-settings-reset', '恢复默认');
     this.resetButton.type = 'button';
     this.resetButton.addEventListener('click', () => this._reset());
-    footer.append(this.resetButton);
+    this.onboardingButton = element('button', 'pet-settings-onboarding', '新手指引');
+    this.onboardingButton.type = 'button';
+    this.onboardingButton.addEventListener('click', () => {
+      this._cancel();
+      this._onReplayOnboarding?.();
+    });
+    footerHelp.append(this.resetButton, this.onboardingButton);
+    footer.append(footerHelp);
     const actions = element('div', 'pet-settings-actions');
     this.cancelButton = element('button', 'pet-settings-cancel', '取消');
     this.cancelButton.type = 'button';

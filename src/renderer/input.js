@@ -26,13 +26,14 @@ export function isPointWithinBounds(bounds, x, y, padding = 0) {
 }
 
 export class InputManager {
-  constructor({ pixiApp, sprite, stateMachine, physics, shouldIgnoreEvent = null, beforePetInteraction = null }) {
+  constructor({ pixiApp, sprite, stateMachine, physics, shouldIgnoreEvent = null, beforePetInteraction = null, onGesture = null }) {
     this.pixiApp = pixiApp;
     this.sprite = sprite;
     this.stateMachine = stateMachine;
     this.physics = physics;
     this.shouldIgnoreEvent = typeof shouldIgnoreEvent === 'function' ? shouldIgnoreEvent : null;
     this.beforePetInteraction = typeof beforePetInteraction === 'function' ? beforePetInteraction : null;
+    this.onGesture = typeof onGesture === 'function' ? onGesture : null;
 
     this._enabled = false;
     this._isDragging = false;
@@ -266,6 +267,7 @@ export class InputManager {
         if (!this._rightDragMoved) {
           // No movement → this was a click, show context menu
           this.physics.cancelInteraction?.();
+          this.onGesture?.('right-click');
           window.electronAPI.showContextMenu();
           this.stateMachine.transition('RIGHT_CLICK_RELEASE', { returnState: this._rightDragReturnState });
         } else {
@@ -300,6 +302,7 @@ export class InputManager {
       console.log('[Input] PULLING released, pullExceeded:', this._pullExceeded);
       // Save pullExceeded before reset for BOUNCE_COMPLETE transition
       this._lastPullExceeded = this._pullExceeded;
+      this.onGesture?.(this._pullExceeded ? 'pull-down' : 'left-click');
       this.stateMachine.transition('LEFT_RELEASE', { 
         pullExceeded: this._pullExceeded,
         velocity: { ...this._dragVelocity }

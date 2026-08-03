@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, ipcMain, Menu, dialog, powerMonitor, screen, shell } from 'electron';
+import { app, BrowserWindow, clipboard, ipcMain, Menu, dialog, powerMonitor, safeStorage, screen, shell } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import { SystemMonitor } from './system-monitor.js';
@@ -32,6 +32,7 @@ import {
   DEFAULT_CLAUDE_INTEGRATION_CONFIG,
   normalizeClaudeIntegrationConfig,
 } from '../shared/claude-integration.js';
+import { loadSubscriptionConfig, SubscriptionRuntime } from './subscription-runtime.js';
 
 let mainWindow;
 let customWindow;
@@ -40,11 +41,38 @@ let regionWindow;
 let systemMonitor;
 let codexMonitor;
 let claudeMonitor;
+let subscriptionRuntime;
 let mainWindowInputGuard;
 let mainWindowRefreshCoordinator;
 let pendingWindowRecovery = null;
 let pendingGridData = null;
 let pendingRegionImage = null; // temp storage for region marker image data
+
+function subscriptionStatus() {
+  return subscriptionRuntime?.getStatus() || {
+    tier: 'free',
+    status: 'initializing',
+    capabilities: {
+      core: true,
+      skin_updates: false,
+      creator_tools: false,
+      custom_skin_switching: false,
+      retain_active_custom_skin: false,
+    },
+    products: {},
+    serviceConfigured: false,
+  };
+}
+
+function hasCreatorAccess() {
+  return subscriptionRuntime?.hasCreatorAccess() || false;
+}
+
+function notifySubscriptionChanged() {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('subscription-changed', subscriptionStatus());
+  }
+}
 
 function resolveCustomResource(fileName) {
   return resolveCustomResourcePath({
@@ -108,6 +136,11 @@ const DEFAULT_SETTINGS = {
   selectedSkin:     'turtle',
   ambientSwingEnabled: true,
   panelMoveStable:  true,
+  onboarding: {
+    version: 1,
+    completedSteps: [],
+    dismissed: false,
+  },
   monitorVisibility: toLegacyMonitorVisibility(DEFAULT_MONITOR_PANEL),
   monitorPanel: DEFAULT_MONITOR_PANEL,
   codexIntegration: DEFAULT_CODEX_INTEGRATION_CONFIG,
@@ -652,6 +685,36 @@ function createWindow({ show = true } = {}) {
 
 // ── Launch on Windows ──────────────────────────────────────────────
 app.whenReady().then(() => {
+  const subscriptionConfig = loadSubscriptionConfig({
+    appPath: app.getAppPath(),
+    resourcesPath: process.resourcesPath,
+    isPackaged: app.isPackaged,
+  });
+  const protect = (value) => {
+    if (safeStorage.isEncryptionAvailable()) {
+      return `dpapi:${safeStorage.encryptString(value).toString('base64')}`;
+    }
+    return `local:${Buffer.from(value, 'utf8').toString('base64')}`;
+  };
+  const unprotect = (value) => {
+    const stored = String(value || '');
+    if (stored.startsWith('dpapi:')) {
+      return safeStorage.decryptString(Buffer.from(stored.slice(6), 'base64'));
+    }
+    if (stored.startsWith('local:')) {
+      return Buffer.from(stored.slice(6), 'base64').toString('utf8');
+    }
+    return Buffer.from(stored, 'base64').toString('utf8');
+  };
+  subscriptionRuntime = new SubscriptionRuntime({
+    userDataPath: app.getPath('userData'),
+    legacySponsor: __IS_SPONSOR__,
+    appVersion: app.getVersion(),
+    config: subscriptionConfig,
+    protect,
+    unprotect,
+  });
+  subscriptionRuntime.initialize();
   codexMonitor = new CodexMonitor({
     config: currentSettings.codexIntegration,
     onConfigChange: (config) => {
@@ -745,6 +808,30 @@ ipcMain.handle('monitor-request-elevation', async () => {
   }
 });
 
+ipcMain.handle('subscription-get', () => subscriptionStatus());
+
+ipcMain.handle('subscription-checkout-start', async (_event, productKey) => {
+  try {
+    if (!subscriptionRuntime) return { success: false, error: 'subscription_initializing' };
+    const checkout = await subscriptionRuntime.beginCheckout(String(productKey || ''));
+    await shell.openExternal(checkout.checkoutUrl);
+    return { success: true, checkoutId: checkout.checkoutId };
+  } catch (error) {
+    return { success: false, error: String(error?.message || error) };
+  }
+});
+
+ipcMain.handle('subscription-refresh', async () => {
+  try {
+    if (!subscriptionRuntime) return { success: false, error: 'subscription_initializing' };
+    const status = await subscriptionRuntime.refresh();
+    notifySubscriptionChanged();
+    return { success: true, status };
+  } catch (error) {
+    return { success: false, error: String(error?.message || error), status: subscriptionStatus() };
+  }
+});
+
 // IPC: renderer can resize the window
 ipcMain.on('set-bounds', (event, bounds) => {
   if (mainWindow && !mainWindow.isDestroyed()) {
@@ -784,7 +871,23 @@ ipcMain.on('show-context-menu', (event) => {
       },
     },
     { type: 'separator' },
-    ...(__IS_SPONSOR__ ? [
+    {
+      label: '版本与订阅',
+      click: () => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('open-subscription');
+        }
+      },
+    },
+    {
+      label: '帮助与新手指引',
+      click: () => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('open-onboarding');
+        }
+      },
+    },
+    ...(hasCreatorAccess() ? [
       {
         label: '自定义模式',
         click: () => {
@@ -801,13 +904,21 @@ ipcMain.on('show-context-menu', (event) => {
     },
   ];
   const menu = Menu.buildFromTemplate(template);
-  menu.popup({ window: mainWindow });
+  menu.popup({
+    window: mainWindow,
+    callback: () => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('context-menu-closed');
+      }
+    },
+  });
 });
 
 // ── Custom Mode Window ────────────────────────────────────────
 function openCustomMode() {
-  if (!__IS_SPONSOR__) {
-    console.warn('[Edition] Custom mode is a sponsor-only feature');
+  if (!hasCreatorAccess()) {
+    console.warn('[Subscription] Custom mode requires creator access');
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('open-subscription');
     return;
   }
   if (customWindow && !customWindow.isDestroyed()) {
@@ -877,8 +988,8 @@ function openCustomMode() {
 
 // ── Fullscreen Canvas Window ──────────────────────────────────
 function openCanvasWindow(gridData) {
-  if (!__IS_SPONSOR__) {
-    console.warn('[Edition] Canvas window is a sponsor-only feature');
+  if (!hasCreatorAccess()) {
+    console.warn('[Subscription] Canvas requires creator access');
     return;
   }
   if (canvasWindow && !canvasWindow.isDestroyed()) {
@@ -1202,19 +1313,17 @@ app.on('window-all-closed', () => {
 app.on('before-quit', () => {
   codexMonitor?.stop();
   claudeMonitor?.stop();
-  if (__IS_SPONSOR__) {
-    if (canvasWindow && !canvasWindow.isDestroyed()) {
-      canvasWindow.destroy();
-      canvasWindow = null;
-    }
-    if (customWindow && !customWindow.isDestroyed()) {
-      customWindow.destroy();
-      customWindow = null;
-    }
-    if (regionWindow && !regionWindow.isDestroyed()) {
-      regionWindow.destroy();
-      regionWindow = null;
-    }
+  if (canvasWindow && !canvasWindow.isDestroyed()) {
+    canvasWindow.destroy();
+    canvasWindow = null;
+  }
+  if (customWindow && !customWindow.isDestroyed()) {
+    customWindow.destroy();
+    customWindow = null;
+  }
+  if (regionWindow && !regionWindow.isDestroyed()) {
+    regionWindow.destroy();
+    regionWindow = null;
   }
 });
 
