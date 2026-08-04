@@ -11,6 +11,7 @@ import {
   buildCodexVisibleTasks,
   cleanCodexUserMessage,
   normalizeCodexIntegrationConfig,
+  normalizeCodexSessionPreference,
   normalizeCodexLocale,
   resolveCodexActivity,
   sanitizeProjectName,
@@ -133,6 +134,7 @@ function createRolloutState(filePath = '', modifiedAtMs = 0) {
     threadId: fileThreadId,
     parentThreadId: '',
     cwd: '',
+    model: '',
     name: '',
     title: '',
     isInternal: false,
@@ -194,6 +196,17 @@ function toolOutputText(payload) {
   return stringifyToolValue(payload?.output ?? payload?.result ?? payload?.content);
 }
 
+export function buildCodexTurnPermissionOverrides(bypassPermissions = false) {
+  return bypassPermissions
+    ? { approvalPolicy: 'never', sandboxPolicy: { type: 'dangerFullAccess' } }
+    : { approvalPolicy: 'on-request' };
+}
+
+export function buildCodexTurnReasoningOverrides(preference) {
+  const { effort } = normalizeCodexSessionPreference(preference);
+  return effort === 'inherit' ? {} : { effort };
+}
+
 function applyRolloutRow(state, row) {
   if (!row) return;
   const timestamp = finiteTimestamp(row.timestamp, state.modifiedAtMs);
@@ -211,6 +224,7 @@ function applyRolloutRow(state, row) {
   }
   if (row.type === 'turn_context') {
     state.cwd = String(payload.cwd || state.cwd || '');
+    state.model = String(payload.model || state.model || '');
     state.lastTurnId = String(payload.turn_id || state.lastTurnId || '');
     return;
   }
@@ -273,6 +287,7 @@ function snapshotRolloutState(state, { enabledAtMs = 0, readEventIds = new Set()
     parentThreadId: state.parentThreadId || null,
     title: sanitizeTaskTitle(state.name || state.title),
     project: sanitizeProjectName(state.cwd),
+    model: state.model || '',
     activity: running ? CODEX_ACTIVITY.RUNNING : CODEX_ACTIVITY.SILENT,
     updatedAtMs,
     managed: false,
@@ -572,6 +587,8 @@ export class CodexMonitor {
     this.tasks = new Map();
     this.catalogTasks = new Map();
     this.catalogSynced = false;
+    this.reasoningModels = [];
+    this.reasoningModelsSynced = false;
     this.managedTasks = new Map();
     this.managedMessages = new Map();
     this.managedUnread = new Map();
@@ -909,7 +926,9 @@ export class CodexMonitor {
       const runtime = this.connectionStates.get(task.id);
       const connectionState = runtime?.state
         || (desired.has(task.id) ? CODEX_CONNECTION.CONNECTING : CODEX_CONNECTION.DISCONNECTED);
-      const pending = [...this.pendingRequests.values()].some((request) => request.threadId === task.id);
+      const pendingRequest = [...this.pendingRequests.values()].find((request) => request.threadId === task.id);
+      const pending = Boolean(pendingRequest);
+      const canInterrupt = Boolean(task.activeTurnId || pendingRequest?.params?.turnId);
       const canReply = this.config.managedReplies === true
         && (this.config.replyTransport === CODEX_REPLY_TRANSPORT.DESKTOP
           || connectionState === CODEX_CONNECTION.CONNECTED);
@@ -918,10 +937,12 @@ export class CodexMonitor {
         connectionState,
         connectionError: runtime?.error || '',
         hasOwnedRequest: pending,
+        canInterrupt,
         canReply,
         capabilities: {
           reply: canReply,
           approve: connectionState === CODEX_CONNECTION.CONNECTED && pending,
+          interrupt: connectionState === CODEX_CONNECTION.CONNECTED && canInterrupt,
           jump: true,
         },
       };
@@ -936,6 +957,7 @@ export class CodexMonitor {
       locale: this.locale,
       homeLabel: this.config.homeMode === 'manual' ? '手动目录' : '自动检测',
       source: this.clientReady ? 'app-server+sessions' : 'sessions',
+      reasoningModels: this.reasoningModels,
       activity: resolveCodexActivity({ connected: true, tasks: allTasks, unread: allUnread }),
       tasks: allTasks
         .map(({ messages, ...summary }) => summary)
@@ -992,12 +1014,13 @@ export class CodexMonitor {
   markRead(eventId) {
     const id = String(eventId || '').slice(0, 240);
     if (!id) return this.getSnapshot();
+    const isPendingRequest = [...this.pendingRequests.values()].some((request) => request.eventId === id);
     this.config = normalizeCodexIntegrationConfig({
       ...this.config,
-      readEventIds: [...this.config.readEventIds, id],
+      readEventIds: isPendingRequest ? this.config.readEventIds : [...this.config.readEventIds, id],
       notifiedEventIds: [...this.config.notifiedEventIds, id],
     });
-    this.managedUnread.delete(id);
+    if (!isPendingRequest) this.managedUnread.delete(id);
     this.#persistConfig();
     this.#rebuildSnapshot();
     return this.getSnapshot();
@@ -1129,7 +1152,11 @@ export class CodexMonitor {
       throw new Error('这个任务还没有建立可回复连接，请先连接或前往 Codex 处理');
     }
     await this.#ensureClient();
-    const existing = this.managedTasks.get(id);
+    let existing = this.managedTasks.get(id);
+    if (!existing?.activeTurnId) {
+      await this.#refreshClientBeforeIdleTurn(id);
+      existing = this.managedTasks.get(id);
+    }
     if (existing?.activeTurnId) {
       await this.client.request('turn/steer', {
         threadId: id,
@@ -1140,15 +1167,64 @@ export class CodexMonitor {
       this.#rebuildSnapshot();
       return { accepted: true, mode: 'steer', openDesktop, threadId: id };
     }
+    const permissionOverrides = buildCodexTurnPermissionOverrides(this.config.bypassPermissions);
+    const preference = normalizeCodexSessionPreference(this.config.sessionPreferences?.[id]);
+    const model = String(this.tasks.get(id)?.model || '');
+    const modelInfo = this.reasoningModels.find((item) => item.model === model);
+    const reasoningOverrides = modelInfo?.efforts?.length && preference.effort !== 'inherit'
+      && !modelInfo.efforts.includes(preference.effort)
+      ? {}
+      : buildCodexTurnReasoningOverrides(preference);
     const result = await this.client.request('turn/start', {
       threadId: id,
       input: [{ type: 'text', text: message }],
+      ...permissionOverrides,
+      ...reasoningOverrides,
     });
     const activeTurnId = result?.turn?.id || '';
     this.#appendManagedMessage(id, 'user', message);
     this.#setManagedTask(id, { activity: CODEX_ACTIVITY.RUNNING, activeTurnId, updatedAtMs: Date.now() });
     this.#rebuildSnapshot();
     return { accepted: true, mode: 'turn', turnId: activeTurnId, openDesktop, threadId: id };
+  }
+
+  async #refreshClientBeforeIdleTurn(threadId) {
+    const hasOwnedWork = this.pendingRequests.size > 0
+      || [...this.managedTasks.values()].some((task) => Boolean(task.activeTurnId));
+    if (hasOwnedWork) return;
+
+    this.client?.stop();
+    this.client = null;
+    this.clientReady = false;
+    this.catalogSynced = false;
+    for (const id of this.config.desiredThreadIds) {
+      this.connectionStates.set(id, { state: CODEX_CONNECTION.CONNECTING, error: '' });
+    }
+    await this.#ensureClient();
+
+    let thread = (await this.client.request('thread/resume', { threadId }, 15_000))?.thread || null;
+    const status = thread?.status?.type;
+    const active = status === 'active' || status === 'inProgress';
+    let activeTurnId = activeTurnIdFromThread(thread);
+    if (active && !activeTurnId) {
+      thread = await this.#hydrateThreadMessages(threadId);
+      activeTurnId = activeTurnIdFromThread(thread);
+    }
+    if (active && !activeTurnId) {
+      this.connectionStates.set(threadId, { state: CODEX_CONNECTION.TEMPORARY_READ_ONLY, error: '' });
+      this.#rebuildSnapshot();
+      throw new Error('任务正在 Codex 中运行，请等待当前回复结束后再发送');
+    }
+    this.#setManagedTask(threadId, {
+      activity: active ? CODEX_ACTIVITY.RUNNING : CODEX_ACTIVITY.SILENT,
+      activeTurnId: activeTurnId || '',
+      updatedAtMs: Date.now(),
+    });
+    this.connectionStates.set(threadId, { state: CODEX_CONNECTION.CONNECTED, error: '' });
+    for (const id of this.config.desiredThreadIds) {
+      if (id !== threadId) void this.#connectDesiredThread(id);
+    }
+    this.#rebuildSnapshot();
   }
 
   async respond(requestId, response = {}) {
@@ -1161,10 +1237,22 @@ export class CodexMonitor {
       result = { answers: response.answers || {} };
     } else if (pending.method === 'item/permissions/requestApproval') {
       const accepted = response.decision === 'accept' || response.decision === 'acceptForSession';
+      const requestedPermissions = pending.params.permissions || {};
+      const grantedPermissions = Object.fromEntries(
+        Object.entries(requestedPermissions).filter(([, value]) => value !== null && value !== undefined),
+      );
       result = {
-        permissions: accepted ? (pending.params.permissions || {}) : {},
+        permissions: accepted ? grantedPermissions : {},
         scope: response.decision === 'acceptForSession' ? 'session' : 'turn',
       };
+    } else if (pending.method === 'execCommandApproval' || pending.method === 'applyPatchApproval') {
+      const decisions = {
+        accept: 'approved',
+        acceptForSession: 'approved_for_session',
+        decline: { denied: { rejection: 'User declined the request' } },
+        cancel: 'abort',
+      };
+      result = { decision: decisions[response.decision] || decisions.decline };
     } else {
       const allowed = ['accept', 'acceptForSession', 'decline', 'cancel'];
       const decision = allowed.includes(response.decision) ? response.decision : 'decline';
@@ -1173,6 +1261,29 @@ export class CodexMonitor {
     this.client.sendServerResponse(pending.rawId, result);
     this.#resolvePendingRequest(key);
     return { accepted: true };
+  }
+
+  async interrupt(threadId) {
+    const id = String(threadId || '').trim();
+    if (!id) throw new Error('没有找到要停止的 Codex 任务');
+    if (this.config.replyTransport === CODEX_REPLY_TRANSPORT.DESKTOP) {
+      throw new Error('客户端兼容模式请在 Codex 客户端中停止任务');
+    }
+    await this.#ensureClient();
+    const pendingForThread = [...this.pendingRequests.entries()]
+      .filter(([, request]) => request.threadId === id);
+    const task = this.managedTasks.get(id) || this.tasks.get(id) || {};
+    const turnId = String(task.activeTurnId || pendingForThread[0]?.[1]?.params?.turnId || '');
+    if (!turnId) throw new Error('这个任务当前没有可停止的回合');
+    await this.client.request('turn/interrupt', { threadId: id, turnId }, 12_000);
+    for (const [requestId] of pendingForThread) this.#resolvePendingRequest(requestId);
+    this.#setManagedTask(id, {
+      activity: CODEX_ACTIVITY.SILENT,
+      activeTurnId: '',
+      updatedAtMs: Date.now(),
+    });
+    this.#rebuildSnapshot();
+    return { interrupted: true, threadId: id, turnId };
   }
 
   async #ensureClient() {
@@ -1194,6 +1305,22 @@ export class CodexMonitor {
       catch {
         // Older App Server builds can still use rollout sync and direct connections.
         this.catalogSynced = true;
+      }
+    }
+    if (!this.reasoningModelsSynced) {
+      try {
+        const result = await this.client.request('model/list', { limit: 100, includeHidden: true }, 15_000);
+        this.reasoningModels = (result?.data || []).map((model) => ({
+          model: String(model?.model || model?.id || ''),
+          defaultEffort: String(model?.defaultReasoningEffort || ''),
+          efforts: (model?.supportedReasoningEfforts || [])
+            .map((item) => String(item?.reasoningEffort || ''))
+            .filter(Boolean),
+        })).filter((model) => model.model);
+      } catch {
+        // Older App Server builds still work with inherited thread settings.
+      } finally {
+        this.reasoningModelsSynced = true;
       }
     }
   }
@@ -1221,6 +1348,7 @@ export class CodexMonitor {
           parentThreadId: thread.parentThreadId || thread.forkedFromId || null,
           title: sanitizeTaskTitle(savedName || thread.preview),
           project: sanitizeProjectName(thread.cwd),
+          model: String(thread.model || ''),
           activity: status.type === 'active' ? CODEX_ACTIVITY.RUNNING
             : status.type === 'systemError' ? CODEX_ACTIVITY.BLOCKED : CODEX_ACTIVITY.SILENT,
           updatedAtMs: timestampToMs(thread.updatedAt || thread.createdAt),
@@ -1333,6 +1461,11 @@ export class CodexMonitor {
     const threadId = String(params.threadId || params.thread?.id || '');
     if (!threadId) return;
     if (method === 'turn/started') {
+      for (const [eventId, event] of this.managedUnread) {
+        if (event.threadId === threadId && event.activity === CODEX_ACTIVITY.BLOCKED) {
+          this.managedUnread.delete(eventId);
+        }
+      }
       this.#setManagedTask(threadId, {
         activity: CODEX_ACTIVITY.RUNNING,
         activeTurnId: String(params.turn?.id || ''),
@@ -1421,7 +1554,7 @@ export class CodexMonitor {
   #handleServerRequest(message) {
     const method = String(message.method || '');
     const params = message.params || {};
-    const threadId = String(params.threadId || '');
+    const threadId = String(params.threadId || params.conversationId || '');
     if (!threadId) return;
     const requestId = String(message.id);
     const eventId = `managed-request:${requestId}`;
@@ -1440,6 +1573,13 @@ export class CodexMonitor {
     } else if (method === 'item/permissions/requestApproval') {
       kind = 'permissionApproval';
       messageText ||= 'Codex 请求额外的文件或网络权限。';
+    } else if (method === 'execCommandApproval') {
+      kind = 'commandApproval';
+      const command = Array.isArray(params.command) ? params.command.join(' ') : String(params.command || '');
+      messageText ||= command ? `Codex 请求运行：\n${command}` : 'Codex 请求运行一项操作。';
+    } else if (method === 'applyPatchApproval') {
+      kind = 'fileApproval';
+      messageText ||= 'Codex 请求修改文件。';
     } else {
       supported = false;
       messageText ||= '这类请求需要前往 Codex 处理。';
@@ -1460,7 +1600,7 @@ export class CodexMonitor {
       requestId,
       supported,
       questions: method === 'item/tool/requestUserInput' ? params.questions || [] : [],
-      availableDecisions: params.availableDecisions || ['accept', 'acceptForSession', 'decline'],
+      availableDecisions: params.availableDecisions || ['accept', 'acceptForSession', 'decline', 'cancel'],
     };
     this.pendingRequests.set(requestId, {
       rawId: message.id,
@@ -1496,6 +1636,7 @@ export class CodexMonitor {
       locale: this.locale,
       homeLabel: '',
       source: 'none',
+      reasoningModels: [],
       activity: CODEX_ACTIVITY.DISCONNECTED,
       tasks: [],
       unread: [],

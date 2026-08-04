@@ -7,9 +7,12 @@ import { EventEmitter } from 'node:events';
 
 import {
   buildClaudeDirectArgs,
+  buildClaudeDirectEnv,
+  claudeHookResponse,
   ClaudeMonitor,
   formatClaudeManagedError,
   parseClaudeTranscript,
+  resolveClaudeGatewayBaseUrl,
   resolveClaudeHome,
 } from '../src/main/claude-monitor.js';
 import {
@@ -22,6 +25,7 @@ import {
   CLAUDE_ACTIVITY,
   CLAUDE_REPLY_TRANSPORT,
   CLAUDE_SEND_SHORTCUT,
+  CLAUDE_THINKING_MODE,
   normalizeClaudeIntegrationConfig,
 } from '../src/shared/claude-integration.js';
 import { combineProviderSnapshots } from '../src/renderer/codex-companion.js';
@@ -38,14 +42,21 @@ test('Claude configuration is portable and bounds persisted state', () => {
     replyTransport: 'desktop',
     desiredSessionIds: ['one', 'one', 'two'],
     readEventIds: Array.from({ length: 1100 }, (_, index) => `event-${index}`),
+    sessionPreferences: {
+      one: { thinkingMode: 'disabled', effort: 'max' },
+      two: { thinkingMode: 'invalid', effort: 'turbo' },
+    },
   });
-  assert.equal(config.version, 2);
+  assert.equal(config.version, 3);
   assert.equal(config.manualHome, 'C:\\Users\\demo\\.claude');
   assert.equal(config.replyTransport, CLAUDE_REPLY_TRANSPORT.DESKTOP);
+  assert.equal(normalizeClaudeIntegrationConfig({ bypassPermissions: true }).bypassPermissions, true);
   assert.equal(config.sendShortcut, CLAUDE_SEND_SHORTCUT.ENTER);
   assert.deepEqual(config.desiredSessionIds, ['one', 'two']);
   assert.equal(config.readEventIds.length, 1024);
   assert.ok(config.enabledAtMs > 0);
+  assert.deepEqual(config.sessionPreferences.one, { thinkingMode: 'disabled', effort: 'max' });
+  assert.deepEqual(config.sessionPreferences.two, { thinkingMode: 'auto', effort: 'high' });
 });
 
 test('Claude send shortcut defaults to Enter and preserves Ctrl+Enter selection', () => {
@@ -232,6 +243,9 @@ test('Claude Monitor direct mode resumes the selected local session', async () =
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'monitor-claude-direct-'));
   const project = path.join(root, 'projects', 'demo');
   fs.mkdirSync(project, { recursive: true });
+  fs.writeFileSync(path.join(root, 'settings.json'), JSON.stringify({
+    env: { ANTHROPIC_BASE_URL: 'https://gateway.example.test' },
+  }));
   fs.writeFileSync(path.join(project, 'direct-session.jsonl'), transcript([
     { type: 'user', sessionId: 'direct-session', cwd: root, timestamp: new Date().toISOString(), message: { content: '第一条消息' } },
   ]));
@@ -261,6 +275,64 @@ test('Claude Monitor direct mode resumes the selected local session', async () =
     assert.ok(invocation.args.includes('direct-session'));
     assert.equal(invocation.args.at(-1), '继续处理');
     assert.equal(invocation.options.cwd, root);
+    assert.equal(invocation.options.env.CLAUDE_CODE_DISABLE_THINKING, '1');
+    assert.equal(invocation.options.env.CLAUDE_CODE_EFFORT_LEVEL, undefined);
+  } finally {
+    monitor.stop();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('Claude Monitor pauses a direct tool call until the user approves it', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'monitor-claude-approval-'));
+  const project = path.join(root, 'projects', 'demo');
+  fs.mkdirSync(project, { recursive: true });
+  fs.writeFileSync(path.join(project, 'approval-session.jsonl'), transcript([
+    { type: 'user', sessionId: 'approval-session', cwd: root, timestamp: new Date().toISOString(), message: { content: 'start' } },
+  ]));
+  let invocation;
+  const child = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.kill = () => {};
+  const monitor = new ClaudeMonitor({
+    config: { enabled: true, homeMode: 'manual', manualHome: root, enabledAtMs: Date.now() - 1000 },
+    spawnImpl: (executable, args, options) => {
+      invocation = { executable, args, options };
+      queueMicrotask(() => child.emit('spawn'));
+      return child;
+    },
+  });
+  try {
+    await monitor.scan(true);
+    monitor.connectSession('approval-session');
+    await monitor.reply('approval-session', 'run a command');
+    const settings = JSON.parse(invocation.args[invocation.args.indexOf('--settings') + 1]);
+    const hookUrl = settings.hooks.PreToolUse[0].hooks[0].url;
+    const responsePromise = fetch(hookUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        session_id: 'approval-session',
+        hook_event_name: 'PreToolUse',
+        tool_use_id: 'tool-one',
+        tool_name: 'Bash',
+        tool_input: { command: 'npm test' },
+      }),
+    });
+    let event;
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      event = monitor.getSnapshot().unread.find((item) => item.kind === 'approval');
+      if (event) break;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.equal(event.message, 'Bash · npm test');
+    assert.equal(monitor.getSnapshot().activity, CLAUDE_ACTIVITY.NEEDS_INPUT);
+    assert.equal(monitor.getSnapshot().tasks[0].capabilities.approve, true);
+    assert.equal(monitor.respond(event.requestId, { decision: 'accept' }).accepted, true);
+    const hookResponse = await (await responsePromise).json();
+    assert.equal(hookResponse.hookSpecificOutput.permissionDecision, 'allow');
+    assert.equal(monitor.getSnapshot().unread.some((item) => item.kind === 'approval'), false);
   } finally {
     monitor.stop();
     fs.rmSync(root, { recursive: true, force: true });
@@ -277,8 +349,70 @@ test('Claude direct arguments inherit gateway thinking settings instead of overr
   const args = buildClaudeDirectArgs({
     sessionId: 'session-one', message: 'continue', permissionMode: 'unexpected', effort: 'turbo',
   });
-  assert.equal(args.includes('--permission-mode'), false);
+  assert.equal(args[args.indexOf('--permission-mode') + 1], 'manual');
   assert.equal(args.includes('--effort'), false);
+  const custom = buildClaudeDirectArgs({
+    sessionId: 'session-one', message: 'continue', thinkingMode: CLAUDE_THINKING_MODE.CUSTOM, effort: 'xhigh',
+  });
+  assert.equal(custom[custom.indexOf('--effort') + 1], 'xhigh');
+});
+
+test('Claude direct environment isolates third-party gateways from incompatible thinking types', () => {
+  const compatible = buildClaudeDirectEnv({
+    baseEnv: {
+      ANTHROPIC_BASE_URL: 'https://gateway.example.test',
+      CLAUDE_CODE_EFFORT_LEVEL: 'max',
+      MAX_THINKING_TOKENS: '32000',
+    },
+    thinkingMode: CLAUDE_THINKING_MODE.AUTO,
+  });
+  assert.equal(compatible.effectiveThinkingMode, CLAUDE_THINKING_MODE.DISABLED);
+  assert.equal(compatible.env.CLAUDE_CODE_DISABLE_THINKING, '1');
+  assert.equal(compatible.env.CLAUDE_CODE_EFFORT_LEVEL, undefined);
+  assert.equal(compatible.env.MAX_THINKING_TOKENS, undefined);
+
+  const inherited = buildClaudeDirectEnv({
+    baseEnv: { ANTHROPIC_BASE_URL: 'https://api.anthropic.com', CLAUDE_CODE_EFFORT_LEVEL: 'high' },
+    thinkingMode: CLAUDE_THINKING_MODE.AUTO,
+  });
+  assert.equal(inherited.effectiveThinkingMode, CLAUDE_THINKING_MODE.INHERIT);
+  assert.equal(inherited.env.CLAUDE_CODE_EFFORT_LEVEL, 'high');
+
+  const settingsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'monitor-claude-gateway-'));
+  try {
+    fs.writeFileSync(path.join(settingsRoot, 'settings.json'), JSON.stringify({
+      env: { ANTHROPIC_BASE_URL: 'https://remote-gateway.example.test', ANTHROPIC_AUTH_TOKEN: 'secret' },
+    }));
+    const detected = resolveClaudeGatewayBaseUrl({
+      config: { enabled: true, homeMode: 'manual', manualHome: settingsRoot },
+      env: {},
+    });
+    assert.equal(detected, 'https://remote-gateway.example.test');
+    const fromSettings = buildClaudeDirectEnv({ baseEnv: {}, gatewayBaseUrl: detected });
+    assert.equal(fromSettings.effectiveThinkingMode, CLAUDE_THINKING_MODE.DISABLED);
+  } finally {
+    fs.rmSync(settingsRoot, { recursive: true, force: true });
+  }
+});
+
+test('Claude direct arguments install the approval hook or enable bypass, never both', () => {
+  const hooked = buildClaudeDirectArgs({
+    sessionId: 'session-one', message: 'continue', permissionHookUrl: 'http://127.0.0.1:1234/token',
+  });
+  const settings = JSON.parse(hooked[hooked.indexOf('--settings') + 1]);
+  assert.equal(settings.hooks.PreToolUse[0].hooks[0].url, 'http://127.0.0.1:1234/token');
+  assert.match(settings.hooks.PreToolUse[0].matcher, /Bash/);
+  assert.equal(hooked.includes('--dangerously-skip-permissions'), false);
+
+  const bypassed = buildClaudeDirectArgs({
+    sessionId: 'session-one', message: 'continue', bypassPermissions: true,
+    permissionHookUrl: 'http://127.0.0.1:1234/token',
+  });
+  assert.equal(bypassed.includes('--dangerously-skip-permissions'), true);
+  assert.equal(bypassed.includes('--settings'), false);
+  assert.equal(bypassed.includes('--permission-mode'), false);
+  assert.equal(claudeHookResponse('accept').hookSpecificOutput.permissionDecision, 'allow');
+  assert.equal(claudeHookResponse('decline').hookSpecificOutput.permissionDecision, 'deny');
 });
 
 test('Claude transcript exposes the session permission, effort and model', () => {
@@ -305,7 +439,8 @@ test('Claude managed errors are readable and redact API keys', () => {
 test('Claude managed errors identify gateway thinking-type incompatibility', () => {
   const message = formatClaudeManagedError("API Error: 400 'type' must be in [\"enabled\", \"disabled\", \"auto\"]");
   assert.match(message, /thinking/);
-  assert.match(message, /停止覆盖推理强度/);
+  assert.match(message, /自动兼容/);
+  assert.match(message, /关闭思考/);
 });
 
 test('combined task snapshots retain provider identity and priority', () => {

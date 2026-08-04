@@ -267,6 +267,7 @@ ipcMain.handle('codex-reply', async (_event, payload) => {
   }
 });
 ipcMain.handle('codex-respond', (_event, payload) => codexMonitor?.respond(payload?.requestId, payload?.response));
+ipcMain.handle('codex-interrupt', (_event, threadId) => codexMonitor?.interrupt(threadId));
 ipcMain.handle('codex-open-app', async (_event, payload = {}) => {
   const threadId = String(payload.threadId || '').trim();
   const target = threadId ? `codex://threads/${encodeURIComponent(threadId)}` : 'codex://';
@@ -309,6 +310,7 @@ ipcMain.handle('claude-mark-read', (_event, eventId) => claudeMonitor?.markRead(
 ipcMain.handle('claude-mark-notified', (_event, eventId) => claudeMonitor?.markNotified(eventId) || null);
 ipcMain.handle('claude-session-connect', (_event, sessionId) => claudeMonitor?.connectSession(sessionId));
 ipcMain.handle('claude-session-disconnect', (_event, sessionId) => claudeMonitor?.disconnectSession(sessionId));
+ipcMain.handle('claude-respond', (_event, payload) => claudeMonitor?.respond(payload?.requestId, payload?.response));
 
 async function waitForClaudeMessage(sessionId, text, sinceMs, attempts = 40) {
   return waitForCodexDesktopUserMessage({

@@ -26,7 +26,7 @@ export function isPointWithinBounds(bounds, x, y, padding = 0) {
 }
 
 export class InputManager {
-  constructor({ pixiApp, sprite, stateMachine, physics, shouldIgnoreEvent = null, beforePetInteraction = null, onGesture = null }) {
+  constructor({ pixiApp, sprite, stateMachine, physics, shouldIgnoreEvent = null, beforePetInteraction = null, onGesture = null, onInteractionChange = null }) {
     this.pixiApp = pixiApp;
     this.sprite = sprite;
     this.stateMachine = stateMachine;
@@ -34,6 +34,7 @@ export class InputManager {
     this.shouldIgnoreEvent = typeof shouldIgnoreEvent === 'function' ? shouldIgnoreEvent : null;
     this.beforePetInteraction = typeof beforePetInteraction === 'function' ? beforePetInteraction : null;
     this.onGesture = typeof onGesture === 'function' ? onGesture : null;
+    this.onInteractionChange = typeof onInteractionChange === 'function' ? onInteractionChange : null;
 
     this._enabled = false;
     this._isDragging = false;
@@ -154,8 +155,8 @@ export class InputManager {
         // Start physics drag — turtle follows mouse
         this.physics.startDrag(e.clientX, e.clientY);
 
-        window.electronAPI.setIgnoreMouseEvents(false);
         this.stateMachine.transition('RIGHT_CLICK_TURTLE');
+        this.onInteractionChange?.();
 
         console.log('[Input] THROW_DRAG started at', e.clientX, e.clientY,
           'anchorX=', this.physics.screenAnchorX.toFixed(3));
@@ -182,10 +183,8 @@ export class InputManager {
     this._pullExceeded = false;
     this._pullTarget = { x: this.sprite.x, y: this.sprite.y };
 
-    // Notify main process to disable mouse passthrough
-    window.electronAPI.setIgnoreMouseEvents(false);
-    
     this.stateMachine.transition('LEFT_CLICK_TURTLE');
+    this.onInteractionChange?.();
     // No need to expand window - it's already full-screen
 
     console.log('[Input] PULLING started at', e.clientX, e.clientY);
@@ -270,6 +269,7 @@ export class InputManager {
           this.onGesture?.('right-click');
           window.electronAPI.showContextMenu();
           this.stateMachine.transition('RIGHT_CLICK_RELEASE', { returnState: this._rightDragReturnState });
+          this.onInteractionChange?.();
         } else {
           // Mouse moved → this was a throw drag
           const state = this.stateMachine.getState();
@@ -282,11 +282,9 @@ export class InputManager {
             console.log('[Input] THROW_RELEASED, velocity=',
               `vx=${vx.toFixed(0)}, vy=${vy.toFixed(0)}`);
 
-            // Restore mouse passthrough so blank-area clicks don't interfere
-            window.electronAPI.setIgnoreMouseEvents(true);
-
             // Transition to PULLEY_PHYSICS (physics simulation state)
             this.stateMachine.transition('RIGHT_RELEASE');
+            this.onInteractionChange?.();
           }
         }
       }
@@ -307,8 +305,7 @@ export class InputManager {
         pullExceeded: this._pullExceeded,
         velocity: { ...this._dragVelocity }
       });
-      // Restore mouse passthrough
-      window.electronAPI.setIgnoreMouseEvents(true);
+      this.onInteractionChange?.();
     }
 
     // No need to restore window - it's already full-screen

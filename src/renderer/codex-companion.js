@@ -2,10 +2,12 @@ import {
   CODEX_ACTIVITY,
   CODEX_CONNECTION,
   CODEX_NEW_MESSAGE_VIEW,
+  CODEX_REASONING_EFFORTS,
   buildCodexVisibleTasks,
   codexMoodForActivity,
   compactCodexTechnicalPreview,
   normalizeCodexLocale,
+  normalizeCodexSessionPreference,
   resolveCodexActivity,
   shouldShowCodexConnectionList,
   sortCodexUnreadEvents,
@@ -17,6 +19,11 @@ import {
   reconcileCodexViewState,
 } from './codex-view-state.js';
 import { renderMarkdown } from './markdown.js';
+import {
+  CLAUDE_EFFORT_LEVELS,
+  CLAUDE_THINKING_MODE,
+  normalizeClaudeSessionPreference,
+} from '../shared/claude-integration.js';
 
 function element(tag, className, text = '') {
   const node = document.createElement(tag);
@@ -93,6 +100,21 @@ export function combineProviderSnapshots(snapshots) {
   };
 }
 
+export function canReuseRenderedMessages({
+  activeThreadId,
+  renderedThreadId,
+  previous,
+  messages,
+  provider,
+  locale,
+}) {
+  return Boolean(activeThreadId)
+    && renderedThreadId === activeThreadId
+    && previous?.messages === messages
+    && previous.provider === provider
+    && previous.locale === locale;
+}
+
 const TEXT = {
   'zh-CN': {
     liveTasks: '任务动态', emptyTasks: '目前没有运行中、未读或已连接的任务', close: '关闭', back: '返回任务列表',
@@ -111,7 +133,7 @@ const TEXT = {
     autoPath: '当前用户的 .codex（自动检测）', noPath: '尚未选择目录', connect: '连接', disconnect: '断开', retry: '重试',
     noMessages: '暂时还没有可显示的回复。', loadOlder: '加载更早消息', you: '你', codex: 'Codex', toolCall: '工具调用', toolResult: '工具结果',
     submitAnswers: '提交回答', choose: '请选择', custom: '自己输入…', inputAnswer: '输入回答', answerAll: '请完成所有问题后再提交',
-    accept: '本次允许', acceptForSession: '本次会话允许', decline: '拒绝', cancel: '拒绝并停止',
+    accept: '本次允许', acceptForSession: '本次会话允许', decline: '拒绝', cancel: '拒绝并停止', stopTurn: '停止任务', stoppingTurn: '正在停止…', stoppedTurn: '任务已停止。',
     goHandle: '前往 Codex 处理', sent: '消息已发送，正在等待 Codex 回复。', handedOff: '消息已通过 Codex 客户端提交，正在等待回复。', desktopSubmitFailed: '已复制消息并打开 Codex，但客户端自动提交失败；草稿已保留。', handled: '操作已提交，等待 Codex 继续。',
     statusRunning: '运行中', statusNeedsInput: '等待你', statusReady: '新回复', statusBlocked: '遇到问题', statusDisconnected: '未连接', statusSilent: '已同步',
     connDisconnected: '未连接', connWaitingIdle: '等待任务空闲', connConnecting: '正在连接', connConnected: '已连接',
@@ -136,7 +158,7 @@ const TEXT = {
     autoPath: 'Current user .codex (automatic)', noPath: 'No folder selected', connect: 'Connect', disconnect: 'Disconnect', retry: 'Retry',
     noMessages: 'No visible response yet.', loadOlder: 'Load earlier messages', you: 'You', codex: 'Codex', toolCall: 'Tool call', toolResult: 'Tool result',
     submitAnswers: 'Submit answers', choose: 'Choose', custom: 'Enter another answer…', inputAnswer: 'Enter answer', answerAll: 'Answer every question before submitting',
-    accept: 'Allow once', acceptForSession: 'Allow for session', decline: 'Decline', cancel: 'Decline and stop',
+    accept: 'Allow once', acceptForSession: 'Allow for session', decline: 'Decline', cancel: 'Decline and stop', stopTurn: 'Stop task', stoppingTurn: 'Stopping…', stoppedTurn: 'Task stopped.',
     goHandle: 'Handle in Codex', sent: 'Message sent. Waiting for Codex.', handedOff: 'Message submitted through the Codex client. Waiting for its reply.', desktopSubmitFailed: 'The message was copied and Codex opened, but automatic client submission failed. The draft was preserved.', handled: 'Action submitted. Waiting for Codex to continue.',
     statusRunning: 'Running', statusNeedsInput: 'Needs you', statusReady: 'New reply', statusBlocked: 'Problem', statusDisconnected: 'Disconnected', statusSilent: 'Synced',
     connDisconnected: 'Not connected', connWaitingIdle: 'Waiting until idle', connConnecting: 'Connecting', connConnected: 'Connected',
@@ -171,6 +193,10 @@ export class CodexCompanion {
     this.notifiedInFlight = new Set();
     this.drafts = new Map();
     this.messagePages = new Map();
+    this.renderedMessageState = new Map();
+    this.renderedThreadId = '';
+    this.messageSelectionPointerDown = false;
+    this.messageRenderPending = false;
     this.expandedToolMessages = new Set();
     this.inlineError = '';
     this.positionKeys = new Map();
@@ -201,6 +227,9 @@ export class CodexCompanion {
   destroy() {
     for (const unsubscribe of this.unsubscribes) unsubscribe?.();
     this.resizeObserver?.disconnect();
+    window.removeEventListener('pointerup', this.handleMessagePointerEnd, true);
+    window.removeEventListener('pointercancel', this.handleMessagePointerEnd, true);
+    document.removeEventListener('selectionchange', this.handleMessageSelectionChange);
     this.root.remove();
   }
 
@@ -220,6 +249,158 @@ export class CodexCompanion {
 
   #currentProvider() {
     return this.viewState.event?.provider || this.#currentTask()?.provider || this.activeProvider || 'codex';
+  }
+
+  #currentSourceThreadId() {
+    const task = this.#currentTask();
+    return String(task?.sourceId || this.viewState.event?.sourceThreadId || this.viewState.threadId || '').replace(/^claude:/, '');
+  }
+
+  #renderClaudeThinkingControl(preserveSelection = false) {
+    const task = this.#currentTask();
+    const provider = task?.provider || this.viewState.event?.provider || this.#currentProvider();
+    const config = this.configs.claude || {};
+    const direct = config.replyTransport !== 'desktop';
+    const sourceId = this.#currentSourceThreadId();
+    const trigger = this.bubble.querySelector('.claude-thinking-trigger');
+    const popover = this.bubble.querySelector('.claude-thinking-popover');
+    const visible = provider === 'claude' && direct && Boolean(sourceId);
+    trigger.hidden = !visible;
+    if (!visible) {
+      popover.hidden = true;
+      trigger.setAttribute('aria-expanded', 'false');
+      return;
+    }
+
+    const stored = normalizeClaudeSessionPreference(config.sessionPreferences?.[sourceId]);
+    const modeSelect = this.bubble.querySelector('.claude-thinking-mode');
+    const effortSelect = this.bubble.querySelector('.claude-effort');
+    if (!preserveSelection) {
+      modeSelect.value = stored.thinkingMode;
+      effortSelect.value = stored.effort;
+    }
+    const mode = modeSelect.value || stored.thinkingMode;
+    const labels = this.locale === 'en-US'
+      ? { auto: 'Auto compatibility', inherit: 'Follow Claude Code', disabled: 'Thinking off', custom: 'Custom effort' }
+      : { auto: '自动兼容', inherit: '沿用 Claude Code', disabled: '关闭思考', custom: '自定义强度' };
+    for (const option of modeSelect.options) option.textContent = labels[option.value] || option.value;
+    trigger.textContent = this.locale === 'en-US' ? `Reasoning · ${labels[mode]}` : `推理 · ${labels[mode]}`;
+    trigger.title = this.locale === 'en-US' ? 'Reasoning for this conversation' : '设置当前会话的推理方式';
+    trigger.setAttribute('aria-expanded', String(!popover.hidden));
+    this.bubble.querySelector('.claude-thinking-title').textContent = this.locale === 'en-US' ? 'Reasoning' : '推理设置';
+    this.bubble.querySelector('.claude-thinking-mode-label').textContent = this.locale === 'en-US' ? 'Thinking mode' : '思考方式';
+    this.bubble.querySelector('.claude-thinking-mode-help').textContent = this.locale === 'en-US' ? 'Only affects this conversation' : '仅影响当前会话';
+    this.bubble.querySelector('.claude-effort-label').textContent = this.locale === 'en-US' ? 'Effort' : '推理强度';
+    this.bubble.querySelector('.claude-effort-help').textContent = this.locale === 'en-US' ? 'Passed explicitly to Claude Code' : '显式传给 Claude Code';
+    this.bubble.querySelector('.claude-effort-field').hidden = mode !== CLAUDE_THINKING_MODE.CUSTOM;
+    const notes = this.locale === 'en-US'
+      ? {
+          auto: 'Uses normal Claude settings on official connections and disables thinking on third-party gateways to avoid thinking.type 400 errors.',
+          inherit: 'Keeps the settings used by the original Claude Code environment.',
+          disabled: 'Best compatibility for gateways or models that reject thinking parameters.',
+          custom: 'Uses the selected effort. Some third-party gateways may reject this request format.',
+        }
+      : {
+          auto: '官方连接沿用 Claude 设置；第三方网关关闭思考，避免 thinking.type 400。',
+          inherit: '保持原 Claude Code 环境中的设置。',
+          disabled: '适合不接受思考参数的网关或模型，兼容性最高。',
+          custom: '使用指定强度；部分第三方网关可能不接受这种请求格式。',
+        };
+    this.bubble.querySelector('.claude-thinking-note').textContent = notes[mode] || notes.auto;
+  }
+
+  async #saveClaudeThinkingPreference() {
+    const sourceId = this.#currentSourceThreadId();
+    if (!sourceId || this.#currentProvider() !== 'claude') return;
+    const modeSelect = this.bubble.querySelector('.claude-thinking-mode');
+    const effortSelect = this.bubble.querySelector('.claude-effort');
+    const preference = normalizeClaudeSessionPreference({ thinkingMode: modeSelect.value, effort: effortSelect.value });
+    modeSelect.disabled = true;
+    effortSelect.disabled = true;
+    try {
+      const current = this.configs.claude || {};
+      this.configs.claude = await this.#api('claude').saveConfig({
+        ...current,
+        sessionPreferences: { ...(current.sessionPreferences || {}), [sourceId]: preference },
+      });
+      this.#renderClaudeThinkingControl();
+    } catch (error) {
+      this.#showBubbleError(error?.message || String(error));
+    } finally {
+      modeSelect.disabled = false;
+      effortSelect.disabled = false;
+    }
+  }
+
+  #supportedCodexEfforts(task) {
+    const models = this.snapshots.codex?.reasoningModels || [];
+    const exact = models.find((item) => item.model === task?.model);
+    const available = exact?.efforts?.length
+      ? exact.efforts
+      : [...new Set(models.flatMap((item) => item.efforts || []))];
+    return CODEX_REASONING_EFFORTS.filter((effort) => !available.length || available.includes(effort));
+  }
+
+  #renderCodexReasoningControl() {
+    const task = this.#currentTask();
+    const config = this.configs.codex || {};
+    const sourceId = this.#currentSourceThreadId();
+    const direct = config.replyTransport !== 'desktop';
+    const trigger = this.bubble.querySelector('.codex-reasoning-trigger');
+    const popover = this.bubble.querySelector('.codex-reasoning-popover');
+    const visible = this.#currentProvider() === 'codex' && direct && Boolean(sourceId);
+    trigger.hidden = !visible;
+    if (!visible) {
+      popover.hidden = true;
+      trigger.setAttribute('aria-expanded', 'false');
+      return;
+    }
+
+    const stored = normalizeCodexSessionPreference(config.sessionPreferences?.[sourceId]);
+    const select = this.bubble.querySelector('.codex-reasoning-effort');
+    const supported = this.#supportedCodexEfforts(task);
+    const effectiveEffort = task?.model && !supported.includes(stored.effort) ? 'inherit' : stored.effort;
+    const values = ['inherit', ...supported];
+    select.replaceChildren(...values.map((effort) => {
+      const option = element('option', '', effort === 'inherit'
+        ? (this.locale === 'en-US' ? 'Follow Codex configuration' : '跟随 Codex 配置')
+        : effort);
+      option.value = effort;
+      return option;
+    }));
+    select.value = effectiveEffort;
+    const display = effectiveEffort === 'inherit'
+      ? (this.locale === 'en-US' ? 'Follow configuration' : '跟随配置')
+      : effectiveEffort;
+    trigger.textContent = this.locale === 'en-US' ? `Reasoning · ${display}` : `推理 · ${display}`;
+    trigger.title = this.locale === 'en-US' ? 'Reasoning effort for this conversation' : '设置当前会话的推理强度';
+    trigger.setAttribute('aria-expanded', String(!popover.hidden));
+    this.bubble.querySelector('.codex-reasoning-title').textContent = this.locale === 'en-US' ? 'Reasoning' : '推理设置';
+    this.bubble.querySelector('.codex-reasoning-label').textContent = this.locale === 'en-US' ? 'Effort' : '推理强度';
+    this.bubble.querySelector('.codex-reasoning-help').textContent = this.locale === 'en-US' ? 'Only affects this conversation' : '仅影响当前会话';
+    this.bubble.querySelector('.codex-reasoning-note').textContent = effectiveEffort === 'inherit'
+      ? (this.locale === 'en-US' ? 'Uses the model and effort already selected by Codex.' : '继续使用 Codex 中原本选择的模型与推理强度。')
+      : (this.locale === 'en-US' ? 'Applied when the next new turn starts.' : '将在下一次新回合开始时应用。');
+  }
+
+  async #saveCodexReasoningPreference() {
+    const sourceId = this.#currentSourceThreadId();
+    if (!sourceId || this.#currentProvider() !== 'codex') return;
+    const select = this.bubble.querySelector('.codex-reasoning-effort');
+    const preference = normalizeCodexSessionPreference({ effort: select.value });
+    select.disabled = true;
+    try {
+      const current = this.configs.codex || {};
+      this.configs.codex = await this.#api('codex').saveConfig({
+        ...current,
+        sessionPreferences: { ...(current.sessionPreferences || {}), [sourceId]: preference },
+      });
+      this.#renderCodexReasoningControl();
+    } catch (error) {
+      this.#showBubbleError(error?.message || String(error));
+    } finally {
+      select.disabled = false;
+    }
   }
 
   #build() {
@@ -254,10 +435,22 @@ export class CodexCompanion {
       <header class="codex-bubble-head">
         <div class="codex-bubble-signal"></div>
         <button class="codex-icon-button codex-task-back" type="button">←</button>
-        <div class="codex-bubble-heading"><div class="codex-bubble-project"></div><div class="codex-bubble-title"></div></div>
+        <div class="codex-bubble-heading"><div class="codex-bubble-project"></div><div class="codex-bubble-title-row"><div class="codex-bubble-title"></div><button class="codex-reasoning-trigger" type="button" hidden></button><button class="claude-thinking-trigger" type="button" hidden></button></div></div>
         <div class="codex-bubble-state"></div>
+        <button class="codex-stop-turn" type="button" hidden></button>
         <button class="codex-icon-button codex-bubble-close" type="button">×</button>
       </header>
+      <section class="claude-thinking-popover" hidden>
+        <header><div><small>THIS CONVERSATION</small><strong class="claude-thinking-title"></strong></div><button class="codex-icon-button claude-thinking-close" type="button">脳</button></header>
+        <label class="claude-thinking-field"><span><strong class="claude-thinking-mode-label"></strong><small class="claude-thinking-mode-help"></small></span><select class="claude-thinking-mode"><option value="auto"></option><option value="inherit"></option><option value="disabled"></option><option value="custom"></option></select></label>
+        <label class="claude-thinking-field claude-effort-field" hidden><span><strong class="claude-effort-label"></strong><small class="claude-effort-help"></small></span><select class="claude-effort"></select></label>
+        <div class="claude-thinking-note"></div>
+      </section>
+      <section class="codex-reasoning-popover" hidden>
+        <header><div><small>THIS CONVERSATION</small><strong class="codex-reasoning-title"></strong></div><button class="codex-icon-button codex-reasoning-close" type="button">×</button></header>
+        <label class="codex-reasoning-field"><span><strong class="codex-reasoning-label"></strong><small class="codex-reasoning-help"></small></span><select class="codex-reasoning-effort"></select></label>
+        <div class="codex-reasoning-note"></div>
+      </section>
       <button class="codex-load-older" type="button" hidden></button>
       <div class="codex-bubble-scroll" tabindex="0"><div class="codex-message-list"></div><div class="codex-bubble-empty"></div></div>
       <div class="codex-bubble-notice"></div>
@@ -302,6 +495,8 @@ export class CodexCompanion {
         <div class="codex-choice-row"><span><strong class="codex-new-message-view-label"></strong><small class="codex-new-message-view-note"></small></span><div class="codex-segmented codex-new-message-view" role="radiogroup"><label><input type="radio" name="codex-new-message-view" value="conversation"><span class="codex-new-message-conversation"></span></label><label><input type="radio" name="codex-new-message-view" value="tasks"><span class="codex-new-message-tasks"></span></label></div></div>
         <label class="codex-select-row"><span><strong class="codex-reply-transport-label"></strong><small class="codex-reply-transport-note"></small></span><select class="codex-reply-transport"><option value="direct"></option><option value="desktop"></option></select></label>
         <label class="codex-select-row agent-send-shortcut-row"><span><strong class="agent-send-shortcut-label"></strong><small class="agent-send-shortcut-note"></small></span><select class="agent-send-shortcut"><option value="enter">Enter</option><option value="ctrl-enter">Ctrl+Enter</option></select></label>
+        <label class="codex-switch-row agent-bypass-row"><span><strong class="agent-bypass-label"></strong><small class="agent-bypass-note"></small></span><input class="agent-bypass-permissions" type="checkbox"><i></i></label>
+        <div class="agent-bypass-warning" hidden></div>
         <div class="codex-config-note"></div>
       </details>
       <footer class="codex-config-actions"><button class="codex-quiet-button codex-config-refresh" type="button"></button></footer>
@@ -338,6 +533,45 @@ export class CodexCompanion {
       this.#renderTaskTray();
     });
     this.bubble.querySelector('.codex-bubble-close').addEventListener('click', () => this.#closeDetail(true));
+    this.bubble.querySelector('.codex-reasoning-trigger').addEventListener('click', () => {
+      const popover = this.bubble.querySelector('.codex-reasoning-popover');
+      popover.hidden = !popover.hidden;
+      this.#renderCodexReasoningControl();
+      this.updatePosition(true);
+      this.onInteractionChange?.();
+    });
+    this.bubble.querySelector('.codex-reasoning-close').addEventListener('click', () => {
+      this.bubble.querySelector('.codex-reasoning-popover').hidden = true;
+      this.bubble.querySelector('.codex-reasoning-trigger').setAttribute('aria-expanded', 'false');
+      this.updatePosition(true);
+      this.onInteractionChange?.();
+    });
+    this.bubble.querySelector('.codex-reasoning-effort').addEventListener('change', () => this.#saveCodexReasoningPreference());
+    this.bubble.querySelector('.claude-thinking-trigger').addEventListener('click', () => {
+      const popover = this.bubble.querySelector('.claude-thinking-popover');
+      popover.hidden = !popover.hidden;
+      this.#renderClaudeThinkingControl();
+      this.updatePosition(true);
+      this.onInteractionChange?.();
+    });
+    this.bubble.querySelector('.claude-thinking-close').addEventListener('click', () => {
+      this.bubble.querySelector('.claude-thinking-popover').hidden = true;
+      this.bubble.querySelector('.claude-thinking-trigger').setAttribute('aria-expanded', 'false');
+      this.updatePosition(true);
+      this.onInteractionChange?.();
+    });
+    const effortSelect = this.bubble.querySelector('.claude-effort');
+    for (const effort of CLAUDE_EFFORT_LEVELS) {
+      const option = element('option', '', effort);
+      option.value = effort;
+      effortSelect.appendChild(option);
+    }
+    this.bubble.querySelector('.claude-thinking-mode').addEventListener('change', () => {
+      this.#renderClaudeThinkingControl(true);
+      this.#saveClaudeThinkingPreference();
+    });
+    effortSelect.addEventListener('change', () => this.#saveClaudeThinkingPreference());
+    this.bubble.querySelector('.codex-stop-turn').addEventListener('click', () => this.#interruptTurn());
     this.bubble.querySelector('.codex-open-app').addEventListener('click', () => this.#openInProvider());
     this.bubble.querySelector('.codex-page-up').addEventListener('click', () => this.#page(-1));
     this.bubble.querySelector('.codex-page-down').addEventListener('click', () => this.#page(1));
@@ -356,7 +590,22 @@ export class CodexCompanion {
       this.#sendText();
     });
     this.bubble.querySelector('.codex-bubble-scroll').addEventListener('scroll', () => this.#onScroll());
-    this.bubble.querySelector('.codex-message-list').addEventListener('click', (event) => {
+    const messageList = this.bubble.querySelector('.codex-message-list');
+    messageList.addEventListener('pointerdown', (event) => {
+      if (event.button === 0 && event.target.closest?.('.codex-message-text')) {
+        this.messageSelectionPointerDown = true;
+      }
+    });
+    this.handleMessagePointerEnd = () => {
+      if (!this.messageSelectionPointerDown) return;
+      this.messageSelectionPointerDown = false;
+      queueMicrotask(() => this.#flushPendingMessageRender());
+    };
+    this.handleMessageSelectionChange = () => this.#flushPendingMessageRender();
+    window.addEventListener('pointerup', this.handleMessagePointerEnd, true);
+    window.addEventListener('pointercancel', this.handleMessagePointerEnd, true);
+    document.addEventListener('selectionchange', this.handleMessageSelectionChange);
+    messageList.addEventListener('click', (event) => {
       const link = event.target.closest?.('.codex-markdown-link');
       if (!link) return;
       event.preventDefault();
@@ -384,6 +633,7 @@ export class CodexCompanion {
     });
     this.configPanel.querySelector('.codex-reply-transport').addEventListener('change', () => this.#commitConfig({ enabled: this.config?.enabled === true }));
     this.configPanel.querySelector('.agent-send-shortcut').addEventListener('change', () => this.#commitConfig({ enabled: this.config?.enabled === true }));
+    this.configPanel.querySelector('.agent-bypass-permissions').addEventListener('change', () => this.#commitConfig({ enabled: this.config?.enabled === true }));
     this.configPanel.querySelector('.codex-advanced').addEventListener('toggle', () => this.updatePosition(true));
     this.configPanel.querySelector('.codex-config-refresh').addEventListener('click', async () => {
       this.#setConfigBusy(true);
@@ -762,10 +1012,15 @@ export class CodexCompanion {
     this.bubble.querySelector('.codex-bubble-project').textContent = `${PROVIDERS[provider]?.mark || 'C'} ${providerName} · ${event.project || task?.project || providerName}`;
     this.bubble.querySelector('.codex-bubble-title').textContent = task?.title || event.title || providerName;
     this.bubble.querySelector('.codex-bubble-state').textContent = this.#statusLabel(event.activity || task?.activity);
+    const stopButton = this.bubble.querySelector('.codex-stop-turn');
+    stopButton.textContent = this.t('stopTurn');
+    stopButton.hidden = provider !== 'codex' || task?.capabilities?.interrupt !== true;
     this.bubble.querySelector('.codex-inline-error').textContent = this.inlineError;
     const textarea = this.bubble.querySelector('textarea');
     const providerConfig = this.configs[provider] || {};
     const desktopCompatible = providerConfig.replyTransport === 'desktop';
+    this.#renderCodexReasoningControl();
+    this.#renderClaudeThinkingControl();
     this.bubble.querySelector('.codex-open-app').textContent = provider === 'claude' ? '打开 Claude Code' : this.t('openCodex');
     this.bubble.querySelector('.codex-send-button').textContent = provider === 'claude' && desktopCompatible
       ? (this.locale === 'en-US' ? 'Send through Claude Code' : '通过 Claude Code 发送')
@@ -796,7 +1051,10 @@ export class CodexCompanion {
     else if (task?.connectionState && task.connectionState !== CODEX_CONNECTION.CONNECTED) notice.textContent = this.#connectionLabel(task.connectionState, provider);
 
     const page = this.messagePages.get(this.viewState.threadId);
-    if (!page?.loaded) this.#loadMessages(false, true);
+    if (!page?.loaded) {
+      this.#renderMessages(true);
+      this.#loadMessages(false, true);
+    }
     else this.#renderMessages();
     this.updatePosition(true);
     this.onInteractionChange?.();
@@ -860,13 +1118,49 @@ export class CodexCompanion {
     }
   }
 
-  #renderMessages() {
+  #messageSelectionProtected() {
+    if (this.renderedThreadId && this.renderedThreadId !== this.viewState.threadId) return false;
+    if (this.messageSelectionPointerDown) return true;
+    const selection = window.getSelection?.();
+    if (!selection || selection.isCollapsed || selection.rangeCount === 0) return false;
+    const host = this.bubble.querySelector('.codex-message-list');
+    return host.contains(selection.anchorNode) || host.contains(selection.focusNode);
+  }
+
+  #flushPendingMessageRender() {
+    if (!this.messageRenderPending || this.#messageSelectionProtected()) return;
+    this.#renderMessages(true);
+  }
+
+  #renderMessages(force = false) {
     const page = this.messagePages.get(this.viewState.threadId);
     const provider = this.#currentProvider();
     const host = this.bubble.querySelector('.codex-message-list');
     const empty = this.bubble.querySelector('.codex-bubble-empty');
+    const messages = page?.messages || [];
+    const previous = this.renderedMessageState.get(this.viewState.threadId);
+    const unchanged = canReuseRenderedMessages({
+      activeThreadId: this.viewState.threadId,
+      renderedThreadId: this.renderedThreadId,
+      previous,
+      messages,
+      provider,
+      locale: this.locale,
+    });
+    if (!force && unchanged) {
+      const older = this.bubble.querySelector('.codex-load-older');
+      older.hidden = !page?.nextCursor;
+      older.disabled = page?.loading === true;
+      this.#updatePageStatus();
+      return;
+    }
+    if (this.#messageSelectionProtected()) {
+      this.messageRenderPending = true;
+      return;
+    }
+    this.messageRenderPending = false;
     host.replaceChildren();
-    for (const message of page?.messages || []) {
+    for (const message of messages) {
       const article = element('article', 'codex-message-item');
       article.dataset.role = message.role;
       article.dataset.kind = message.kind || 'message';
@@ -899,6 +1193,12 @@ export class CodexCompanion {
       article.append(body);
       host.appendChild(article);
     }
+    this.renderedMessageState.set(this.viewState.threadId, {
+      messages,
+      provider,
+      locale: this.locale,
+    });
+    this.renderedThreadId = this.viewState.threadId;
     const eventText = this.viewState.event?.message;
     empty.textContent = host.childElementCount === 0 ? (eventText || this.t('noMessages')) : '';
     empty.hidden = host.childElementCount > 0;
@@ -969,11 +1269,37 @@ export class CodexCompanion {
   async #respond(event, response) {
     this.#setBubbleBusy(true);
     try {
-      await window.electronAPI.codex.respond(event.requestId, response);
+      const provider = event.provider || this.#currentProvider();
+      await this.#api(provider).respond(event.requestId, response);
       await this.#markRead(event.id);
       this.viewState = {
         ...this.viewState,
         event: { ...event, requestId: null, kind: 'task', activity: CODEX_ACTIVITY.RUNNING, message: this.t('handled') },
+      };
+      this.#renderBubble();
+    } catch (error) { this.#showBubbleError(error?.message || String(error)); }
+    finally { this.#setBubbleBusy(false); }
+  }
+
+  async #interruptTurn() {
+    const task = this.#currentTask();
+    const sourceId = task?.sourceId || this.viewState.event?.sourceThreadId || this.viewState.threadId.replace(/^[^:]+:/, '');
+    if (!sourceId || this.#currentProvider() !== 'codex') return;
+    this.#setBubbleBusy(true);
+    const stopButton = this.bubble.querySelector('.codex-stop-turn');
+    stopButton.textContent = this.t('stoppingTurn');
+    try {
+      await window.electronAPI.codex.interrupt(sourceId);
+      this.inlineError = '';
+      this.viewState = {
+        ...this.viewState,
+        event: {
+          ...this.viewState.event,
+          requestId: null,
+          kind: 'task',
+          activity: CODEX_ACTIVITY.SILENT,
+          message: this.t('stoppedTurn'),
+        },
       };
       this.#renderBubble();
     } catch (error) { this.#showBubbleError(error?.message || String(error)); }
@@ -1142,6 +1468,26 @@ export class CodexCompanion {
     this.configPanel.querySelector('.agent-send-shortcut-note').textContent = this.locale === 'en-US'
       ? (sendShortcut === 'enter' ? 'Enter sends; Shift+Enter inserts a new line.' : 'Ctrl+Enter sends; Enter inserts a new line.')
       : (sendShortcut === 'enter' ? 'Enter 发送；Shift+Enter 换行。' : 'Ctrl+Enter 发送；Enter 换行。');
+    const bypassPermissions = config.bypassPermissions === true;
+    const bypassInput = this.configPanel.querySelector('.agent-bypass-permissions');
+    const bypassRow = this.configPanel.querySelector('.agent-bypass-row');
+    const bypassWarning = this.configPanel.querySelector('.agent-bypass-warning');
+    bypassInput.checked = bypassPermissions;
+    bypassInput.disabled = replyTransport === 'desktop';
+    bypassRow.classList.toggle('active', bypassPermissions && replyTransport === 'direct');
+    this.configPanel.querySelector('.agent-bypass-label').textContent = this.locale === 'en-US'
+      ? 'Bypass tool approvals' : '跳过工具审批（Bypass）';
+    this.configPanel.querySelector('.agent-bypass-note').textContent = this.locale === 'en-US'
+      ? (replyTransport === 'desktop'
+          ? 'Client-compatible mode follows the original client settings.'
+          : 'Direct turns run without approval prompts or sandbox restrictions.')
+      : (replyTransport === 'desktop'
+          ? '客户端兼容模式沿用原客户端权限设置。'
+          : '开启后，Monitor 直连回合不再询问工具权限或应用沙箱限制。');
+    bypassWarning.hidden = !bypassPermissions || replyTransport !== 'direct';
+    bypassWarning.textContent = this.locale === 'en-US'
+      ? `Bypass is active for ${providerMeta.name} direct replies. Tools can run immediately.`
+      : `${providerMeta.name} 直连 Bypass 已开启，工具可能立即执行。`;
     this.configPanel.dataset.mode = config.homeMode || 'auto';
     this.configPanel.dataset.manualHome = config.manualHome || '';
     this.#setPendingMode(config.homeMode || 'auto');
@@ -1185,6 +1531,7 @@ export class CodexCompanion {
         managedReplies: this.configPanel.querySelector('.codex-managed').checked,
         replyTransport: this.configPanel.querySelector('.codex-reply-transport').value,
         sendShortcut: this.configPanel.querySelector('.agent-send-shortcut').value,
+        bypassPermissions: this.configPanel.querySelector('.agent-bypass-permissions').checked,
         homeMode: this.configPanel.dataset.mode,
         manualHome: this.configPanel.dataset.manualHome || '',
       });

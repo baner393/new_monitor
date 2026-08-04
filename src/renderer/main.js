@@ -24,6 +24,7 @@ import { CodexMotionController, codexStatusSymbol } from './codex-motion.js';
 import { PANEL_DRAG_CONTEXT, resolvePanelDragContext, resolvePanelDragSettledState } from './panel-drag-context.js';
 import { CODEX_ACTIVITY } from '../shared/codex-integration.js';
 import { resolveAmbientSwingEnabled } from '../shared/pet-settings-model.js';
+import { resolveMousePassthrough } from './mouse-passthrough.js';
 
 // ── Font loading gate ─────────────────────────────────────────────────
 async function waitForFonts() {
@@ -303,6 +304,7 @@ const onboardingGuide = new OnboardingGuide({
 });
 const settingsPanel = new SettingsPanel({
   onReplayOnboarding: () => onboardingGuide.restart(),
+  onVisibilityChange: () => requestAnimationFrame(() => synchronizeMousePassthroughFromSystem(true)),
 });
 const subscriptionPanel = new SubscriptionPanel({
   onVisibilityChange: () => requestAnimationFrame(() => synchronizeMousePassthroughFromSystem(true)),
@@ -352,7 +354,9 @@ window.electronAPI.onSettingsChanged((settings) => {
 });
 
 // ── Skin Selector ─────────────────────────────────────────────────────
-const skinSelector = new SkinSelector();
+const skinSelector = new SkinSelector({
+  onVisibilityChange: () => requestAnimationFrame(() => synchronizeMousePassthroughFromSystem(true)),
+});
 document.body.appendChild(skinSelector.container);
 
 // Load skins config
@@ -536,6 +540,7 @@ const inputManager = new InputManager({
   physics,
   shouldIgnoreEvent: (event) => codexCompanion.ownsEvent(event) || onboardingGuide.ownsEvent(event),
   onGesture: (gesture) => onboardingGuide.completeGesture(gesture),
+  onInteractionChange: () => requestAnimationFrame(() => synchronizeMousePassthroughFromSystem(true)),
   beforePetInteraction: () => {
     if (stateMachine.getState() !== 'CODEX_CONFIG_OPEN') return;
     codexCompanion.closeConfig({ notify: false });
@@ -549,55 +554,42 @@ inputManager.enable();
 // ── Transparent click-through ──────────────────────────────────────────
 let isOverSprite = false;
 let lastMousePassthrough = true;
+let lastCursorPosition = null;
+
+function applyMousePassthrough(ignore, force = false) {
+  if (force || ignore !== lastMousePassthrough) {
+    lastMousePassthrough = ignore;
+    window.electronAPI.setIgnoreMouseEvents(ignore);
+  }
+  return ignore;
+}
 
 function synchronizeMousePassthrough(x, y, force = false) {
   const state = stateMachine.getState();
-  if (state === 'PULLING' || state === 'PULLEY_DRAG') {
-    window.electronAPI.setIgnoreMouseEvents(false);
-    lastMousePassthrough = false;
-    return false;
-  }
-
-  // Also keep mouse events when panel is open
-  if (state === 'PANEL_OPEN' || state === 'EXPANDING' || state === 'COLLAPSING' || state === 'HAPPY') {
-    window.electronAPI.setIgnoreMouseEvents(false);
-    lastMousePassthrough = false;
-    return false;
-  }
-
-  if (state === 'CODEX_CONFIG_OPENING' || state === 'CODEX_CONFIG_OPEN' || state === 'CODEX_CONFIG_CLOSING'
-    || codexCompanion.capturesOutsideClicks) {
-    window.electronAPI.setIgnoreMouseEvents(false);
-    lastMousePassthrough = false;
-    return false;
-  }
-
-  // Keep mouse events when settings panel is open
-  if (settingsPanel.isOpen || settingsPanel.isAnimating || subscriptionPanel.isOpen) {
-    window.electronAPI.setIgnoreMouseEvents(false);
-    lastMousePassthrough = false;
-    return false;
-  }
-
-  // Keep mouse events when skin selector is open
-  if (skinSelector.isOpen) {
-    window.electronAPI.setIgnoreMouseEvents(false);
-    lastMousePassthrough = false;
-    return false;
-  }
-  
   const bounds = sprite.getBounds();
   const overSprite = isPointWithinBounds(bounds, x, y, PET_HIT_PADDING);
   const overCodex = codexCompanion.containsPoint(x, y);
   const overOnboarding = onboardingGuide.containsPoint(x, y);
-  const ignore = !(overSprite || overCodex || overOnboarding);
+  const ignore = resolveMousePassthrough({
+    state,
+    capturesOutsideClicks: codexCompanion.capturesOutsideClicks,
+    settingsOpen: settingsPanel.isOpen,
+    settingsAnimating: settingsPanel.isAnimating,
+    subscriptionOpen: subscriptionPanel.isOpen,
+    skinSelectorOpen: skinSelector.isOpen,
+    overSprite,
+    overCompanion: overCodex,
+    overOnboarding,
+  });
   const changed = overSprite !== isOverSprite;
-  if (changed || force || ignore !== lastMousePassthrough) {
+  if (changed) {
     isOverSprite = overSprite;
-    lastMousePassthrough = ignore;
-    window.electronAPI.setIgnoreMouseEvents(ignore);
-    if (changed) sprite.emit(overSprite ? 'pointerover' : 'pointerout');
+    // Pixi normally updates this during pointermove. The pet itself can move
+    // under a stationary cursor, so mirror the hit-test result explicitly.
+    pixiApp.view.style.cursor = overSprite ? 'pointer' : 'default';
+    sprite.emit(overSprite ? 'pointerover' : 'pointerout');
   }
+  applyMousePassthrough(ignore, force);
   if (force) {
     console.log(`[Input] Cursor synchronized after load: ${ignore ? 'passthrough' : 'interactive'}`);
   }
@@ -607,6 +599,7 @@ function synchronizeMousePassthrough(x, y, force = false) {
 async function synchronizeMousePassthroughFromSystem(force = false, announceReady = false) {
   try {
     const cursor = await window.electronAPI.getCursorPosition();
+    if (cursor) lastCursorPosition = cursor;
     const ignore = cursor ? synchronizeMousePassthrough(cursor.x, cursor.y, force) : true;
     if (!cursor) window.electronAPI.setIgnoreMouseEvents(true);
     if (announceReady) window.electronAPI.markRendererInputReady(ignore);
@@ -620,6 +613,7 @@ async function synchronizeMousePassthroughFromSystem(force = false, announceRead
 }
 
 document.addEventListener('mousemove', (event) => {
+  lastCursorPosition = { x: event.clientX, y: event.clientY };
   synchronizeMousePassthrough(event.clientX, event.clientY);
 });
 
@@ -695,9 +689,6 @@ window.electronAPI.requestSystemData();
 document.addEventListener('mousedown', (e) => {
   const state = stateMachine.getState();
   if (state !== 'PANEL_OPEN') return;
-
-  // Safety: ensure window captures mouse events so click-outside works
-  window.electronAPI.setIgnoreMouseEvents(false);
 
   // Don't close the system panel if settings panel is open
   if (settingsPanel.isOpen || settingsPanel.isAnimating || subscriptionPanel.isOpen) return;
@@ -842,8 +833,6 @@ function onStateChange() {
   // BOUNCING → EXPANDING: pull exceeded threshold, open panel
   if (prevState === 'BOUNCING' && newState === 'EXPANDING') {
     console.log('[Panel] EXPANDING — showing panel + HAPPY sprite');
-    // Disable click-through while panel is open
-    window.electronAPI.setIgnoreMouseEvents(false);
     window.electronAPI.setMonitorActivity?.({ panelOpen: true });
     // Position panel below the sprite
     const anchorX = physics.screenAnchorX * window.innerWidth;
@@ -855,7 +844,6 @@ function onStateChange() {
   }
 
   if (prevState === 'BOUNCING' && newState === 'CODEX_CONFIG_OPENING') {
-    window.electronAPI.setIgnoreMouseEvents(false);
     codexCompanion.openConfig();
     stateMachine.transition('CODEX_CONFIG_OPENED');
   }
@@ -874,10 +862,9 @@ function onStateChange() {
     console.log('[Panel] COLLAPSING');
     panel.collapse(() => {
       console.log('[Panel] Fully closed → IDLE');
-      window.electronAPI.setIgnoreMouseEvents(true);
-      isOverSprite = false;
       window.electronAPI.setMonitorActivity?.({ panelOpen: false });
       stateMachine.transition('PANEL_FULLY_CLOSED');
+      synchronizeMousePassthroughFromSystem(true);
     });
   }
   
@@ -936,7 +923,7 @@ function onStateChange() {
       && newState === resolvePanelDragSettledState(_panelDragContext)) {
     const settledContext = _panelDragContext;
     restoreAttachedPanelDragPhysics();
-    window.electronAPI.setIgnoreMouseEvents(false);
+    synchronizeMousePassthroughFromSystem(true);
     console.log(`[PanelDrag] ${settledContext} settled, physics restored`);
   }
 
@@ -1261,6 +1248,12 @@ pixiApp.ticker.add((delta) => {
   codexCompanion.setBubblesSuppressed(suppressCodexBubbles);
   codexCompanion.setAnchor(codexVisualX, codexVisualY);
   codexCompanion.updateFrame();
+  // The pet can move beneath a stationary physical cursor. Re-run the single
+  // hit-test path after its final frame position is known so the transparent
+  // window never keeps stale click-through state.
+  if (lastCursorPosition) {
+    synchronizeMousePassthrough(lastCursorPosition.x, lastCursorPosition.y);
+  }
   if ((state === 'IDLE' || state === 'HOVER') && codexMood !== codexCompanion.mood) {
     codexMood = codexCompanion.mood;
     setSpriteTextureForState(state);

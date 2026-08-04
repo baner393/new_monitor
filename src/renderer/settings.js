@@ -42,7 +42,7 @@ function eventPoint(canvas, event) {
 }
 
 export class SettingsPanel {
-  constructor({ onReplayOnboarding = null } = {}) {
+  constructor({ onReplayOnboarding = null, onVisibilityChange = null } = {}) {
     this._values = { ...PET_SETTINGS_DEFAULTS };
     this._originalValues = { ...PET_SETTINGS_DEFAULTS };
     this._draft = new PetSettingsDraft(this._values);
@@ -57,6 +57,7 @@ export class SettingsPanel {
     this._previewDragging = false;
     this._reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches || false;
     this._onReplayOnboarding = typeof onReplayOnboarding === 'function' ? onReplayOnboarding : null;
+    this._onVisibilityChange = typeof onVisibilityChange === 'function' ? onVisibilityChange : null;
     this._build();
     this._loadSettings();
     this._startPreviewLoop();
@@ -552,7 +553,7 @@ export class SettingsPanel {
       this._animating = false;
       this.panel.focus({ preventScroll: true });
     });
-    window.electronAPI?.setIgnoreMouseEvents?.(false);
+    this._onVisibilityChange?.();
   }
 
   close() {
@@ -565,7 +566,7 @@ export class SettingsPanel {
     this._closeTimer = setTimeout(() => {
       this.root.hidden = true;
       this._animating = false;
-      window.electronAPI?.setIgnoreMouseEvents?.(true);
+      this._onVisibilityChange?.();
     }, this._reducedMotion ? 0 : 180);
   }
 

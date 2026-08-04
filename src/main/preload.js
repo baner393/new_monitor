@@ -76,6 +76,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     disconnectThread: (threadId) => ipcRenderer.invoke('codex-thread-disconnect', threadId),
     reply: (threadId, text) => ipcRenderer.invoke('codex-reply', { threadId, text }),
     respond: (requestId, response) => ipcRenderer.invoke('codex-respond', { requestId, response }),
+    interrupt: (threadId) => ipcRenderer.invoke('codex-interrupt', threadId),
     openApp: (threadId, title) => ipcRenderer.invoke('codex-open-app', { threadId, title }),
     openLink: (href) => ipcRenderer.invoke('codex-open-link', href),
     onStatus: (callback) => {
@@ -96,9 +97,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     markRead: (eventId) => ipcRenderer.invoke('claude-mark-read', eventId),
     markNotified: (eventId) => ipcRenderer.invoke('claude-mark-notified', eventId),
     connectSession: (sessionId) => ipcRenderer.invoke('claude-session-connect', sessionId),
-    disconnectSession: (sessionId) => ipcRenderer.invoke('claude-session-disconnect', sessionId),
-    reply: (sessionId, text) => ipcRenderer.invoke('claude-reply', { sessionId, text }),
-    openApp: (sessionId, title) => ipcRenderer.invoke('claude-open-app', { sessionId, title }),
+      disconnectSession: (sessionId) => ipcRenderer.invoke('claude-session-disconnect', sessionId),
+      reply: (sessionId, text) => ipcRenderer.invoke('claude-reply', { sessionId, text }),
+      respond: (requestId, response) => ipcRenderer.invoke('claude-respond', { requestId, response }),
+      openApp: (sessionId, title) => ipcRenderer.invoke('claude-open-app', { sessionId, title }),
     openLink: (href) => ipcRenderer.invoke('codex-open-link', href),
     onStatus: (callback) => {
       const listener = (_event, snapshot) => callback(snapshot);

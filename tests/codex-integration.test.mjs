@@ -6,6 +6,8 @@ import test from 'node:test';
 import { EventEmitter } from 'node:events';
 
 import {
+  buildCodexTurnPermissionOverrides,
+  buildCodexTurnReasoningOverrides,
   CodexMonitor,
   parseCodexRollout,
   parseCodexSessionIndex,
@@ -23,17 +25,86 @@ import {
   compactCodexTechnicalPreview,
   codexMoodForActivity,
   normalizeCodexIntegrationConfig,
+  normalizeCodexSessionPreference,
   resolveCodexActivity,
   shouldShowCodexConnectionList,
   sortCodexUnreadEvents,
 } from '../src/shared/codex-integration.js';
 import { CodexMotionController, codexDropLength, codexStatusSymbol } from '../src/renderer/codex-motion.js';
+import { canReuseRenderedMessages } from '../src/renderer/codex-companion.js';
 import {
   closeCodexTask,
   createCodexViewState,
   openCodexTask,
   reconcileCodexViewState,
 } from '../src/renderer/codex-view-state.js';
+
+test('conversation copy keeps stable message nodes and limits selection to message text', () => {
+  const companionSource = fs.readFileSync(
+    path.join(process.cwd(), 'src', 'renderer', 'codex-companion.js'),
+    'utf8',
+  );
+  const cssSource = fs.readFileSync(path.join(process.cwd(), 'src', 'renderer', 'index.css'), 'utf8');
+  assert.match(companionSource, /this\.renderedMessageState = new Map\(\)/);
+  assert.match(companionSource, /if \(!force && unchanged\)/);
+  assert.match(companionSource, /#messageSelectionProtected\(\)/);
+  assert.match(companionSource, /this\.messageRenderPending = true/);
+  assert.match(cssSource, /\.codex-message-bubble \{ user-select: none; \}/);
+  assert.match(cssSource, /\.codex-message-text, \.codex-bubble-empty[\s\S]*user-select: text;/);
+});
+
+test('shared agent panel exposes provider-scoped approvals and a direct-only bypass switch', () => {
+  const companionSource = fs.readFileSync(path.join(process.cwd(), 'src', 'renderer', 'codex-companion.js'), 'utf8');
+  const preloadSource = fs.readFileSync(path.join(process.cwd(), 'src', 'main', 'preload.js'), 'utf8');
+  const mainSource = fs.readFileSync(path.join(process.cwd(), 'src', 'main', 'index.js'), 'utf8');
+  const cssSource = fs.readFileSync(path.join(process.cwd(), 'src', 'renderer', 'index.css'), 'utf8');
+  assert.match(companionSource, /agent-bypass-permissions/);
+  assert.match(companionSource, /this\.#api\(provider\)\.respond/);
+  assert.match(companionSource, /bypassInput\.disabled = replyTransport === 'desktop'/);
+  assert.match(preloadSource, /claude-respond/);
+  assert.match(mainSource, /ipcMain\.handle\('claude-respond'/);
+  assert.match(cssSource, /\.agent-bypass-warning/);
+});
+
+test('Claude conversations expose compact per-session reasoning controls', () => {
+  const companionSource = fs.readFileSync(path.join(process.cwd(), 'src', 'renderer', 'codex-companion.js'), 'utf8');
+  const cssSource = fs.readFileSync(path.join(process.cwd(), 'src', 'renderer', 'index.css'), 'utf8');
+  assert.match(companionSource, /claude-thinking-trigger/);
+  assert.match(companionSource, /sessionPreferences:\s*\{[\s\S]*\[sourceId\]: preference/);
+  assert.match(companionSource, /replyTransport !== 'desktop'/);
+  assert.match(companionSource, /claude-effort-field[^\n]*hidden/);
+  assert.match(cssSource, /\.claude-thinking-popover/);
+  assert.match(cssSource, /\.claude-thinking-trigger/);
+});
+
+test('conversation render cache is reused only by the same provider-scoped thread', () => {
+  const messages = [{ id: 'one', role: 'assistant', message: 'hello' }];
+  const previous = { messages, provider: 'codex', locale: 'zh-CN' };
+  assert.equal(canReuseRenderedMessages({
+    activeThreadId: 'codex:thread-1',
+    renderedThreadId: 'codex:thread-1',
+    previous,
+    messages,
+    provider: 'codex',
+    locale: 'zh-CN',
+  }), true);
+  assert.equal(canReuseRenderedMessages({
+    activeThreadId: 'codex:thread-2',
+    renderedThreadId: 'codex:thread-1',
+    previous,
+    messages,
+    provider: 'codex',
+    locale: 'zh-CN',
+  }), false);
+  assert.equal(canReuseRenderedMessages({
+    activeThreadId: 'claude:thread-1',
+    renderedThreadId: 'codex:thread-1',
+    previous,
+    messages,
+    provider: 'claude',
+    locale: 'zh-CN',
+  }), false);
+});
 
 test('technical message previews collapse whitespace and bound the summary line', () => {
   assert.equal(compactCodexTechnicalPreview('  tool\n  call\tresult  '), 'tool call result');
@@ -60,7 +131,7 @@ test('Codex config is portable, versioned and bounds persisted read events', () 
     manualHome: ' C:\\Users\\demo\\.codex ',
     readEventIds: [...Array.from({ length: 1100 }, (_, index) => `event-${index}`), 'event-1099'],
   });
-  assert.equal(normalized.version, 3);
+  assert.equal(normalized.version, 4);
   assert.equal(normalized.homeMode, 'manual');
   assert.equal(normalized.manualHome, 'C:\\Users\\demo\\.codex');
   assert.equal(normalized.replyTransport, 'direct');
@@ -73,6 +144,40 @@ test('Codex config is portable, versioned and bounds persisted read events', () 
   assert.equal(normalizeCodexIntegrationConfig({ sendShortcut: 'ctrl-enter' }).sendShortcut, CODEX_SEND_SHORTCUT.CTRL_ENTER);
   assert.equal(normalizeCodexIntegrationConfig({ newMessageView: 'tasks' }).newMessageView, CODEX_NEW_MESSAGE_VIEW.TASK_ACTIVITY);
   assert.equal(normalizeCodexIntegrationConfig({ newMessageView: 'unknown' }).newMessageView, CODEX_NEW_MESSAGE_VIEW.CONVERSATION);
+});
+
+test('Codex direct turns use on-request approvals unless bypass is enabled', () => {
+  assert.deepEqual(buildCodexTurnPermissionOverrides(false), { approvalPolicy: 'on-request' });
+  assert.deepEqual(buildCodexTurnPermissionOverrides(true), {
+    approvalPolicy: 'never',
+    sandboxPolicy: { type: 'dangerFullAccess' },
+  });
+  assert.equal(normalizeCodexIntegrationConfig({ bypassPermissions: true }).bypassPermissions, true);
+});
+
+test('Codex reasoning effort is normalized per session and omitted when inherited', () => {
+  assert.deepEqual(normalizeCodexSessionPreference({ effort: 'XHIGH' }), { effort: 'xhigh' });
+  assert.deepEqual(normalizeCodexSessionPreference({ effort: 'unsupported' }), { effort: 'inherit' });
+  assert.deepEqual(buildCodexTurnReasoningOverrides({ effort: 'inherit' }), {});
+  assert.deepEqual(buildCodexTurnReasoningOverrides({ effort: 'max' }), { effort: 'max' });
+  const config = normalizeCodexIntegrationConfig({
+    sessionPreferences: { threadA: { effort: 'high' }, threadB: { effort: 'invalid' } },
+  });
+  assert.deepEqual(config.sessionPreferences, {
+    threadA: { effort: 'high' },
+    threadB: { effort: 'inherit' },
+  });
+});
+
+test('Codex conversations expose compact per-session reasoning controls', () => {
+  const companionSource = fs.readFileSync(path.join(process.cwd(), 'src', 'renderer', 'codex-companion.js'), 'utf8');
+  const cssSource = fs.readFileSync(path.join(process.cwd(), 'src', 'renderer', 'index.css'), 'utf8');
+  assert.match(companionSource, /codex-reasoning-trigger/);
+  assert.match(companionSource, /codex-reasoning-popover/);
+  assert.match(companionSource, /reasoningModels/);
+  assert.match(companionSource, /sessionPreferences:\s*\{[\s\S]*\[sourceId\]: preference/);
+  assert.match(cssSource, /\.codex-reasoning-trigger/);
+  assert.match(cssSource, /\.codex-reasoning-popover/);
 });
 
 test('unread Codex events follow needs-input, blocked, ready priority', () => {
@@ -597,6 +702,157 @@ test('existing running task accepts a window reply through turn steer when its a
   }
 });
 
+test('idle direct replies reload the App Server so desktop compaction state is fresh', async () => {
+  class FakeAppServer extends EventEmitter {
+    calls = [];
+    stopped = false;
+    constructor(index) {
+      super();
+      this.index = index;
+    }
+    async connect() {}
+    async request(method, params) {
+      this.calls.push({ method, params });
+      if (method === 'thread/list') return { data: [], nextCursor: null };
+      if (method === 'model/list') return { data: [{ model: 'gpt-test', defaultReasoningEffort: 'medium', supportedReasoningEfforts: [{ reasoningEffort: 'high' }] }] };
+      if (method === 'thread/resume') return {
+        thread: { id: 'compacted-thread', status: { type: 'idle' }, name: 'Compacted task', turns: [] },
+      };
+      if (method === 'turn/start') return { turn: { id: 'fresh-turn' } };
+      return {};
+    }
+    stop() { this.stopped = true; }
+  }
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'new-monitor-codex-fresh-reply-'));
+  const sessions = path.join(root, 'sessions');
+  fs.mkdirSync(sessions);
+  fs.writeFileSync(path.join(sessions, 'idle.jsonl'), `${rollout([
+    { timestamp: new Date().toISOString(), type: 'session_meta', payload: { id: 'compacted-thread', cwd: root } },
+  ])}\n`);
+  const servers = [];
+  const monitor = new CodexMonitor({
+    config: { version: 4, enabled: true, homeMode: 'manual', manualHome: root, sessionPreferences: { 'compacted-thread': { effort: 'high' } } },
+    appServerFactory: () => {
+      const server = new FakeAppServer(servers.length);
+      servers.push(server);
+      return server;
+    },
+  });
+  try {
+    await monitor.scan(true);
+    await monitor.connectThread('compacted-thread');
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      const state = monitor.getSnapshot().tasks.find((task) => task.id === 'compacted-thread')?.connectionState;
+      if (state === CODEX_CONNECTION.CONNECTED) break;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    const result = await monitor.reply('compacted-thread', 'use the compacted state');
+    assert.equal(result.mode, 'turn');
+    assert.equal(result.turnId, 'fresh-turn');
+    assert.equal(servers.length, 2);
+    assert.equal(servers[0].stopped, true);
+    assert.ok(servers[1].calls.some((call) => call.method === 'thread/resume'));
+    assert.equal(servers[1].calls.find((call) => call.method === 'turn/start')?.params.input[0].text, 'use the compacted state');
+    assert.equal(servers[1].calls.find((call) => call.method === 'turn/start')?.params.effort, 'high');
+  } finally {
+    monitor.stop();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('pending approvals stay actionable, strip null permission grants, and allow interrupting the turn', async () => {
+  class FakeAppServer extends EventEmitter {
+    calls = [];
+    responses = [];
+    async connect() {}
+    async request(method, params) {
+      this.calls.push({ method, params });
+      if (method === 'thread/list') return { data: [], nextCursor: null };
+      if (method === 'thread/resume') return {
+        thread: {
+          id: 'approval-thread',
+          status: { type: 'active' },
+          turns: [{ id: 'approval-turn', status: { type: 'inProgress' }, items: [] }],
+        },
+      };
+      return {};
+    }
+    sendServerResponse(id, result) { this.responses.push({ id, result }); }
+    stop() {}
+  }
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'new-monitor-codex-approval-'));
+  const sessions = path.join(root, 'sessions');
+  fs.mkdirSync(sessions);
+  fs.writeFileSync(path.join(sessions, 'approval.jsonl'), `${rollout([
+    { timestamp: new Date().toISOString(), type: 'session_meta', payload: { id: 'approval-thread', cwd: root } },
+  ])}\n`);
+  const server = new FakeAppServer();
+  const monitor = new CodexMonitor({
+    config: { version: 3, enabled: true, homeMode: 'manual', manualHome: root },
+    appServerFactory: () => server,
+  });
+  try {
+    await monitor.scan(true);
+    await monitor.connectThread('approval-thread');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    server.emit('server-request', {
+      id: 'approval-request',
+      method: 'item/permissions/requestApproval',
+      params: {
+        threadId: 'approval-thread',
+        turnId: 'approval-turn',
+        itemId: 'item-1',
+        permissions: { network: { enabled: true }, fileSystem: null },
+      },
+    });
+    const pending = monitor.getSnapshot().unread.find((event) => event.requestId === 'approval-request');
+    assert.ok(pending);
+    assert.equal(monitor.getSnapshot().tasks.find((task) => task.id === 'approval-thread')?.capabilities.interrupt, true);
+    monitor.markRead(pending.id);
+    assert.ok(monitor.getSnapshot().unread.some((event) => event.id === pending.id));
+
+    await monitor.respond('approval-request', { decision: 'accept' });
+    assert.deepEqual(server.responses, [{
+      id: 'approval-request',
+      result: { permissions: { network: { enabled: true } }, scope: 'turn' },
+    }]);
+    assert.equal(monitor.getSnapshot().unread.some((event) => event.id === pending.id), false);
+
+    server.emit('server-request', {
+      id: 'legacy-request',
+      method: 'execCommandApproval',
+      params: {
+        conversationId: 'approval-thread',
+        callId: 'legacy-call',
+        command: ['npm.cmd', 'test'],
+        reason: 'run checks',
+      },
+    });
+    const legacy = monitor.getSnapshot().unread.find((event) => event.requestId === 'legacy-request');
+    assert.equal(legacy?.kind, 'commandApproval');
+    assert.match(legacy?.message || '', /run checks/);
+    await monitor.respond('legacy-request', { decision: 'acceptForSession' });
+    assert.deepEqual(server.responses.at(-1), {
+      id: 'legacy-request',
+      result: { decision: 'approved_for_session' },
+    });
+
+    const interrupted = await monitor.interrupt('approval-thread');
+    assert.deepEqual(interrupted, {
+      interrupted: true,
+      threadId: 'approval-thread',
+      turnId: 'approval-turn',
+    });
+    assert.deepEqual(server.calls.find((call) => call.method === 'turn/interrupt')?.params, {
+      threadId: 'approval-thread',
+      turnId: 'approval-turn',
+    });
+  } finally {
+    monitor.stop();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('desktop reply transport never writes through a second App Server', async () => {
   class FakeAppServer extends EventEmitter {
     calls = [];
@@ -733,6 +989,14 @@ test('App Server system errors become one clear blocked notification', async () 
     assert.equal(snapshot.activity, CODEX_ACTIVITY.BLOCKED);
     assert.equal(snapshot.unread.filter((event) => event.kind === 'failed').length, 1);
     assert.equal(snapshot.unread.find((event) => event.kind === 'failed').message, 'provider stopped');
+
+    server.emit('notification', {
+      method: 'turn/started',
+      params: { threadId: 'error-thread', turn: { id: 'recovery-turn' } },
+    });
+    const recovered = monitor.getSnapshot();
+    assert.equal(recovered.activity, CODEX_ACTIVITY.RUNNING);
+    assert.equal(recovered.unread.filter((event) => event.activity === CODEX_ACTIVITY.BLOCKED).length, 0);
   } finally {
     monitor.stop();
     fs.rmSync(root, { recursive: true, force: true });

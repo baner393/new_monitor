@@ -1,4 +1,4 @@
-export const CODEX_INTEGRATION_CONFIG_VERSION = 3;
+export const CODEX_INTEGRATION_CONFIG_VERSION = 4;
 
 export const CODEX_ACTIVITY = Object.freeze({
   DISCONNECTED: 'disconnected',
@@ -33,12 +33,17 @@ export const CODEX_SEND_SHORTCUT = Object.freeze({
   CTRL_ENTER: 'ctrl-enter',
 });
 
+export const CODEX_REASONING_EFFORTS = Object.freeze([
+  'low', 'medium', 'high', 'xhigh', 'max', 'ultra',
+]);
+
 export const DEFAULT_CODEX_INTEGRATION_CONFIG = Object.freeze({
   version: CODEX_INTEGRATION_CONFIG_VERSION,
   enabled: false,
   homeMode: 'auto',
   manualHome: '',
   managedReplies: true,
+  bypassPermissions: false,
   replyTransport: CODEX_REPLY_TRANSPORT.DIRECT,
   sendShortcut: CODEX_SEND_SHORTCUT.ENTER,
   newMessageView: CODEX_NEW_MESSAGE_VIEW.CONVERSATION,
@@ -48,6 +53,7 @@ export const DEFAULT_CODEX_INTEGRATION_CONFIG = Object.freeze({
   desiredThreadIds: Object.freeze([]),
   readEventIds: Object.freeze([]),
   notifiedEventIds: Object.freeze([]),
+  sessionPreferences: Object.freeze({}),
 });
 
 const ACTIVITY_PRIORITY = Object.freeze({
@@ -68,6 +74,21 @@ function boundedStringList(value, maxItems, maxLength) {
   return [...new Set(value.map((item) => cleanText(item, maxLength)).filter(Boolean))].slice(-maxItems);
 }
 
+export function normalizeCodexSessionPreference(value = {}) {
+  const effort = String(value?.effort || '').toLowerCase();
+  return { effort: CODEX_REASONING_EFFORTS.includes(effort) ? effort : 'inherit' };
+}
+
+function normalizeCodexSessionPreferences(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const normalized = {};
+  for (const [rawId, preference] of Object.entries(value).slice(-128)) {
+    const id = cleanText(rawId, 240);
+    if (id) normalized[id] = normalizeCodexSessionPreference(preference);
+  }
+  return normalized;
+}
+
 export function normalizeCodexIntegrationConfig(value = {}) {
   const enabled = value.enabled === true;
   const enabledAtMs = Number.isFinite(Number(value.enabledAtMs))
@@ -79,6 +100,7 @@ export function normalizeCodexIntegrationConfig(value = {}) {
     homeMode: value.homeMode === 'manual' ? 'manual' : 'auto',
     manualHome: cleanText(value.manualHome, 1024),
     managedReplies: value.managedReplies !== false,
+    bypassPermissions: value.bypassPermissions === true,
     replyTransport: value.replyTransport === CODEX_REPLY_TRANSPORT.DESKTOP
       ? CODEX_REPLY_TRANSPORT.DESKTOP
       : CODEX_REPLY_TRANSPORT.DIRECT,
@@ -94,6 +116,7 @@ export function normalizeCodexIntegrationConfig(value = {}) {
     desiredThreadIds: boundedStringList(value.desiredThreadIds, 128, 240),
     readEventIds: boundedStringList(value.readEventIds, 1024, 240),
     notifiedEventIds: boundedStringList(value.notifiedEventIds, 1024, 240),
+    sessionPreferences: normalizeCodexSessionPreferences(value.sessionPreferences),
   };
 }
 
@@ -125,6 +148,7 @@ function taskCapabilities(task) {
   return {
     reply: connected,
     approve: connected && ownedRequest,
+    interrupt: connected && Boolean(task.canInterrupt || task.activeTurnId),
     jump: true,
   };
 }
@@ -168,7 +192,7 @@ export function buildCodexVisibleTasks(tasks = [], unread = []) {
       unreadCount: 0,
       runningChildren: 0,
       connectionState: CODEX_CONNECTION.DISCONNECTED,
-      capabilities: { reply: false, approve: false, jump: true },
+      capabilities: { reply: false, approve: false, interrupt: false, jump: true },
     };
     current.title ||= event.title;
     current.project ||= event.project;

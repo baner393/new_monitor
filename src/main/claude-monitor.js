@@ -1,13 +1,17 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import http from 'http';
+import { randomBytes } from 'crypto';
 import { spawn } from 'child_process';
 import {
   CLAUDE_ACTIVITY,
   CLAUDE_CONNECTION,
   CLAUDE_REPLY_TRANSPORT,
+  CLAUDE_THINKING_MODE,
   buildClaudeVisibleTasks,
   normalizeClaudeIntegrationConfig,
+  normalizeClaudeSessionPreference,
   normalizeClaudeTask,
   resolveClaudeActivity,
   sortClaudeUnreadEvents,
@@ -21,6 +25,7 @@ const RUNNING_STALE_MS = 45 * 60 * 1000;
 const DEFAULT_POLL_MS = 3000;
 const CLAUDE_PERMISSION_MODES = new Set(['default', 'manual', 'acceptEdits', 'plan', 'auto', 'dontAsk', 'bypassPermissions']);
 const CLAUDE_EFFORT_LEVELS = new Set(['low', 'medium', 'high', 'xhigh', 'max', 'ultracode']);
+const CLAUDE_APPROVAL_TOOL_MATCHER = 'Bash|Edit|Write|NotebookEdit|WebFetch|WebSearch|Task|KillShell|mcp__.*';
 
 function cleanText(value, limit = 100_000) {
   return String(value ?? '').replace(/\u0000/g, '').trim().slice(0, limit);
@@ -36,20 +41,97 @@ export function normalizeClaudeEffort(value) {
   return CLAUDE_EFFORT_LEVELS.has(effort) ? effort : '';
 }
 
-export function buildClaudeDirectArgs({ sessionId = '', message = '', permissionMode = '', effort = '' } = {}) {
+export function buildClaudeDirectArgs({
+  sessionId = '', message = '', permissionMode = '', effort = '', thinkingMode = CLAUDE_THINKING_MODE.AUTO,
+  bypassPermissions = false, permissionHookUrl = '',
+} = {}) {
   const args = [
     '-p', '--resume', cleanText(sessionId, 240),
     '--output-format', 'stream-json', '--verbose', '--include-partial-messages',
   ];
-  const normalizedMode = normalizeClaudePermissionMode(permissionMode);
-  if (normalizedMode) args.push('--permission-mode', normalizedMode);
-  // Do not forward transcript effort as a CLI override. Claude Code can resume
-  // sessions through gateways whose thinking schema differs from the local CLI;
-  // --effort takes precedence over the working user/project configuration and
-  // can make the follow-up request after a tool result fail with API 400.
-  void effort;
-  args.push(cleanText(message));
+  if (bypassPermissions) {
+    args.push('--dangerously-skip-permissions');
+  } else {
+    const normalizedMode = normalizeClaudePermissionMode(permissionMode);
+    args.push('--permission-mode', normalizedMode === 'bypassPermissions' ? 'manual' : (normalizedMode || 'manual'));
+    if (permissionHookUrl) {
+      args.push('--settings', JSON.stringify({
+        hooks: {
+          PreToolUse: [{
+            matcher: CLAUDE_APPROVAL_TOOL_MATCHER,
+            hooks: [{ type: 'http', url: permissionHookUrl, timeout: 600 }],
+          }],
+        },
+      }));
+    }
+  }
+  // Only an explicit per-session custom choice may override effort. Auto and
+  // inherit preserve the original Claude Code configuration; compatibility
+  // mode is applied through the child environment below.
+  if (thinkingMode === CLAUDE_THINKING_MODE.CUSTOM) {
+    args.push('--effort', normalizeClaudeEffort(effort) || 'high');
+  }
+  if (cleanText(message)) args.push(cleanText(message));
   return args;
+}
+
+function usesThirdPartyClaudeGateway(env = {}, gatewayBaseUrl = '') {
+  const baseUrl = cleanText(gatewayBaseUrl || env.ANTHROPIC_BASE_URL, 2048);
+  if (!baseUrl) return false;
+  try { return new URL(baseUrl).hostname.toLowerCase() !== 'api.anthropic.com'; }
+  catch { return true; }
+}
+
+export function buildClaudeDirectEnv({
+  baseEnv = process.env, gatewayBaseUrl = '', thinkingMode = CLAUDE_THINKING_MODE.AUTO, effort = 'high',
+} = {}) {
+  const env = { ...baseEnv };
+  const requested = Object.values(CLAUDE_THINKING_MODE).includes(thinkingMode)
+    ? thinkingMode : CLAUDE_THINKING_MODE.AUTO;
+  const effective = requested === CLAUDE_THINKING_MODE.AUTO
+    ? (usesThirdPartyClaudeGateway(env, gatewayBaseUrl) ? CLAUDE_THINKING_MODE.DISABLED : CLAUDE_THINKING_MODE.INHERIT)
+    : requested;
+
+  if (effective === CLAUDE_THINKING_MODE.DISABLED) {
+    delete env.CLAUDE_CODE_EFFORT_LEVEL;
+    delete env.MAX_THINKING_TOKENS;
+    env.CLAUDE_CODE_DISABLE_THINKING = '1';
+  } else if (effective === CLAUDE_THINKING_MODE.CUSTOM) {
+    delete env.CLAUDE_CODE_DISABLE_THINKING;
+    env.CLAUDE_CODE_EFFORT_LEVEL = normalizeClaudeEffort(effort) || 'high';
+  }
+  return { env, effectiveThinkingMode: effective };
+}
+
+export function resolveClaudeGatewayBaseUrl({ config = {}, cwd = '', env = process.env } = {}) {
+  let baseUrl = cleanText(env.ANTHROPIC_BASE_URL, 2048);
+  const claudeHome = resolveClaudeHome(config, env);
+  const files = [
+    claudeHome && path.join(claudeHome, 'settings.json'),
+    cwd && path.join(cwd, '.claude', 'settings.json'),
+    cwd && path.join(cwd, '.claude', 'settings.local.json'),
+  ].filter(Boolean);
+  for (const file of files) {
+    try {
+      const settings = JSON.parse(fs.readFileSync(file, 'utf8'));
+      const configured = cleanText(settings?.env?.ANTHROPIC_BASE_URL, 2048);
+      if (configured) baseUrl = configured;
+    } catch { /* Missing and partially-written settings fall back to the previous source. */ }
+  }
+  return baseUrl;
+}
+
+export function claudeHookResponse(decision) {
+  const accepted = decision === 'accept' || decision === 'acceptForSession';
+  return {
+    hookSpecificOutput: {
+      hookEventName: 'PreToolUse',
+      permissionDecision: accepted ? 'allow' : 'deny',
+      permissionDecisionReason: accepted
+        ? 'Approved in Turtle Monitor'
+        : 'Declined in Turtle Monitor',
+    },
+  };
 }
 
 export function formatClaudeManagedError(diagnostic, { effort = '', retried = false } = {}) {
@@ -60,7 +142,7 @@ export function formatClaudeManagedError(diagnostic, { effort = '', retried = fa
     .trim();
   if (/(?:\b400\b|bad\s*request|invalid_request)/i.test(cleaned)
     && /['"]?type['"]?.{0,80}(?:enabled|disabled).{0,40}auto/i.test(cleaned)) {
-    return 'Claude Code API 400：模型网关拒绝了本次请求中的 thinking 类型。Monitor 直连已停止覆盖推理强度，请更新客户端后重新建立直连。';
+    return 'Claude Code API 400：模型网关不接受本次请求的 thinking 类型。请在当前会话标题旁打开“推理”，选择“自动兼容”或“关闭思考”后重试。';
   }
   if (/(?:\b400\b|bad\s*request|invalid_request)/i.test(cleaned)
     && /effort|thinking|reasoning/i.test(cleaned)) {
@@ -90,6 +172,13 @@ function stringifyToolValue(value) {
   if (typeof value === 'string') return cleanText(value);
   try { return cleanText(JSON.stringify(value, null, 2)); }
   catch { return cleanText(String(value)); }
+}
+
+function summarizeClaudeToolRequest(toolName, toolInput) {
+  const input = toolInput && typeof toolInput === 'object' ? toolInput : {};
+  const detail = input.command || input.file_path || input.path || input.url || input.query || input.description || '';
+  const summary = cleanText(detail, 240).replace(/\s+/g, ' ');
+  return summary ? `${cleanText(toolName, 80)} · ${summary}` : cleanText(toolName, 80) || 'Claude Code 工具请求';
 }
 
 function messageContentBlocks(message) {
@@ -454,6 +543,11 @@ export class ClaudeMonitor {
     this.owners = new Map();
     this.managedProcesses = new Map();
     this.managedErrors = new Map();
+    this.managedUnread = new Map();
+    this.pendingApprovals = new Map();
+    this.permissionHookServer = null;
+    this.permissionHookUrl = '';
+    this.permissionHookToken = randomBytes(24).toString('hex');
     this.lastSnapshot = this.#emptySnapshot();
   }
 
@@ -466,6 +560,10 @@ export class ClaudeMonitor {
     for (const child of this.managedProcesses.values()) child.kill?.();
     this.managedProcesses.clear();
     this.managedErrors.clear();
+    this.#denyAllPendingApprovals('Monitor 已关闭');
+    this.permissionHookServer?.close();
+    this.permissionHookServer = null;
+    this.permissionHookUrl = '';
   }
   getConfig() {
     return {
@@ -473,6 +571,7 @@ export class ClaudeMonitor {
       desiredSessionIds: [...this.config.desiredSessionIds],
       readEventIds: [...this.config.readEventIds],
       notifiedEventIds: [...this.config.notifiedEventIds],
+      sessionPreferences: structuredClone(this.config.sessionPreferences || {}),
     };
   }
   updateConfig(next) {
@@ -578,7 +677,10 @@ export class ClaudeMonitor {
   #rebuildSnapshot() {
     const readIds = new Set(this.config.readEventIds);
     const notified = new Set(this.config.notifiedEventIds);
-    const allUnread = sortClaudeUnreadEvents([...this.unread.values()].filter((event) => !readIds.has(event.id)));
+    const allUnread = sortClaudeUnreadEvents([
+      ...this.unread.values(),
+      ...this.managedUnread.values(),
+    ].filter((event) => !readIds.has(event.id) || this.managedUnread.has(event.id)));
     const desired = new Set(this.config.desiredSessionIds);
     const tasks = [...this.tasks.values()].map((task) => {
       const owner = this.owners.get(task.id);
@@ -589,6 +691,7 @@ export class ClaudeMonitor {
       const taskWithManagedError = managedError ? { ...currentTask, activity: CLAUDE_ACTIVITY.BLOCKED } : currentTask;
       const displayedTask = owner?.name ? { ...taskWithManagedError, title: sanitizeTaskTitle(owner.name) } : taskWithManagedError;
       const managed = this.managedProcesses.has(task.id);
+      const pendingApproval = [...this.pendingApprovals.values()].some((pending) => pending.sessionId === task.id);
       let connectionState = CLAUDE_CONNECTION.DISCONNECTED;
       if (this.config.replyTransport === CLAUDE_REPLY_TRANSPORT.DESKTOP) connectionState = CLAUDE_CONNECTION.CONNECTED;
       else if (desired.has(task.id)) {
@@ -596,7 +699,7 @@ export class ClaudeMonitor {
           ? CLAUDE_CONNECTION.TEMPORARY_READ_ONLY
           : CLAUDE_CONNECTION.CONNECTED;
       }
-      const canReply = this.config.managedReplies === true
+      const canReply = !pendingApproval && this.config.managedReplies === true
         && (this.config.replyTransport === CLAUDE_REPLY_TRANSPORT.DESKTOP
           || connectionState === CLAUDE_CONNECTION.CONNECTED);
       return {
@@ -608,7 +711,8 @@ export class ClaudeMonitor {
           ? '该会话正在原终端或 IDE 中运行，请使用客户端兼容模式'
           : ''),
         canReply,
-        capabilities: { reply: canReply, approve: false, jump: true },
+        hasOwnedRequest: pendingApproval,
+        capabilities: { reply: canReply, approve: pendingApproval, jump: true },
       };
     });
     const summary = buildClaudeVisibleTasks(tasks, allUnread);
@@ -646,6 +750,7 @@ export class ClaudeMonitor {
   markRead(eventId) {
     const id = cleanText(eventId, 240);
     if (!id) return this.getSnapshot();
+    if (this.managedUnread.has(id)) return this.getSnapshot();
     this.config = normalizeClaudeIntegrationConfig({
       ...this.config,
       readEventIds: [...this.config.readEventIds, id],
@@ -682,6 +787,118 @@ export class ClaudeMonitor {
     return this.getSnapshot();
   }
 
+  async #ensurePermissionHookServer() {
+    if (this.permissionHookServer?.listening && this.permissionHookUrl) return this.permissionHookUrl;
+    const server = http.createServer((request, response) => this.#handlePermissionHook(request, response));
+    await new Promise((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(0, '127.0.0.1', () => {
+        server.off('error', reject);
+        resolve();
+      });
+    });
+    server.unref?.();
+    const address = server.address();
+    this.permissionHookServer = server;
+    this.permissionHookUrl = `http://127.0.0.1:${address.port}/${this.permissionHookToken}`;
+    return this.permissionHookUrl;
+  }
+
+  #handlePermissionHook(request, response) {
+    const expectedPath = `/${this.permissionHookToken}`;
+    if (request.method !== 'POST' || request.url !== expectedPath) {
+      response.writeHead(404).end();
+      return;
+    }
+    let body = '';
+    request.setEncoding('utf8');
+    request.on('data', (chunk) => {
+      body += chunk;
+      if (body.length > 1024 * 1024) request.destroy();
+    });
+    request.on('end', () => {
+      let payload;
+      try { payload = JSON.parse(body); }
+      catch {
+        response.writeHead(400).end();
+        return;
+      }
+      const sessionId = cleanText(payload.session_id, 240);
+      const toolName = cleanText(payload.tool_name, 80);
+      if (!sessionId || !toolName || !this.tasks.has(sessionId)) {
+        response.writeHead(200, { 'Content-Type': 'application/json' });
+        response.end(JSON.stringify(claudeHookResponse('decline')));
+        return;
+      }
+      const toolUseId = cleanText(payload.tool_use_id, 240) || randomBytes(12).toString('hex');
+      const requestId = `claude-approval:${sessionId}:${toolUseId}`;
+      const eventId = `${requestId}:needsInput`;
+      if (this.pendingApprovals.has(requestId)) this.#resolveClaudeApproval(requestId, 'decline');
+      const task = this.tasks.get(sessionId) || {};
+      const timeout = setTimeout(() => this.#resolveClaudeApproval(requestId, 'decline'), 9 * 60 * 1000);
+      timeout.unref?.();
+      this.pendingApprovals.set(requestId, { response, sessionId, eventId, timeout });
+      this.managedUnread.set(eventId, {
+        id: eventId,
+        threadId: sessionId,
+        title: task.title || 'Claude Code 会话',
+        project: task.project || sanitizeProjectName(task.cwd),
+        activity: CLAUDE_ACTIVITY.NEEDS_INPUT,
+        kind: 'approval',
+        message: summarizeClaudeToolRequest(toolName, payload.tool_input),
+        createdAtMs: Date.now(),
+        managed: true,
+        canReply: true,
+        requestId,
+        supported: true,
+        availableDecisions: ['accept', 'decline', 'cancel'],
+      });
+      this.tasks.set(sessionId, { ...task, activity: CLAUDE_ACTIVITY.NEEDS_INPUT, updatedAtMs: Date.now() });
+      response.on('close', () => {
+        if (!response.writableEnded) this.#discardClaudeApproval(requestId);
+      });
+      this.#rebuildSnapshot();
+    });
+  }
+
+  #discardClaudeApproval(requestId) {
+    const pending = this.pendingApprovals.get(requestId);
+    if (!pending) return;
+    clearTimeout(pending.timeout);
+    this.pendingApprovals.delete(requestId);
+    this.managedUnread.delete(pending.eventId);
+    this.#rebuildSnapshot();
+  }
+
+  #resolveClaudeApproval(requestId, decision) {
+    const pending = this.pendingApprovals.get(String(requestId));
+    if (!pending) return false;
+    clearTimeout(pending.timeout);
+    this.pendingApprovals.delete(String(requestId));
+    this.managedUnread.delete(pending.eventId);
+    if (!pending.response.writableEnded) {
+      pending.response.writeHead(200, { 'Content-Type': 'application/json' });
+      pending.response.end(JSON.stringify(claudeHookResponse(decision)));
+    }
+    const task = this.tasks.get(pending.sessionId);
+    if (task?.activity === CLAUDE_ACTIVITY.NEEDS_INPUT) {
+      this.tasks.set(pending.sessionId, { ...task, activity: CLAUDE_ACTIVITY.RUNNING, updatedAtMs: Date.now() });
+    }
+    this.#rebuildSnapshot();
+    return true;
+  }
+
+  #denyAllPendingApprovals() {
+    for (const requestId of [...this.pendingApprovals.keys()]) this.#resolveClaudeApproval(requestId, 'decline');
+  }
+
+  respond(requestId, response = {}) {
+    if (!this.#resolveClaudeApproval(requestId, response.decision)) {
+      throw new Error('这项 Claude Code 工具请求已经结束');
+    }
+    return { accepted: true };
+  }
+
   async reply(sessionId, text) {
     const id = cleanText(sessionId, 240);
     const message = cleanText(text);
@@ -704,21 +921,38 @@ export class ClaudeMonitor {
     });
     if (!executable) throw new Error('没有找到 Claude Code CLI，请先安装或设置 CLAUDE_CLI_PATH');
     this.managedErrors.delete(id);
+    const bypassPermissions = this.config.bypassPermissions === true;
+    const sessionPreference = normalizeClaudeSessionPreference(this.config.sessionPreferences?.[id]);
+    const permissionHookUrl = bypassPermissions ? '' : await this.#ensurePermissionHookServer();
     await this.#startManagedTurn({
       id,
       message,
       task,
       executable,
       permissionMode: task.permissionMode,
+      bypassPermissions,
+      permissionHookUrl,
+      thinkingMode: sessionPreference.thinkingMode,
+      effort: sessionPreference.effort,
+      gatewayBaseUrl: resolveClaudeGatewayBaseUrl({ config: this.config, cwd: task.cwd }),
     });
     return { accepted: true, mode: 'turn-start', openClient: false, sessionId: id, threadId: id };
   }
 
-  async #startManagedTurn({ id, message, task, executable, permissionMode }) {
-    const args = buildClaudeDirectArgs({ sessionId: id, message, permissionMode });
+  async #startManagedTurn({ id, message, task, executable, permissionMode, bypassPermissions, permissionHookUrl, thinkingMode, effort, gatewayBaseUrl }) {
+    const directEnvironment = buildClaudeDirectEnv({ baseEnv: process.env, gatewayBaseUrl, thinkingMode, effort });
+    const args = buildClaudeDirectArgs({
+      sessionId: id,
+      message,
+      permissionMode,
+      bypassPermissions,
+      permissionHookUrl,
+      thinkingMode: directEnvironment.effectiveThinkingMode,
+      effort,
+    });
     const child = this.spawnImpl(executable, args, {
       cwd: task.cwd || os.homedir(),
-      env: { ...process.env },
+      env: directEnvironment.env,
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -740,6 +974,9 @@ export class ClaudeMonitor {
     child.once('exit', (code) => {
       if (this.managedProcesses.get(id) !== child) return;
       this.managedProcesses.delete(id);
+      for (const [requestId, pending] of this.pendingApprovals) {
+        if (pending.sessionId === id) this.#resolveClaudeApproval(requestId, 'decline');
+      }
       if (!code || code === 0) {
         this.managedErrors.delete(id);
         void this.scan(true);

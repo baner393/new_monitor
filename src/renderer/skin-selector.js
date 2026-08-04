@@ -8,7 +8,7 @@
    */
 
 export class SkinSelector {
-  constructor() {
+  constructor({ onVisibilityChange = null } = {}) {
     this.container = document.createElement('div');
     this.container.id = 'skin-selector';
     this.container.style.cssText = `
@@ -31,6 +31,7 @@ export class SkinSelector {
     this.currentSkin = 'turtle';
     this.onSkinChange = null;
     this._configPath = null;
+    this._onVisibilityChange = typeof onVisibilityChange === 'function' ? onVisibilityChange : null;
 
     this._buildUI();
   }
@@ -276,17 +277,13 @@ export class SkinSelector {
     this.isOpen = true;
     this.container.style.display = 'flex';
     this._renderSkinGrid();
-    if (window.electronAPI?.setIgnoreMouseEvents) {
-      window.electronAPI.setIgnoreMouseEvents(false);
-    }
+    this._onVisibilityChange?.();
   }
 
   close() {
     this.isOpen = false;
     this.container.style.display = 'none';
-    if (window.electronAPI?.setIgnoreMouseEvents) {
-      window.electronAPI.setIgnoreMouseEvents(true);
-    }
+    this._onVisibilityChange?.();
   }
 
   getCurrentSkin() {
