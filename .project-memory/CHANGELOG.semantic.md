@@ -1,5 +1,12 @@
 # Semantic change log
 
+## 2026-08-05 - Inline approval promotion
+
+Status: Confirmed in the uncommitted working tree. Evidence: `src/renderer/codex-view-state.js`, `tests/codex-integration.test.mjs`, `npm test`, and `npm run verify`.
+
+- An open Codex or Claude task detail now promotes a newly pending, supported approval or question from that same provider-scoped thread immediately. The composer and stop action are replaced by the actionable controls without requiring a window reload.
+- Ordinary alerts and alerts from other threads still do not replace a conversation the user is reading.
+
 ## 2026-08-05 - Transparent pet hit testing stabilization
 
 Status: Confirmed in the uncommitted working tree. Evidence: `src/renderer/main.js`, `src/renderer/input.js`, `tests/codex-integration.test.mjs`, `npm test`, and `npm run verify`.

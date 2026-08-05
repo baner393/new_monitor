@@ -19,6 +19,15 @@ function eventFor(snapshot, eventId) {
   return (snapshot?.unread || []).find((event) => event.id === eventId) || null;
 }
 
+function actionableRequestFor(snapshot, threadId) {
+  return (snapshot?.unread || []).find((event) => (
+    String(event?.threadId || '') === String(threadId || '')
+    && Boolean(event?.requestId)
+    && event?.supported !== false
+    && event?.activity === CODEX_ACTIVITY.NEEDS_INPUT
+  )) || null;
+}
+
 function currentEvent(event, task) {
   if (!event || !task) return event;
   return {
@@ -67,17 +76,19 @@ export function closeCodexTask() {
 export function reconcileCodexViewState(state, snapshot, { allowNotification = true } = {}) {
   if (state?.mode === 'manual' && state.threadId) {
     const task = taskFor(snapshot, state.threadId);
-    const current = eventFor(snapshot, state.eventId);
+    const current = actionableRequestFor(snapshot, state.threadId) || eventFor(snapshot, state.eventId);
     return {
       ...state,
+      eventId: current?.id || state.eventId,
       event: currentEvent(current, task) || taskEvent(task, state.event),
     };
   }
   if (state?.mode === 'notification' && state.threadId) {
     const task = taskFor(snapshot, state.threadId);
-    const current = eventFor(snapshot, state.eventId);
+    const current = actionableRequestFor(snapshot, state.threadId) || eventFor(snapshot, state.eventId);
     return {
       ...state,
+      eventId: current?.id || state.eventId,
       event: currentEvent(current, task) || taskEvent(task, state.event),
     };
   }

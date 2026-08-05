@@ -547,6 +547,29 @@ test('a zero-unread task opened from the connection list survives refreshes unti
   assert.equal(closeCodexTask().mode, 'closed');
 });
 
+test('an active task detail immediately promotes a same-thread approval request', () => {
+  const task = { id: 'thread-approval', title: 'Current task', project: 'app', activity: CODEX_ACTIVITY.RUNNING };
+  const approval = {
+    id: 'approval-1',
+    threadId: 'thread-approval',
+    title: 'Current task',
+    activity: CODEX_ACTIVITY.NEEDS_INPUT,
+    kind: 'commandApproval',
+    requestId: 'request-1',
+    supported: true,
+  };
+  const view = reconcileCodexViewState(openCodexTask(createCodexViewState(), task), {
+    tasks: [{ ...task, activity: CODEX_ACTIVITY.NEEDS_INPUT }],
+    visibleTasks: [],
+    unread: [approval],
+    alerts: [approval],
+  });
+  assert.equal(view.mode, 'manual');
+  assert.equal(view.eventId, 'approval-1');
+  assert.equal(view.event.requestId, 'request-1');
+  assert.equal(view.event.kind, 'commandApproval');
+});
+
 test('an open notification follows the current Codex task title after a rename', () => {
   const event = {
     id: 'rename-alert',

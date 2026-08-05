@@ -1,133 +1,13 @@
 {
   "schema": 1,
-  "created_at": "2026-08-05T10:41:58.600354+00:00",
-  "git_revision": "f2f468fa3c8d88c7d686c1e85b6533e2ddef26b0",
+  "created_at": "2026-08-05T13:06:35.115396+00:00",
+  "git_revision": "58cbc61ea016d5b35de52c42f0cefc14a71b66bf",
   "git_dirty": true,
   "files": [
     {
       "path": ".gitignore",
       "bytes": 125,
       "sha256": "2628f9bea1dadeedd25d2e2a168026d175411bfd04e38ebcd441112dfd913ecf"
-    },
-    {
-      "path": ".vite/renderer/main_window/assets/fonts/Mojang-Regular.ttf",
-      "bytes": 28416,
-      "sha256": "babe80218d6a598279fc917aa47759aa670bb20c0e24fb0d6856e60c2828d305"
-    },
-    {
-      "path": ".vite/renderer/main_window/assets/fonts/unifont-15.1.04.otf",
-      "bytes": 5105244,
-      "sha256": "27c83ca235c3ab99d5d35df35d78b5ac4018421a4287b1b4ea657b2299996d38"
-    },
-    {
-      "path": ".vite/renderer/main_window/assets/index-520Vytmj.js",
-      "bytes": 702867,
-      "sha256": "32a6eec8c4291ef6e7a1d7c507d439b25b8095830122c50fe21d8e998738dc77"
-    },
-    {
-      "path": ".vite/renderer/main_window/assets/index-BkL_5aki.css",
-      "bytes": 54246,
-      "sha256": "d80df9fe20b72f1f5ef9287f1f27c3e3f80a78f3e18971906d449537d974b063"
-    },
-    {
-      "path": ".vite/renderer/main_window/assets/skins/cat/blink.png",
-      "bytes": 4100,
-      "sha256": "ded85d0a1dec1f552db09345565ae3c9a09af66c0730905fcfc2e0b30d34c45c"
-    },
-    {
-      "path": ".vite/renderer/main_window/assets/skins/cat/happy.png",
-      "bytes": 4067,
-      "sha256": "99dc471dcdf5504fc4136bee643b450b22394552ab252865259263eda8ca3329"
-    },
-    {
-      "path": ".vite/renderer/main_window/assets/skins/cat/hover.png",
-      "bytes": 3878,
-      "sha256": "31cb0caa8e1d04c868eeb074e042be59270fb987c90b0b12485f2cee35aa41d5"
-    },
-    {
-      "path": ".vite/renderer/main_window/assets/skins/cat/idle.png",
-      "bytes": 4134,
-      "sha256": "698e4bb8cdb36d3389224ff3c62701919b16a27bef2278376c2610625bbcc4c0"
-    },
-    {
-      "path": ".vite/renderer/main_window/assets/skins/cat/pain.png",
-      "bytes": 4095,
-      "sha256": "47bb896e83034fabf433de772eb9a5b55077969df07ddcdae4575c49d87b47c4"
-    },
-    {
-      "path": ".vite/renderer/main_window/assets/skins/cat/pull.png",
-      "bytes": 3841,
-      "sha256": "9e5662155219cbcbd544d4fab85e7eb5788854ce96671305a3047f7e8c8439a5"
-    },
-    {
-      "path": ".vite/renderer/main_window/assets/skins/skins.json",
-      "bytes": 1175,
-      "sha256": "c5badc49a133acd96d6b5389deb3d8f6f9afea034eb0b76a65f9ce5c40feea6c"
-    },
-    {
-      "path": ".vite/renderer/main_window/assets/skins/turtle/blink.png",
-      "bytes": 560,
-      "sha256": "7acb943aa0cafce52e8f8bdbb62289ed5c4bd6f8b561bf2bfabea4fcd7423276"
-    },
-    {
-      "path": ".vite/renderer/main_window/assets/skins/turtle/happy.png",
-      "bytes": 689,
-      "sha256": "f98f969aaf17f47e9421ca2851010eb61a9c50258d028ebfa368f4288556a7d7"
-    },
-    {
-      "path": ".vite/renderer/main_window/assets/skins/turtle/hover.png",
-      "bytes": 585,
-      "sha256": "bbb4e1daa7c8c0617557f507040ce15774bb86761b0a09385e11fd0eb7e50090"
-    },
-    {
-      "path": ".vite/renderer/main_window/assets/skins/turtle/idle.png",
-      "bytes": 568,
-      "sha256": "c046c9baeff5b38a36ba2204b36bf0921a3cdc6b5c7f8d769cd0ed38fbf377a4"
-    },
-    {
-      "path": ".vite/renderer/main_window/assets/skins/turtle/pain.png",
-      "bytes": 654,
-      "sha256": "46d1ab16db4133bbb5a1eadca071817e9d8b53f97854db08f57529aea56da712"
-    },
-    {
-      "path": ".vite/renderer/main_window/assets/skins/turtle/pull.png",
-      "bytes": 602,
-      "sha256": "12382f7263e22cebcdbe2a4a0c67f847f3fba196bbed54910ff4fc85c3d538e9"
-    },
-    {
-      "path": ".vite/renderer/main_window/assets/sprites/blink.png",
-      "bytes": 272,
-      "sha256": "4f5916eb58c9d2a532840705c11f43eb27dc99ca531b318d6ffa6ad2aebea3dc"
-    },
-    {
-      "path": ".vite/renderer/main_window/assets/sprites/happy.png",
-      "bytes": 275,
-      "sha256": "cf7a20767bfda472dc9710deac30c78742a5ae25a05e3abf76086253bd56a7d5"
-    },
-    {
-      "path": ".vite/renderer/main_window/assets/sprites/hover.png",
-      "bytes": 279,
-      "sha256": "2d3e671f3a5e6d3675bcbcdd372e0ba78e4e35eca70612a5f19fb8ef30a3fc23"
-    },
-    {
-      "path": ".vite/renderer/main_window/assets/sprites/idle.png",
-      "bytes": 276,
-      "sha256": "5a9e08ed8471799f88255eeeea8899b99584af276329fdd3b8aecce566ca1a4c"
-    },
-    {
-      "path": ".vite/renderer/main_window/assets/sprites/pain.png",
-      "bytes": 279,
-      "sha256": "3ba94a72a4eb2126a66cdca0f45b320fb4a1d51b8672123c868fae49d040ba4c"
-    },
-    {
-      "path": ".vite/renderer/main_window/assets/sprites/pull.png",
-      "bytes": 270,
-      "sha256": "cc39c6523f2600bede234eb0416a69d6f87b03b6c47ccc9b3a33c686ba47a92d"
-    },
-    {
-      "path": ".vite/renderer/main_window/index.html",
-      "bytes": 1245,
-      "sha256": "b3c1f56ce4f6466c89e1c2c1352d827cc9f925b826587302d49d8dc884d65350"
     },
     {
       "path": "AGENTS.md",
@@ -483,6 +363,491 @@
       "path": "native/HardwareSensorHost/obj/project.nuget.cache",
       "bytes": 2266,
       "sha256": "1e82ba5eeac4c5eedc3605049981a563a71238ee4428b3821af9d77fd0ece495"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/LICENSE.electron.txt",
+      "bytes": 1096,
+      "sha256": "5154e165bd6c2cc0cfbcd8916498c7abab0497923bafcd5cb07673fe8480087d"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/LICENSES.chromium.html",
+      "bytes": 20313957,
+      "sha256": "b911161e6594ec76b872498b423c54406168f2974e0d407a847f7de1e5ff94dd"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/TurtleMonitorSponsor.exe",
+      "bytes": 225613824,
+      "sha256": "7f23b15a30e9aa7b44f43d5b0713f7ece15243031ad802998e9081afea17dbf7"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/Uninstall TurtleMonitorSponsor.exe",
+      "bytes": 166255,
+      "sha256": "ca0a5e8da816d42e9e8637e755db025dda0185bd67b20d6d0b8a8128f89d88e4"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/chrome_100_percent.pak",
+      "bytes": 119905,
+      "sha256": "d76fe8fa3a14cd73e4c858746e2ab2d2fa6f2df38a906fa5814b50a8a895fc96"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/chrome_200_percent.pak",
+      "bytes": 197089,
+      "sha256": "b74ad439f3d3762657f3ba533a6af3ac63315c838ed46519891366f43d834a0e"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/d3dcompiler_47.dll",
+      "bytes": 4741488,
+      "sha256": "a05f99734f7c4822fefc12b367af21fd0976ed6608752fb1e1e80b6ece7ecbbb"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/dxcompiler.dll",
+      "bytes": 25616896,
+      "sha256": "41004dbf82da5dd2f70c92defe2f0e0fce030daf85c072bd7922917ec90a6c28"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/dxil.dll",
+      "bytes": 1509760,
+      "sha256": "77e039c905030a641e53658a008b74e90635a5ea9b6b79eabd0f2003bdfca59a"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/ffmpeg.dll",
+      "bytes": 3067904,
+      "sha256": "d17c2a0ea5683ff02006676845b84ef2afe18b8f75a5fdcce2b364f85c37a34e"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/icudtl.dat",
+      "bytes": 10876560,
+      "sha256": "bd8c145abdf3f8383276ce01dfa4ae48709bef9fef1c0711eb7c3fab4f6eb7c2"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/libEGL.dll",
+      "bytes": 474624,
+      "sha256": "7d6f4957a6c4d4cad4d717ebebbc9738acf4bfdf2d4ea1c0403d2c9a0661dc5d"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/libGLESv2.dll",
+      "bytes": 8024064,
+      "sha256": "5d6c94812ca1f6dc414d6166da1ed95e4f072a151c7e16952b0fd9a450192d8b"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/locales/af.pak",
+      "bytes": 614017,
+      "sha256": "dcf39c3edbb6b0a625baee0263a9b426eadd1a6d1bfbf03a209501a18bc4b0e4"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/locales/am.pak",
+      "bytes": 994699,
+      "sha256": "b1d444f2346105a6e15f9b14fc5653e1edaa2b435290fb8f1238347a4d4ca8f9"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/locales/ar.pak",
+      "bytes": 1096193,
+      "sha256": "36f46452c3becb64e1034a6e69286cb5e91f98593c81511c79176f1cc560e159"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/locales/bg.pak",
+      "bytes": 1138139,
+      "sha256": "e4a5bea23a26a06af611a7cb518b22a1d53ec5df45a6322f0e264b99c7318441"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/locales/bn.pak",
+      "bytes": 1461088,
+      "sha256": "137cf9cdba13ea7286584c5cac05dd34c6394f89036e367aa032ffb34f17dcc9"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/locales/ca.pak",
+      "bytes": 692237,
+      "sha256": "94b2082cc585cc7f0e18839664683d97b45f9c15d0b027ba789902100fb029aa"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/locales/cs.pak",
+      "bytes": 718691,
+      "sha256": "5804ba5b76974b48b15922cf91c3e9dbbf549e2d88218dc767e4650520503135"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/locales/da.pak",
+      "bytes": 644715,
+      "sha256": "57f4637094de41122da569415c16c5524794bc90aa3af226da14703d04981db0"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/locales/de.pak",
+      "bytes": 693302,
+      "sha256": "9b3218eebd6e5bfdfcc50436ff0cef02b92fb9454c4bc9f78093408651e325d4"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/locales/el.pak",
+      "bytes": 1251081,
+      "sha256": "a687e7166636cc78afb903429c7b62aed48fe4a1e20057d5dd192e7806721d52"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/locales/en-GB.pak",
+      "bytes": 559913,
+      "sha256": "df40bcaed92ac89c6eb379a4053f9f44cd466f7e51268367f8d72e9508143a88"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/locales/en-US.pak",
+      "bytes": 566095,
+      "sha256": "74404352908184e834397df60b238f23462e77d69ac4136b4f20af2db6191436"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/locales/es-419.pak",
+      "bytes": 683108,
+      "sha256": "55a36991fa1e523fcdbc49e4227d66bb83d28bfdc7d08dcc659837d1beda3281"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/locales/es.pak",
+      "bytes": 679701,
+      "sha256": "9ff88eabacab95f8bbef9e95f63d3619fa8d640ec03523d80abb26243b059a65"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/locales/et.pak",
+      "bytes": 620420,
+      "sha256": "0292298736847491828465a3dcf04cf4a0d9bd63d4b1a9d183c7eeb389343d26"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/locales/fa.pak",
+      "bytes": 1026920,
+      "sha256": "59a08aad82255e6574e187cf39bfe2523dcbe5cc27421711ccc42c45ad00da4d"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/locales/fi.pak",
+      "bytes": 632436,
+      "sha256": "0535e2acd4517ce8099aa0a4a3e562af37ca6a699faca1de3b348b8bfacf2a8b"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/locales/fil.pak",
+      "bytes": 715769,
+      "sha256": "f9e86324deee168d160a51402588da9987646c8c5899b76b6255d7e3a46a7bb5"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/locales/fr.pak",
+      "bytes": 738341,
+      "sha256": "c2c7639ebdd3f50779ded050ac94c24773bf5e348984ff7ce53f0b386b2eec27"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/locales/gu.pak",
+      "bytes": 1443762,
+      "sha256": "34e4d54d66a0b0471542ee76c55cc9d3b27fcaf15cdf63c3d7e7b46cfdfb3f4f"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/locales/he.pak",
+      "bytes": 898811,
+      "sha256": "f149893ec79d46937ccaaacefa2bea4179c79f45b4ddb4d215d7e7756b4101cd"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/locales/hi.pak",
+      "bytes": 1529643,
+      "sha256": "57432f987cd26251065245e62b9ec47c1a90bd6ab2f2c4227c3c9becca3994f6"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/locales/hr.pak",
+      "bytes": 691185,
+      "sha256": "9ef77921560c91e5d6e42df6504589b8b7efb84c9b5119ac51e9a10d8c83a089"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/locales/hu.pak",
+      "bytes": 738546,
+      "sha256": "31e407f43bbd0cd0692755f961bb39d10af1f9f0af205455dd70fb4c7eeb85a5"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/locales/id.pak",
+      "bytes": 612462,
+      "sha256": "e7957c9c58f890b5d053ea50c5fcb4b66cbc3c47478c42a5962810cb15814249"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/locales/it.pak",
+      "bytes": 669218,
+      "sha256": "88220058e902f05d7a2e61ec21667a5ca44c543ad0042fe530d698aa55836aa4"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/locales/ja.pak",
+      "bytes": 815554,
+      "sha256": "916884da7606a990aceb82c0cd4b3480c054e5d0562684df40767310ba9d4dab"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/locales/kn.pak",
+      "bytes": 1661701,
+      "sha256": "9744dbadbb7c31cc6393a0682daf91045be270bab934dff7dbad79b76287616e"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/locales/ko.pak",
+      "bytes": 694027,
+      "sha256": "ee01af13e4e4b804e48d7126a38a059e210c7f4fba0c37fd2dfa9ef4c106b9d3"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/locales/lt.pak",
+      "bytes": 752001,
+      "sha256": "bc5d99751f1b252ed074bfc4bf6dc94321b3f785a0a0d4300209acae40220f74"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/locales/lv.pak",
+      "bytes": 749059,
+      "sha256": "4a47f56c40b16b261cb8bf29a0b16be9638a88b8a5df4d8bb1d13c39271e2b58"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/locales/ml.pak",
+      "bytes": 1705542,
+      "sha256": "a45bcebcf69244bdbca6c0a4fe68c89430c6531e9d3cbddaa85758385b877934"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/locales/mr.pak",
+      "bytes": 1415199,
+      "sha256": "fa87d519a8545b2748c52ccd7704b320877b2d03385991ceabe75c2745200331"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/locales/ms.pak",
+      "bytes": 644669,
+      "sha256": "2ab44645c1ed7b68c9121ee0ab9cdf8c7b9d1721d131b08f258b8a85b8ed0af0"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/locales/nb.pak",
+      "bytes": 616327,
+      "sha256": "8eaa23c418a3fafb9e85b5445e73fb2f5e13be1f033ff2487c4081148aaa2f4e"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/locales/nl.pak",
+      "bytes": 642150,
+      "sha256": "43a15f2dfda6ce1c908e9913eb02aba9602e3f24c6c96f7fed7852d61a1263f6"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/locales/pl.pak",
+      "bytes": 717729,
+      "sha256": "5e47475490d1514e3670c44f55a2061672c8e7f6219211b3d907bacbe5aa0a5c"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/locales/pt-BR.pak",
+      "bytes": 673126,
+      "sha256": "2c48cfad589795774dc2dbd5d7717f8695f3c02d85acc0076ad7a02666e60968"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/locales/pt-PT.pak",
+      "bytes": 676987,
+      "sha256": "e613f2149cb23de02296e8524981d594cd1bac34360d83bc1682ff37eccc55c3"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/locales/ro.pak",
+      "bytes": 702573,
+      "sha256": "909fadc1bb8b1bda780d182b823a98fd3b8f9fa362bffc95b3ebf2b270ad0698"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/locales/ru.pak",
+      "bytes": 1163520,
+      "sha256": "b0977b6a115c6836189200423b44202c1329ff702b68ab9a72f996fe42c6ec81"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/locales/sk.pak",
+      "bytes": 730194,
+      "sha256": "9a2b0ed5cf2e1c8e1d18abc136af82867469a2503b76e3a9f848ee723b7a0102"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/locales/sl.pak",
+      "bytes": 699179,
+      "sha256": "2bc385d457dc844794f9396458c4090e6233afec5a08b4a5a92e45ef31e07b78"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/locales/sr.pak",
+      "bytes": 1075897,
+      "sha256": "aa3a70c23a149e1ef9fea6db95d5cc0084a85477bd772f6d0629601f35f0e65e"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/locales/sv.pak",
+      "bytes": 624021,
+      "sha256": "3af85c15ce3e76344404c37325a60932ce53763539c8cd8b3120424f709f73de"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/locales/sw.pak",
+      "bytes": 660623,
+      "sha256": "a806d782b21930ec6243b8e5b393e7fa970ce9d297e96b02e6596fa6ce6c8a86"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/locales/ta.pak",
+      "bytes": 1696711,
+      "sha256": "516660683214c01341300fa8d15c7e39aecc38792b76fe74bdcc464024f4294f"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/locales/te.pak",
+      "bytes": 1571941,
+      "sha256": "24e355a0b67eb09e93ee8caffbe34246dad42e526e6bd4877149c5068ab03ed7"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/locales/th.pak",
+      "bytes": 1320867,
+      "sha256": "946b4a45a9d43b15359927f33307fc35f50d7e880f02890b07bdfd1160f2db59"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/locales/tr.pak",
+      "bytes": 672677,
+      "sha256": "37619e7084337a839d8ccf7915381cf9975d0ffc9451bd37d210bc7322645219"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/locales/uk.pak",
+      "bytes": 1172722,
+      "sha256": "6b58314224303e7338c44c2014259c56894bfffe22de46eca6cae1bff4edcfae"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/locales/ur.pak",
+      "bytes": 1010270,
+      "sha256": "d57cd219249e207d34c21a619935d0f0a7814a0ccdd36051a42400c60a599e47"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/locales/vi.pak",
+      "bytes": 799770,
+      "sha256": "37f2c01a308ad8bb93d9525d81480880f97d54191dbe7c1c1e75aa9fcf009450"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/locales/zh-CN.pak",
+      "bytes": 571748,
+      "sha256": "0386ef8bf3ce4e24c604ee039273e452d12f8b1d6e5ac7e746995e8b39fab379"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/locales/zh-TW.pak",
+      "bytes": 564377,
+      "sha256": "740c2da1eedff44b57d8700b6f81f1acf17e67bdf534220553b448da42f62b66"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/resources.pak",
+      "bytes": 7148145,
+      "sha256": "77f82c006ca57145a385188e67f06c8a1136c0d86de10dc5889f0dbd6117b061"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/resources/app-update.yml",
+      "bytes": 95,
+      "sha256": "2412c711380c8210c5ed1b0ec05e06d0ec7151f94ff0cf9ad407c48dc412d67a"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/resources/app.asar",
+      "bytes": 11699006,
+      "sha256": "fdb1499eab96390d505aae83bcc08179eb8f86918ac4446e7c5157adf5c47edc"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/resources/elevate.exe",
+      "bytes": 107520,
+      "sha256": "9b1fbf0c11c520ae714af8aa9af12cfd48503eedecd7398d8992ee94d1b4dc37"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/resources/hardware-sensor/BlackSharp.Core.dll",
+      "bytes": 32768,
+      "sha256": "cafb93afcc8d8a367e21f619673d05c06887d8964867fed1371f02ded1cd3e23"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/resources/hardware-sensor/DiskInfoToolkit.dll",
+      "bytes": 903680,
+      "sha256": "1acbf51b3c10c51c986cf43021680d34a2e38d9a5ba652bcfa9a1b5f7fc09800"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/resources/hardware-sensor/HardwareSensorHost.exe",
+      "bytes": 19456,
+      "sha256": "362fc9b73aa77adff7d185e160e38a5b07078943817e051d3579b9400493765e"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/resources/hardware-sensor/HardwareSensorHost.exe.config",
+      "bytes": 176,
+      "sha256": "ad8267122c40d37dcd9d99e1412d763187a1825732f378db8867f3ecf675cf70"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/resources/hardware-sensor/HidSharp.dll",
+      "bytes": 262792,
+      "sha256": "d86690efde30ea9179f669320f39148853793b743a98b531afeaf30598e22f54"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/resources/hardware-sensor/LICENSE.txt",
+      "bytes": 17098,
+      "sha256": "2684de17300e0a434686f1ec7f8af6045207a4b457a3fe04b2b9ce655e7c5d50"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/resources/hardware-sensor/LibreHardwareMonitorLib.dll",
+      "bytes": 1203200,
+      "sha256": "6ebc194316536ba61af5be24508ad9fcbb2ecc685e716c12e787c79530f66bf0"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/resources/hardware-sensor/RAMSPDToolkit-NDD.dll",
+      "bytes": 233472,
+      "sha256": "b6882354c7c8ec186617e421507743dbfae09c5c1fc24cef76a1d0c0c26651de"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/resources/hardware-sensor/System.Buffers.dll",
+      "bytes": 23816,
+      "sha256": "2d78d770c9cb997199154ae8c018b9f1d1efbc86729f7264dde6dbad2a12cac3"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/resources/hardware-sensor/System.CodeDom.dll",
+      "bytes": 34056,
+      "sha256": "adab61ffc51ef97ad6f3da0af3aa6fa4324db70f817e6d31fc765f53dc3d2881"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/resources/hardware-sensor/System.Memory.dll",
+      "bytes": 145200,
+      "sha256": "d5e8e4866f9cfa66f7765660f84b210198893e55335487afe5ebda342c0e913d"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/resources/hardware-sensor/System.Numerics.Vectors.dll",
+      "bytes": 110344,
+      "sha256": "20c2fa81b8c70d651099d762954f285fd4f942e63b2d7217c145dab8d4b2f4c9"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/resources/hardware-sensor/System.Runtime.CompilerServices.Unsafe.dll",
+      "bytes": 19256,
+      "sha256": "08cbd7278b66f1e68425a82d4b97181a4130d93e3dd91831407aba7212ccdacf"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/resources/hardware-sensor/System.Security.AccessControl.dll",
+      "bytes": 35952,
+      "sha256": "ff14c5f628b9a6798d173aefbba0a43d61e66f715108e2576ac0d3dfab9071d0"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/resources/hardware-sensor/System.Security.Principal.Windows.dll",
+      "bytes": 18312,
+      "sha256": "b4d8e15adc235d0e858e39b5133e5d00a4baa8c94f4f39e3b5e791b0f9c0c806"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/resources/hardware-sensor/System.Threading.AccessControl.dll",
+      "bytes": 34568,
+      "sha256": "5e3a3902f04f840c0fc1f9c2f249f804f6cfdf7901b2e06778bc2a4603ae4694"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/resources/hardware-sensor/THIRD-PARTY-LICENSES.txt",
+      "bytes": 26388,
+      "sha256": "c8ffa3402809c859a9a526903134868ccee8afac77e1a65be399ebb1c25fdc33"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/resources/hardware-sensor/manifest.json",
+      "bytes": 2856,
+      "sha256": "99e5d323af1f26202c1310d4282f3faf80f6523e31dd5e566df0973b0688f77a"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/resources/subscription/config.json",
+      "bytes": 53,
+      "sha256": "5d5052f1f5ef93c79eec8677eed95b434e354747335e80ade7e4116c5c081b42"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/snapshot_blob.bin",
+      "bytes": 365488,
+      "sha256": "01e68a60b8838be376b202607defadaabdb61b5907dc6caf2cfaf8e915229532"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/uninstallerIcon.ico",
+      "bytes": 8336,
+      "sha256": "4830a35d5c47431e81bbe7f7288710b969edd552e01913aefb622121462ba50b"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/v8_context_snapshot.bin",
+      "bytes": 740048,
+      "sha256": "8b01d2eb0fc5324e0ff3879a30efca0eb7f5dfe35f829721aebc98b0bffbb4c3"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/vk_swiftshader.dll",
+      "bytes": 5502464,
+      "sha256": "a0f117801db7c874cafca765aac0eddc4e07f422af5a38d6e673635ac5bb8a75"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/vk_swiftshader_icd.json",
+      "bytes": 106,
+      "sha256": "32d83ff113fef532a9f97e0d2831f8656628ab1c99e9060f0332b1532839afd9"
+    },
+    {
+      "path": "out/TurtleMonitorSponsor/vulkan-1.dll",
+      "bytes": 930304,
+      "sha256": "58349de6c50157aa78500d383910dbc7b40a8a4a022aff9cc3eeef8915c9b3ed"
     },
     {
       "path": "out/free/TurtleMonitor-Free-Setup.exe",
@@ -1856,8 +2221,8 @@
     },
     {
       "path": "src/renderer/codex-view-state.js",
-      "bytes": 2839,
-      "sha256": "f23733b5c9237c27b3d21f1ebc0e7946c5d3a24c9191084cfc0e376f15590f45"
+      "bytes": 3332,
+      "sha256": "707b6c9c55bd9aa15cbbe36b3e15bcd4deb9a8bd2dc1c704e59a8edc41cd0a67"
     },
     {
       "path": "src/renderer/dashboard-model.js",
@@ -2006,8 +2371,8 @@
     },
     {
       "path": "tests/codex-integration.test.mjs",
-      "bytes": 51274,
-      "sha256": "287d3d6fd97839d5de275b95fb84075475af2e0da48e06b94889a6aec22c1436"
+      "bytes": 52122,
+      "sha256": "f1cb7d45f9dfd559a98bffb6a48125fba8f549d7a789fae796248749155242a7"
     },
     {
       "path": "tests/custom-mode-ui.test.mjs",
