@@ -1,5 +1,11 @@
 # Reconstruction gaps
 
+## Current integration gap
+
+Status: Inferred on 2026-08-05. Evidence: `evidence/verification.md` and the current sandboxed build attempt.
+
+- The Claude compatibility/control work is test-verified, but this environment did not complete either edition source build because esbuild needs a parent-directory read outside the sandbox. Re-run `npm run build:free` and `npm run build:sponsor` in a normal local shell before assigning a release-ready build result.
+
 | Item | Status | Impact | Needed evidence |
 |---|---|---|---|
 | Codex App Server protocol compatibility across future Codex releases | Inferred from current official protocol and local CLI handshake | A future method or event shape may require adapter updates | Re-run real initialize, `thread/list`, `thread/read`, connect/reply, and approval smoke tests after a Codex upgrade |

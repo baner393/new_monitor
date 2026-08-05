@@ -62,19 +62,23 @@ test('shared agent panel exposes provider-scoped approvals and a direct-only byp
   assert.match(companionSource, /this\.#api\(provider\)\.respond/);
   assert.match(companionSource, /bypassInput\.disabled = replyTransport === 'desktop'/);
   assert.match(preloadSource, /claude-respond/);
+  assert.match(preloadSource, /claude-interrupt/);
   assert.match(mainSource, /ipcMain\.handle\('claude-respond'/);
+  assert.match(mainSource, /ipcMain\.handle\('claude-interrupt'/);
   assert.match(cssSource, /\.agent-bypass-warning/);
 });
 
-test('Claude conversations expose compact per-session reasoning controls', () => {
+test('Claude conversations expose independent thinking and shared effort controls', () => {
   const companionSource = fs.readFileSync(path.join(process.cwd(), 'src', 'renderer', 'codex-companion.js'), 'utf8');
   const cssSource = fs.readFileSync(path.join(process.cwd(), 'src', 'renderer', 'index.css'), 'utf8');
   assert.match(companionSource, /claude-thinking-trigger/);
   assert.match(companionSource, /sessionPreferences:\s*\{[\s\S]*\[sourceId\]: preference/);
   assert.match(companionSource, /replyTransport !== 'desktop'/);
-  assert.match(companionSource, /claude-effort-field[^\n]*hidden/);
+  assert.match(companionSource, /agent-effort-slider/);
+  assert.doesNotMatch(companionSource, /claude-effort-field[^\n]*hidden/);
   assert.match(cssSource, /\.claude-thinking-popover/);
-  assert.match(cssSource, /\.claude-thinking-trigger/);
+  assert.match(cssSource, /\.agent-effort-slider/);
+  assert.match(cssSource, /data-effort=['"]max['"]/);
 });
 
 test('conversation render cache is reused only by the same provider-scoped thread', () => {
@@ -169,15 +173,17 @@ test('Codex reasoning effort is normalized per session and omitted when inherite
   });
 });
 
-test('Codex conversations expose compact per-session reasoning controls', () => {
+test('Codex conversations expose the shared effort slider', () => {
   const companionSource = fs.readFileSync(path.join(process.cwd(), 'src', 'renderer', 'codex-companion.js'), 'utf8');
   const cssSource = fs.readFileSync(path.join(process.cwd(), 'src', 'renderer', 'index.css'), 'utf8');
   assert.match(companionSource, /codex-reasoning-trigger/);
   assert.match(companionSource, /codex-reasoning-popover/);
   assert.match(companionSource, /reasoningModels/);
+  assert.match(companionSource, /agent-effort-slider/);
   assert.match(companionSource, /sessionPreferences:\s*\{[\s\S]*\[sourceId\]: preference/);
   assert.match(cssSource, /\.codex-reasoning-trigger/);
   assert.match(cssSource, /\.codex-reasoning-popover/);
+  assert.match(cssSource, /\.agent-effort-slider/);
 });
 
 test('unread Codex events follow needs-input, blocked, ready priority', () => {

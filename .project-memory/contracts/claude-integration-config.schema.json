@@ -1,9 +1,9 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "CodexIntegrationConfigV4",
-  "title": "CodexIntegrationConfigV4",
+  "$id": "ClaudeIntegrationConfigV4",
+  "title": "ClaudeIntegrationConfigV4",
   "type": "object",
-  "required": ["version", "enabled", "homeMode", "manualHome", "managedReplies", "bypassPermissions", "replyTransport", "sendShortcut", "newMessageView", "enabledAtMs", "notificationMode", "localeMode", "desiredThreadIds", "readEventIds", "notifiedEventIds", "sessionPreferences"],
+  "required": ["version", "enabled", "homeMode", "manualHome", "managedReplies", "bypassPermissions", "replyTransport", "sendShortcut", "enabledAtMs", "desiredSessionIds", "readEventIds", "notifiedEventIds", "sessionPreferences"],
   "properties": {
     "version": { "const": 4 },
     "enabled": { "type": "boolean", "default": false },
@@ -13,11 +13,8 @@
     "bypassPermissions": { "type": "boolean", "default": false },
     "replyTransport": { "enum": ["direct", "desktop"], "default": "direct" },
     "sendShortcut": { "enum": ["enter", "ctrl-enter"], "default": "enter" },
-    "newMessageView": { "enum": ["conversation", "tasks"], "default": "conversation" },
     "enabledAtMs": { "type": "number", "minimum": 0 },
-    "notificationMode": { "const": "important" },
-    "localeMode": { "const": "codex" },
-    "desiredThreadIds": { "$ref": "#/$defs/idList" },
+    "desiredSessionIds": { "$ref": "#/$defs/idList" },
     "readEventIds": { "$ref": "#/$defs/eventList" },
     "notifiedEventIds": { "$ref": "#/$defs/eventList" },
     "sessionPreferences": {
@@ -31,13 +28,14 @@
     "eventList": { "type": "array", "items": { "type": "string", "maxLength": 240 }, "maxItems": 1024, "uniqueItems": true },
     "sessionPreference": {
       "type": "object",
-      "required": ["effort"],
+      "required": ["thinkingMode", "effort"],
       "properties": {
-        "effort": { "enum": ["inherit", "low", "medium", "high", "xhigh", "max", "ultra"] }
+        "thinkingMode": { "enum": ["auto", "inherit", "adaptive", "disabled"] },
+        "effort": { "enum": ["low", "medium", "high", "xhigh", "max"] }
       },
       "additionalProperties": false
     }
   },
-  "x-status": "Confirmed",
-  "x-evidence": "src/shared/codex-integration.js"
+  "x-status": "Confirmed except the adaptive mode, which is uncommitted work in src/shared/claude-integration.js",
+  "x-evidence": "src/shared/claude-integration.js, tests/claude-integration.test.mjs"
 }

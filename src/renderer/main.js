@@ -520,7 +520,7 @@ document.addEventListener('mousedown', (e) => {
 
 document.addEventListener('mousedown', (event) => {
   const insideCodex = codexCompanion.containsPoint(event.clientX, event.clientY);
-  const overPet = isPointWithinBounds(sprite.getBounds(), event.clientX, event.clientY, PET_HIT_PADDING);
+  const overPet = isPointWithinBounds(bodySprite.getBounds(), event.clientX, event.clientY, PET_HIT_PADDING);
   if (stateMachine.getState() === 'CODEX_CONFIG_OPEN' && !insideCodex && !overPet) {
     stateMachine.transition('CLICK_OUTSIDE');
     return;
@@ -536,6 +536,7 @@ document.addEventListener('mousedown', (event) => {
 const inputManager = new InputManager({
   pixiApp,
   sprite,
+  hitTestBounds: () => bodySprite.getBounds(),
   stateMachine,
   physics,
   shouldIgnoreEvent: (event) => codexCompanion.ownsEvent(event) || onboardingGuide.ownsEvent(event),
@@ -555,6 +556,7 @@ inputManager.enable();
 let isOverSprite = false;
 let lastMousePassthrough = true;
 let lastCursorPosition = null;
+let mouseSyncInFlight = false;
 
 function applyMousePassthrough(ignore, force = false) {
   if (force || ignore !== lastMousePassthrough) {
@@ -566,7 +568,7 @@ function applyMousePassthrough(ignore, force = false) {
 
 function synchronizeMousePassthrough(x, y, force = false) {
   const state = stateMachine.getState();
-  const bounds = sprite.getBounds();
+  const bounds = bodySprite.getBounds();
   const overSprite = isPointWithinBounds(bounds, x, y, PET_HIT_PADDING);
   const overCodex = codexCompanion.containsPoint(x, y);
   const overOnboarding = onboardingGuide.containsPoint(x, y);
@@ -597,6 +599,8 @@ function synchronizeMousePassthrough(x, y, force = false) {
 }
 
 async function synchronizeMousePassthroughFromSystem(force = false, announceReady = false) {
+  if (mouseSyncInFlight) return lastMousePassthrough;
+  mouseSyncInFlight = true;
   try {
     const cursor = await window.electronAPI.getCursorPosition();
     if (cursor) lastCursorPosition = cursor;
@@ -609,6 +613,8 @@ async function synchronizeMousePassthroughFromSystem(force = false, announceRead
     window.electronAPI.setIgnoreMouseEvents(true);
     if (announceReady) window.electronAPI.markRendererInputReady(true);
     return true;
+  } finally {
+    mouseSyncInFlight = false;
   }
 }
 
@@ -616,6 +622,14 @@ document.addEventListener('mousemove', (event) => {
   lastCursorPosition = { x: event.clientX, y: event.clientY };
   synchronizeMousePassthrough(event.clientX, event.clientY);
 });
+
+// When the transparent window is passing input through, Chromium may not send
+// a renderer mousemove as the cursor enters the pet. Poll the system cursor so
+// the window becomes interactive before the user clicks or begins a drag.
+const mousePassthroughSyncTimer = window.setInterval(() => {
+  void synchronizeMousePassthroughFromSystem();
+}, 80);
+window.addEventListener('beforeunload', () => window.clearInterval(mousePassthroughSyncTimer));
 
 // A reload can happen while the cursor is stationary over the turtle. Wait for
 // two rendered frames, then hand hit testing back to this renderer exactly

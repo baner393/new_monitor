@@ -10,7 +10,7 @@ import {
   sortCodexUnreadEvents,
 } from './codex-integration.js';
 
-export const CLAUDE_INTEGRATION_CONFIG_VERSION = 3;
+export const CLAUDE_INTEGRATION_CONFIG_VERSION = 4;
 export const CLAUDE_ACTIVITY = CODEX_ACTIVITY;
 export const CLAUDE_CONNECTION = CODEX_CONNECTION;
 export const CLAUDE_REPLY_TRANSPORT = CODEX_REPLY_TRANSPORT;
@@ -22,8 +22,8 @@ export const CLAUDE_SEND_SHORTCUT = Object.freeze({
 export const CLAUDE_THINKING_MODE = Object.freeze({
   AUTO: 'auto',
   INHERIT: 'inherit',
+  ADAPTIVE: 'adaptive',
   DISABLED: 'disabled',
-  CUSTOM: 'custom',
 });
 export const CLAUDE_EFFORT_LEVELS = Object.freeze(['low', 'medium', 'high', 'xhigh', 'max']);
 
@@ -53,8 +53,9 @@ function boundedStringList(value, maxItems, maxLength) {
 }
 
 export function normalizeClaudeSessionPreference(value = {}) {
-  const thinkingMode = Object.values(CLAUDE_THINKING_MODE).includes(value?.thinkingMode)
-    ? value.thinkingMode : CLAUDE_THINKING_MODE.AUTO;
+  const legacyMode = value?.thinkingMode === 'custom' ? CLAUDE_THINKING_MODE.ADAPTIVE : value?.thinkingMode;
+  const thinkingMode = Object.values(CLAUDE_THINKING_MODE).includes(legacyMode)
+    ? legacyMode : CLAUDE_THINKING_MODE.AUTO;
   const effort = CLAUDE_EFFORT_LEVELS.includes(String(value?.effort || '').toLowerCase())
     ? String(value.effort).toLowerCase() : 'high';
   return { thinkingMode, effort };

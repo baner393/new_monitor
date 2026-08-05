@@ -2,6 +2,26 @@
 
 Status: Confirmed for revision `f464545` in the source environment used on 2026-07-31. Evidence: command results from the completed implementation turn and repository tests.
 
+## Latest committed baseline
+
+Status: Confirmed for `2ad1a8e` on 2026-08-04. Evidence: completed command results from the implementation turn before the current uncommitted Claude refactor.
+
+- `npm test`: 184/184 passed.
+- `npm run verify`: passed.
+- `npm run build:free`: passed.
+- `npm run build:sponsor`: passed.
+- Both source builds emitted only the pre-existing font runtime-resolution and chunk-size warnings; no installer was generated.
+
+## Uncommitted Claude compatibility/control completion
+
+Status: Confirmed on 2026-08-05 for tests and structural verification. Evidence: command results in the implementation turn.
+
+- `npm test`: 187/187 passed.
+- `npm run verify`: passed; icon SHA-256 `84e4b2ddd07e751a19259a0e1956ae8267716137e760837fdb29f5d05ab2faac`.
+- `npm run build:free`: attempted but sandboxed esbuild could not read the repository-parent path used to resolve Vite configuration. Escalated execution was unavailable because the local approval proxy returned `503`; no build result is claimed.
+- `npm run build:sponsor`: not run after the identical build environment restriction was established.
+- No installer or package command was run.
+
 Automated results:
 
 - `npm test`: 94/94 tests passed.

@@ -14,7 +14,7 @@ import { VelocityTracker } from './velocity-tracker.js';
 
 const PULL_THRESHOLD = 80;
 const RIGHT_CLICK_MOVE_TOLERANCE = 10;
-export const PET_HIT_PADDING = 14;
+export const PET_HIT_PADDING = 22;
 
 export function isPointWithinBounds(bounds, x, y, padding = 0) {
   if (!bounds) return false;
@@ -26,9 +26,10 @@ export function isPointWithinBounds(bounds, x, y, padding = 0) {
 }
 
 export class InputManager {
-  constructor({ pixiApp, sprite, stateMachine, physics, shouldIgnoreEvent = null, beforePetInteraction = null, onGesture = null, onInteractionChange = null }) {
+  constructor({ pixiApp, sprite, hitTestBounds = null, stateMachine, physics, shouldIgnoreEvent = null, beforePetInteraction = null, onGesture = null, onInteractionChange = null }) {
     this.pixiApp = pixiApp;
     this.sprite = sprite;
+    this.hitTestBounds = typeof hitTestBounds === 'function' ? hitTestBounds : null;
     this.stateMachine = stateMachine;
     this.physics = physics;
     this.shouldIgnoreEvent = typeof shouldIgnoreEvent === 'function' ? shouldIgnoreEvent : null;
@@ -110,7 +111,7 @@ export class InputManager {
   // ── Hit test ──────────────────────────────────────────────────────────
   _isOverSprite(x, y) {
     if (!this.sprite) return false;
-    return isPointWithinBounds(this.sprite.getBounds(), x, y, PET_HIT_PADDING);
+    return isPointWithinBounds(this.hitTestBounds?.() || this.sprite.getBounds(), x, y, PET_HIT_PADDING);
   }
 
   // ── Context Menu (default prevention) ────────────────────────────────

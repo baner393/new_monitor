@@ -256,6 +256,39 @@ export class CodexCompanion {
     return String(task?.sourceId || this.viewState.event?.sourceThreadId || this.viewState.threadId || '').replace(/^claude:/, '');
   }
 
+  #renderEffortSlider(host, efforts, selected, onSelect) {
+    host.replaceChildren();
+    host.classList.add('agent-effort-slider');
+    const selectedIndex = Math.max(0, efforts.indexOf(selected));
+    host.style.setProperty('--effort-position', String(selectedIndex));
+    host.style.setProperty('--effort-count', String(Math.max(1, efforts.length)));
+    const range = element('input', 'agent-effort-range');
+    range.type = 'range';
+    range.min = '0';
+    range.max = String(Math.max(0, efforts.length - 1));
+    range.step = '1';
+    range.value = String(selectedIndex);
+    range.setAttribute('aria-label', this.locale === 'en-US' ? 'Reasoning effort' : '推理强度');
+    range.addEventListener('input', () => {
+      const effort = efforts[Number(range.value)] || efforts[0];
+      host.dataset.value = effort;
+      host.classList.toggle('agent-effort-max', effort === 'max' || effort === 'ultra');
+      host.style.setProperty('--effort-position', range.value);
+    });
+    host.dataset.value = efforts[selectedIndex] || efforts[0] || '';
+    host.classList.toggle('agent-effort-max', host.dataset.value === 'max' || host.dataset.value === 'ultra');
+    range.addEventListener('change', () => onSelect(efforts[Number(range.value)] || efforts[0]));
+    host.appendChild(range);
+    const labels = element('div', 'agent-effort-labels');
+    for (const effort of efforts) {
+      const label = element('span', 'agent-effort-label', effort);
+      label.dataset.effort = effort;
+      if (effort === 'max' || effort === 'ultra') label.classList.add('agent-effort-peak');
+      labels.appendChild(label);
+    }
+    host.appendChild(labels);
+  }
+
   #renderClaudeThinkingControl(preserveSelection = false) {
     const task = this.#currentTask();
     const provider = task?.provider || this.viewState.event?.provider || this.#currentProvider();
@@ -274,15 +307,14 @@ export class CodexCompanion {
 
     const stored = normalizeClaudeSessionPreference(config.sessionPreferences?.[sourceId]);
     const modeSelect = this.bubble.querySelector('.claude-thinking-mode');
-    const effortSelect = this.bubble.querySelector('.claude-effort');
+    const effortHost = this.bubble.querySelector('.claude-effort');
     if (!preserveSelection) {
       modeSelect.value = stored.thinkingMode;
-      effortSelect.value = stored.effort;
     }
     const mode = modeSelect.value || stored.thinkingMode;
     const labels = this.locale === 'en-US'
-      ? { auto: 'Auto compatibility', inherit: 'Follow Claude Code', disabled: 'Thinking off', custom: 'Custom effort' }
-      : { auto: '自动兼容', inherit: '沿用 Claude Code', disabled: '关闭思考', custom: '自定义强度' };
+      ? { auto: 'Auto compatibility', inherit: 'Follow Claude Code', adaptive: 'Adaptive thinking', disabled: 'Thinking off' }
+      : { auto: '自动兼容', inherit: '沿用 Claude Code', adaptive: '自适应思考', disabled: '关闭思考' };
     for (const option of modeSelect.options) option.textContent = labels[option.value] || option.value;
     trigger.textContent = this.locale === 'en-US' ? `Reasoning · ${labels[mode]}` : `推理 · ${labels[mode]}`;
     trigger.title = this.locale === 'en-US' ? 'Reasoning for this conversation' : '设置当前会话的推理方式';
@@ -292,31 +324,31 @@ export class CodexCompanion {
     this.bubble.querySelector('.claude-thinking-mode-help').textContent = this.locale === 'en-US' ? 'Only affects this conversation' : '仅影响当前会话';
     this.bubble.querySelector('.claude-effort-label').textContent = this.locale === 'en-US' ? 'Effort' : '推理强度';
     this.bubble.querySelector('.claude-effort-help').textContent = this.locale === 'en-US' ? 'Passed explicitly to Claude Code' : '显式传给 Claude Code';
-    this.bubble.querySelector('.claude-effort-field').hidden = mode !== CLAUDE_THINKING_MODE.CUSTOM;
+    this.#renderEffortSlider(effortHost, CLAUDE_EFFORT_LEVELS, stored.effort, (effort) => this.#saveClaudeThinkingPreference(effort));
     const notes = this.locale === 'en-US'
       ? {
           auto: 'Uses normal Claude settings on official connections and disables thinking on third-party gateways to avoid thinking.type 400 errors.',
           inherit: 'Keeps the settings used by the original Claude Code environment.',
           disabled: 'Best compatibility for gateways or models that reject thinking parameters.',
-          custom: 'Uses the selected effort. Some third-party gateways may reject this request format.',
+          adaptive: 'Lets Claude Code adapt its thinking behavior while retaining the selected effort.',
         }
       : {
           auto: '官方连接沿用 Claude 设置；第三方网关关闭思考，避免 thinking.type 400。',
           inherit: '保持原 Claude Code 环境中的设置。',
           disabled: '适合不接受思考参数的网关或模型，兼容性最高。',
-          custom: '使用指定强度；部分第三方网关可能不接受这种请求格式。',
+          adaptive: '允许 Claude Code 自适应思考，同时保留所选强度。',
         };
     this.bubble.querySelector('.claude-thinking-note').textContent = notes[mode] || notes.auto;
   }
 
-  async #saveClaudeThinkingPreference() {
+  async #saveClaudeThinkingPreference(nextEffort = null) {
     const sourceId = this.#currentSourceThreadId();
     if (!sourceId || this.#currentProvider() !== 'claude') return;
     const modeSelect = this.bubble.querySelector('.claude-thinking-mode');
-    const effortSelect = this.bubble.querySelector('.claude-effort');
-    const preference = normalizeClaudeSessionPreference({ thinkingMode: modeSelect.value, effort: effortSelect.value });
+    const stored = normalizeClaudeSessionPreference(this.configs.claude?.sessionPreferences?.[sourceId]);
+    const preference = normalizeClaudeSessionPreference({ thinkingMode: modeSelect.value, effort: nextEffort || stored.effort });
     modeSelect.disabled = true;
-    effortSelect.disabled = true;
+    this.bubble.querySelectorAll('.claude-effort button').forEach((button) => { button.disabled = true; });
     try {
       const current = this.configs.claude || {};
       this.configs.claude = await this.#api('claude').saveConfig({
@@ -328,7 +360,7 @@ export class CodexCompanion {
       this.#showBubbleError(error?.message || String(error));
     } finally {
       modeSelect.disabled = false;
-      effortSelect.disabled = false;
+      this.bubble.querySelectorAll('.claude-effort button').forEach((button) => { button.disabled = false; });
     }
   }
 
@@ -357,18 +389,14 @@ export class CodexCompanion {
     }
 
     const stored = normalizeCodexSessionPreference(config.sessionPreferences?.[sourceId]);
-    const select = this.bubble.querySelector('.codex-reasoning-effort');
     const supported = this.#supportedCodexEfforts(task);
     const effectiveEffort = task?.model && !supported.includes(stored.effort) ? 'inherit' : stored.effort;
-    const values = ['inherit', ...supported];
-    select.replaceChildren(...values.map((effort) => {
-      const option = element('option', '', effort === 'inherit'
-        ? (this.locale === 'en-US' ? 'Follow Codex configuration' : '跟随 Codex 配置')
-        : effort);
-      option.value = effort;
-      return option;
-    }));
-    select.value = effectiveEffort;
+    const effortHost = this.bubble.querySelector('.codex-reasoning-effort');
+    this.#renderEffortSlider(effortHost, supported, effectiveEffort === 'inherit' ? supported[0] : effectiveEffort, (effort) => this.#saveCodexReasoningPreference(effort));
+    const modeSelect = this.bubble.querySelector('.codex-thinking-mode');
+    modeSelect.value = effectiveEffort === 'inherit' ? 'inherit' : 'custom';
+    modeSelect.options[0].textContent = this.locale === 'en-US' ? 'Follow Codex configuration' : '跟随 Codex 配置';
+    modeSelect.options[1].textContent = this.locale === 'en-US' ? 'Use this conversation setting' : '使用本会话设置';
     const display = effectiveEffort === 'inherit'
       ? (this.locale === 'en-US' ? 'Follow configuration' : '跟随配置')
       : effectiveEffort;
@@ -376,6 +404,8 @@ export class CodexCompanion {
     trigger.title = this.locale === 'en-US' ? 'Reasoning effort for this conversation' : '设置当前会话的推理强度';
     trigger.setAttribute('aria-expanded', String(!popover.hidden));
     this.bubble.querySelector('.codex-reasoning-title').textContent = this.locale === 'en-US' ? 'Reasoning' : '推理设置';
+    this.bubble.querySelector('.codex-thinking-mode-label').textContent = this.locale === 'en-US' ? 'Thinking mode' : '思考方式';
+    this.bubble.querySelector('.codex-thinking-mode-help').textContent = this.locale === 'en-US' ? 'Choose where this conversation gets its reasoning setting' : '选择当前会话的思考设置来源';
     this.bubble.querySelector('.codex-reasoning-label').textContent = this.locale === 'en-US' ? 'Effort' : '推理强度';
     this.bubble.querySelector('.codex-reasoning-help').textContent = this.locale === 'en-US' ? 'Only affects this conversation' : '仅影响当前会话';
     this.bubble.querySelector('.codex-reasoning-note').textContent = effectiveEffort === 'inherit'
@@ -383,12 +413,11 @@ export class CodexCompanion {
       : (this.locale === 'en-US' ? 'Applied when the next new turn starts.' : '将在下一次新回合开始时应用。');
   }
 
-  async #saveCodexReasoningPreference() {
+  async #saveCodexReasoningPreference(nextEffort = 'inherit') {
     const sourceId = this.#currentSourceThreadId();
     if (!sourceId || this.#currentProvider() !== 'codex') return;
-    const select = this.bubble.querySelector('.codex-reasoning-effort');
-    const preference = normalizeCodexSessionPreference({ effort: select.value });
-    select.disabled = true;
+    const preference = normalizeCodexSessionPreference({ effort: nextEffort });
+    this.bubble.querySelectorAll('.codex-reasoning-effort input, .codex-thinking-mode').forEach((node) => { node.disabled = true; });
     try {
       const current = this.configs.codex || {};
       this.configs.codex = await this.#api('codex').saveConfig({
@@ -399,7 +428,7 @@ export class CodexCompanion {
     } catch (error) {
       this.#showBubbleError(error?.message || String(error));
     } finally {
-      select.disabled = false;
+      this.bubble.querySelectorAll('.codex-reasoning-effort input, .codex-thinking-mode').forEach((node) => { node.disabled = false; });
     }
   }
 
@@ -437,25 +466,25 @@ export class CodexCompanion {
         <button class="codex-icon-button codex-task-back" type="button">←</button>
         <div class="codex-bubble-heading"><div class="codex-bubble-project"></div><div class="codex-bubble-title-row"><div class="codex-bubble-title"></div><button class="codex-reasoning-trigger" type="button" hidden></button><button class="claude-thinking-trigger" type="button" hidden></button></div></div>
         <div class="codex-bubble-state"></div>
-        <button class="codex-stop-turn" type="button" hidden></button>
         <button class="codex-icon-button codex-bubble-close" type="button">×</button>
       </header>
       <section class="claude-thinking-popover" hidden>
         <header><div><small>THIS CONVERSATION</small><strong class="claude-thinking-title"></strong></div><button class="codex-icon-button claude-thinking-close" type="button">脳</button></header>
-        <label class="claude-thinking-field"><span><strong class="claude-thinking-mode-label"></strong><small class="claude-thinking-mode-help"></small></span><select class="claude-thinking-mode"><option value="auto"></option><option value="inherit"></option><option value="disabled"></option><option value="custom"></option></select></label>
-        <label class="claude-thinking-field claude-effort-field" hidden><span><strong class="claude-effort-label"></strong><small class="claude-effort-help"></small></span><select class="claude-effort"></select></label>
+        <label class="claude-thinking-field"><span><strong class="claude-thinking-mode-label"></strong><small class="claude-thinking-mode-help"></small></span><select class="claude-thinking-mode"><option value="auto"></option><option value="inherit"></option><option value="adaptive"></option><option value="disabled"></option></select></label>
+        <section class="agent-effort-field claude-effort-field"><span><strong class="claude-effort-label"></strong><small class="claude-effort-help"></small></span><div class="claude-effort agent-effort-slider" role="group"></div></section>
         <div class="claude-thinking-note"></div>
       </section>
       <section class="codex-reasoning-popover" hidden>
         <header><div><small>THIS CONVERSATION</small><strong class="codex-reasoning-title"></strong></div><button class="codex-icon-button codex-reasoning-close" type="button">×</button></header>
-        <label class="codex-reasoning-field"><span><strong class="codex-reasoning-label"></strong><small class="codex-reasoning-help"></small></span><select class="codex-reasoning-effort"></select></label>
+        <label class="codex-thinking-field"><span><strong class="codex-thinking-mode-label"></strong><small class="codex-thinking-mode-help"></small></span><select class="codex-thinking-mode"><option value="inherit"></option><option value="custom"></option></select></label>
+        <section class="agent-effort-field codex-reasoning-field"><span><strong class="codex-reasoning-label"></strong><small class="codex-reasoning-help"></small></span><div class="codex-reasoning-effort agent-effort-slider" role="group"></div></section>
         <div class="codex-reasoning-note"></div>
       </section>
       <button class="codex-load-older" type="button" hidden></button>
       <div class="codex-bubble-scroll" tabindex="0"><div class="codex-message-list"></div><div class="codex-bubble-empty"></div></div>
       <div class="codex-bubble-notice"></div>
       <div class="codex-bubble-questions"></div>
-      <div class="codex-bubble-compose"><textarea rows="2" maxlength="12000"></textarea><button class="codex-send-button" type="button"></button></div>
+      <div class="codex-bubble-compose"><textarea rows="2" maxlength="12000"></textarea><div class="codex-compose-actions"><button class="codex-send-button" type="button"></button><button class="codex-stop-turn" type="button" hidden></button></div></div>
       <footer class="codex-bubble-footer">
         <button class="codex-quiet-button codex-page-up" type="button"></button>
         <span class="codex-page-status"></span>
@@ -546,7 +575,14 @@ export class CodexCompanion {
       this.updatePosition(true);
       this.onInteractionChange?.();
     });
-    this.bubble.querySelector('.codex-reasoning-effort').addEventListener('change', () => this.#saveCodexReasoningPreference());
+    this.bubble.querySelector('.codex-thinking-mode').addEventListener('change', (event) => {
+      if (event.target.value === 'inherit') this.#saveCodexReasoningPreference('inherit');
+      else {
+        const range = this.bubble.querySelector('.codex-reasoning-effort .agent-effort-range');
+        const efforts = this.#supportedCodexEfforts(this.#currentTask());
+        this.#saveCodexReasoningPreference(efforts[Number(range?.value)] || efforts[0]);
+      }
+    });
     this.bubble.querySelector('.claude-thinking-trigger').addEventListener('click', () => {
       const popover = this.bubble.querySelector('.claude-thinking-popover');
       popover.hidden = !popover.hidden;
@@ -560,17 +596,10 @@ export class CodexCompanion {
       this.updatePosition(true);
       this.onInteractionChange?.();
     });
-    const effortSelect = this.bubble.querySelector('.claude-effort');
-    for (const effort of CLAUDE_EFFORT_LEVELS) {
-      const option = element('option', '', effort);
-      option.value = effort;
-      effortSelect.appendChild(option);
-    }
     this.bubble.querySelector('.claude-thinking-mode').addEventListener('change', () => {
       this.#renderClaudeThinkingControl(true);
       this.#saveClaudeThinkingPreference();
     });
-    effortSelect.addEventListener('change', () => this.#saveClaudeThinkingPreference());
     this.bubble.querySelector('.codex-stop-turn').addEventListener('click', () => this.#interruptTurn());
     this.bubble.querySelector('.codex-open-app').addEventListener('click', () => this.#openInProvider());
     this.bubble.querySelector('.codex-page-up').addEventListener('click', () => this.#page(-1));
@@ -1014,7 +1043,7 @@ export class CodexCompanion {
     this.bubble.querySelector('.codex-bubble-state').textContent = this.#statusLabel(event.activity || task?.activity);
     const stopButton = this.bubble.querySelector('.codex-stop-turn');
     stopButton.textContent = this.t('stopTurn');
-    stopButton.hidden = provider !== 'codex' || task?.capabilities?.interrupt !== true;
+    stopButton.hidden = task?.capabilities?.interrupt !== true;
     this.bubble.querySelector('.codex-inline-error').textContent = this.inlineError;
     const textarea = this.bubble.querySelector('textarea');
     const providerConfig = this.configs[provider] || {};
@@ -1046,9 +1075,11 @@ export class CodexCompanion {
     if (event.kind === 'question' && event.requestId && event.supported !== false) this.#renderQuestions(event, questions);
     else if (event.requestId && event.supported !== false) this.#renderApprovalActions(event, actions);
     else if (event.requestId && event.supported === false) this.#renderOpenCodexAction(actions);
-    else if (task?.capabilities?.reply === true) compose.hidden = false;
+    else if (task?.capabilities?.reply === true || task?.capabilities?.interrupt === true) compose.hidden = false;
     else if (task?.connectionError) notice.textContent = task.connectionError;
     else if (task?.connectionState && task.connectionState !== CODEX_CONNECTION.CONNECTED) notice.textContent = this.#connectionLabel(task.connectionState, provider);
+    this.bubble.querySelector('.codex-send-button').hidden = task?.capabilities?.reply !== true;
+    textarea.hidden = task?.capabilities?.reply !== true;
 
     const page = this.messagePages.get(this.viewState.threadId);
     if (!page?.loaded) {
@@ -1284,12 +1315,13 @@ export class CodexCompanion {
   async #interruptTurn() {
     const task = this.#currentTask();
     const sourceId = task?.sourceId || this.viewState.event?.sourceThreadId || this.viewState.threadId.replace(/^[^:]+:/, '');
-    if (!sourceId || this.#currentProvider() !== 'codex') return;
+    const provider = this.#currentProvider();
+    if (!sourceId || !this.#api(provider)?.interrupt) return;
     this.#setBubbleBusy(true);
     const stopButton = this.bubble.querySelector('.codex-stop-turn');
     stopButton.textContent = this.t('stoppingTurn');
     try {
-      await window.electronAPI.codex.interrupt(sourceId);
+      await this.#api(provider).interrupt(sourceId);
       this.inlineError = '';
       this.viewState = {
         ...this.viewState,

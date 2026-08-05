@@ -311,6 +311,7 @@ ipcMain.handle('claude-mark-notified', (_event, eventId) => claudeMonitor?.markN
 ipcMain.handle('claude-session-connect', (_event, sessionId) => claudeMonitor?.connectSession(sessionId));
 ipcMain.handle('claude-session-disconnect', (_event, sessionId) => claudeMonitor?.disconnectSession(sessionId));
 ipcMain.handle('claude-respond', (_event, payload) => claudeMonitor?.respond(payload?.requestId, payload?.response));
+ipcMain.handle('claude-interrupt', (_event, sessionId) => claudeMonitor?.interrupt(sessionId));
 
 async function waitForClaudeMessage(sessionId, text, sinceMs, attempts = 40) {
   return waitForCodexDesktopUserMessage({

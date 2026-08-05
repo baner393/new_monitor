@@ -1,6 +1,6 @@
 # Current architecture
 
-Status: Confirmed at `f464545`. Evidence: `manifest.json`, files linked below.
+Status: Confirmed at `2ad1a8e`; the Claude compatibility/control completion is verified but uncommitted. Evidence: `manifest.json`, Git history, and affected tests.
 
 ## Runtime map
 
@@ -33,12 +33,14 @@ Renderer (src/renderer/main.js)
 
 ## Latest completed slice
 
-Status: Confirmed. Evidence: Git commit `f464545`, `tests/codex-integration.test.mjs`.
+Status: Confirmed. Evidence: Git commit `2ad1a8e`, `tests/codex-integration.test.mjs`, `tests/claude-integration.test.mjs`, and `tests/mouse-passthrough.test.mjs`.
 
-The current head rebuilds Codex task synchronization, persistent task-detail interaction, connection ownership, incremental log reads, long-lived App Server use, fixed pixel status layers, and grip-joint-based running/blocked pet motion. The pushed branch and remote are synchronized.
+The current head provides shared Codex/Claude task surfaces with direct replies, client-compatible handoff, direct-only bypass controls, tool-request approval, turn interruption, per-session reasoning controls, stable task-detail rendering, and transparent-window hit-region coordination. Codex reasoning values are discovered from App Server `model/list` and passed as `turn/start.effort`; client-compatible mode preserves the native client configuration.
 
 ## Uncommitted working-tree slice
 
-Status: Confirmed. Evidence: `contracts/codex-state-machine.yaml`, `evidence/verification.md`, `src/main/codex-desktop-bridge.js`, and the matching tests.
+Status: Confirmed in the uncommitted working tree. Evidence: `src/main/claude-client-bridge.js`, `src/main/claude-monitor.js`, `src/main/index.js`, `src/main/preload.js`, `src/renderer/codex-companion.js`, and integration tests.
 
-The working tree repairs complete Codex message rendering and client-compatible replies. Technical tool traffic is collapsed by default; desktop-compatible mode keeps the task list visible, avoids a second App Server, navigates to the client-owned task, submits through a foreground- and composer-verified Windows UI Automation bridge, preserves Unicode text, and waits for the local session log before reporting success.
+Claude session preferences migrate from `custom` to `adaptive` and always retain an independent bounded effort. The shared conversation controls render the effort as a discrete slider for Codex and Claude; Claude keeps its thinking mode alongside it, while Codex has an explicit follow-configuration choice. The peak effort tier has a contained visual emphasis that respects reduced-motion preferences.
+
+Claude desktop-compatible sending resolves the newest usable VS Code-family IDE lock even when workspace matching is stale, focuses a UI Automation `Document` or `Edit` composer in the verified client process, then pastes and submits with Enter/Ctrl+Enter fallback. Session-owner metadata retains titles even after its process exits, while a task is treated as externally running only when the owner is alive with an active status. Monitor-managed Claude turns and pending approvals expose the provider-neutral stop action through Claude IPC.

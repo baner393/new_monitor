@@ -12,6 +12,7 @@ import {
   ClaudeMonitor,
   formatClaudeManagedError,
   parseClaudeTranscript,
+  readClaudeSessionOwners,
   resolveClaudeGatewayBaseUrl,
   resolveClaudeHome,
 } from '../src/main/claude-monitor.js';
@@ -47,7 +48,7 @@ test('Claude configuration is portable and bounds persisted state', () => {
       two: { thinkingMode: 'invalid', effort: 'turbo' },
     },
   });
-  assert.equal(config.version, 3);
+  assert.equal(config.version, 4);
   assert.equal(config.manualHome, 'C:\\Users\\demo\\.claude');
   assert.equal(config.replyTransport, CLAUDE_REPLY_TRANSPORT.DESKTOP);
   assert.equal(normalizeClaudeIntegrationConfig({ bypassPermissions: true }).bypassPermissions, true);
@@ -96,6 +97,16 @@ test('Claude transcript keeps user, thinking, tools, result and full final answe
   ]);
   assert.equal(parsed.unread.activity, CLAUDE_ACTIVITY.READY);
   assert.equal(parsed.unread.message, '检查完成，全部测试通过。');
+});
+
+test('Claude transcript keeps the latest user title ahead of later AI titles', () => {
+  const parsed = parseClaudeTranscript(transcript([
+    { type: 'ai-title', sessionId: 'renamed-session', aiTitle: '最初的 AI 标题' },
+    { type: 'custom-title', sessionId: 'renamed-session', customTitle: 'VS Code 自定义名称' },
+    { type: 'ai-title', sessionId: 'renamed-session', aiTitle: '后续 AI 标题' },
+    { type: 'custom-title', sessionId: 'renamed-session', customTitle: 'VS Code 最终名称' },
+  ]));
+  assert.equal(parsed.task.title, 'VS Code 最终名称');
 });
 
 test('Claude AskUserQuestion is exposed as a needs-input event', () => {
@@ -177,6 +188,29 @@ test('old or acknowledged Claude failures do not keep the pet blocked forever', 
   assert.equal(acknowledged.task.activity, CLAUDE_ACTIVITY.SILENT);
 });
 
+test('Claude owner registry preserves authoritative runtime status and naming source', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'monitor-claude-owners-'));
+  fs.mkdirSync(path.join(root, 'sessions'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'sessions', 'owner.json'), JSON.stringify({
+    pid: process.pid,
+    sessionId: 'owned-session',
+    cwd: root,
+    entrypoint: 'claude-vscode',
+    name: '用户命名',
+    nameSource: 'custom',
+    status: 'idle',
+    updatedAt: 1234,
+    statusUpdatedAt: 1200,
+  }));
+  try {
+    const owner = readClaudeSessionOwners(root).get('owned-session');
+    assert.equal(owner.status, 'idle');
+    assert.equal(owner.nameSource, 'custom');
+    assert.equal(owner.updatedAtMs, 1234000);
+    assert.equal(owner.statusUpdatedAtMs, 1200000);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 test('Claude home resolution honors manual and environment directories', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'monitor-claude-home-'));
   try {
@@ -199,7 +233,7 @@ test('Claude VS Code target and URI preserve the exact session and prompt', () =
     const target = resolveClaudeIdeTarget(root, path.join(workspace, 'child'));
     assert.equal(target.scheme, 'cursor');
     assert.equal(target.pid, process.pid);
-    assert.equal(resolveClaudeIdeTarget(root, path.join(root, 'different-workspace')), null);
+    assert.deepEqual(resolveClaudeIdeTarget(root, path.join(root, 'different-workspace')), { pid: process.pid, scheme: 'cursor', ideName: 'Cursor' });
     const uri = claudeVsCodeUri({ sessionId: 'session / 中文', prompt: '继续 修复', scheme: target.scheme });
     assert.equal(uri, 'cursor://anthropic.claude-code/open?session=session+%2F+%E4%B8%AD%E6%96%87&prompt=%E7%BB%A7%E7%BB%AD+%E4%BF%AE%E5%A4%8D');
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
@@ -224,6 +258,9 @@ test('Claude client bridge carries focus, paste and shortcut controls', async ()
   assert.equal(invocation.options.env.MONITOR_CLAUDE_SHORTCUT, 'ctrl-enter');
   assert.equal(invocation.options.env.MONITOR_CLAUDE_PREFER_FOREGROUND, '1');
   assert.equal(invocation.options.env.MONITOR_CLAUDE_FOCUS_DELAY_MS, '125');
+  assert.match(invocation.args.at(-1), /System\.Windows\.Automation/);
+  assert.match(invocation.args.at(-1), /Document|Edit/);
+  assert.match(invocation.args.at(-1), /ValuePattern/);
 });
 
 test('Claude terminal launcher resumes the same session with the prompt', () => {
@@ -276,7 +313,7 @@ test('Claude Monitor direct mode resumes the selected local session', async () =
     assert.equal(invocation.args.at(-1), '继续处理');
     assert.equal(invocation.options.cwd, root);
     assert.equal(invocation.options.env.CLAUDE_CODE_DISABLE_THINKING, '1');
-    assert.equal(invocation.options.env.CLAUDE_CODE_EFFORT_LEVEL, undefined);
+    assert.equal(invocation.options.env.CLAUDE_CODE_EFFORT_LEVEL, 'high');
   } finally {
     monitor.stop();
     fs.rmSync(root, { recursive: true, force: true });
@@ -339,22 +376,24 @@ test('Claude Monitor pauses a direct tool call until the user approves it', asyn
   }
 });
 
-test('Claude direct arguments inherit gateway thinking settings instead of overriding effort', () => {
-  assert.deepEqual(buildClaudeDirectArgs({
-    sessionId: 'session-one', message: 'continue', permissionMode: 'plan', effort: 'max',
-  }), [
-    '-p', '--resume', 'session-one', '--output-format', 'stream-json', '--verbose',
-    '--include-partial-messages', '--permission-mode', 'plan', 'continue',
-  ]);
+test('Claude direct arguments apply effort independently from thinking mode', () => {
   const args = buildClaudeDirectArgs({
+    sessionId: 'session-one', message: 'continue', permissionMode: 'plan', effort: 'max',
+  });
+  assert.equal(args[args.indexOf('--permission-mode') + 1], 'plan');
+  assert.equal(args[args.indexOf('--effort') + 1], 'max');
+  assert.equal(args.at(-1), 'continue');
+
+  const normalized = buildClaudeDirectArgs({
     sessionId: 'session-one', message: 'continue', permissionMode: 'unexpected', effort: 'turbo',
   });
-  assert.equal(args[args.indexOf('--permission-mode') + 1], 'manual');
-  assert.equal(args.includes('--effort'), false);
-  const custom = buildClaudeDirectArgs({
-    sessionId: 'session-one', message: 'continue', thinkingMode: CLAUDE_THINKING_MODE.CUSTOM, effort: 'xhigh',
+  assert.equal(normalized[normalized.indexOf('--permission-mode') + 1], 'manual');
+  assert.equal(normalized[normalized.indexOf('--effort') + 1], 'high');
+
+  const disabled = buildClaudeDirectArgs({
+    sessionId: 'session-one', message: 'continue', thinkingMode: CLAUDE_THINKING_MODE.DISABLED, effort: 'low',
   });
-  assert.equal(custom[custom.indexOf('--effort') + 1], 'xhigh');
+  assert.equal(disabled[disabled.indexOf('--effort') + 1], 'low');
 });
 
 test('Claude direct environment isolates third-party gateways from incompatible thinking types', () => {
@@ -368,7 +407,7 @@ test('Claude direct environment isolates third-party gateways from incompatible 
   });
   assert.equal(compatible.effectiveThinkingMode, CLAUDE_THINKING_MODE.DISABLED);
   assert.equal(compatible.env.CLAUDE_CODE_DISABLE_THINKING, '1');
-  assert.equal(compatible.env.CLAUDE_CODE_EFFORT_LEVEL, undefined);
+  assert.equal(compatible.env.CLAUDE_CODE_EFFORT_LEVEL, 'high');
   assert.equal(compatible.env.MAX_THINKING_TOKENS, undefined);
 
   const inherited = buildClaudeDirectEnv({
@@ -441,6 +480,37 @@ test('Claude managed errors identify gateway thinking-type incompatibility', () 
   assert.match(message, /thinking/);
   assert.match(message, /自动兼容/);
   assert.match(message, /关闭思考/);
+});
+
+test('Claude managed turns expose interrupt and clear an acknowledged managed failure', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'monitor-claude-interrupt-'));
+  const project = path.join(root, 'projects', 'demo');
+  fs.mkdirSync(project, { recursive: true });
+  fs.writeFileSync(path.join(project, 'interrupt-session.jsonl'), transcript([
+    { type: 'user', sessionId: 'interrupt-session', cwd: root, timestamp: new Date().toISOString(), message: { content: 'start' } },
+  ]));
+  let killed = false;
+  const child = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.kill = () => { killed = true; child.emit('exit', 130); return true; };
+  const monitor = new ClaudeMonitor({
+    config: { enabled: true, homeMode: 'manual', manualHome: root, enabledAtMs: Date.now() - 1000 },
+    spawnImpl: () => { queueMicrotask(() => child.emit('spawn')); return child; },
+  });
+  try {
+    await monitor.scan(true);
+    monitor.connectSession('interrupt-session');
+    await monitor.reply('interrupt-session', 'continue');
+    assert.equal(monitor.getSnapshot().tasks[0].capabilities.interrupt, true);
+    const interrupted = await monitor.interrupt('interrupt-session');
+    assert.equal(interrupted.interrupted, true);
+    assert.equal(killed, true);
+    assert.equal(monitor.getSnapshot().tasks[0].capabilities.interrupt, false);
+  } finally {
+    monitor.stop();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('combined task snapshots retain provider identity and priority', () => {

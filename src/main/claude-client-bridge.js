@@ -7,6 +7,8 @@ import { windowsPowerShellPath } from './codex-desktop-bridge.js';
 const SUBMIT_SCRIPT = String.raw`
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName UIAutomationClient
+Add-Type -AssemblyName UIAutomationTypes
 Add-Type @'
 using System;
 using System.Runtime.InteropServices;
@@ -73,7 +75,37 @@ Start-Sleep -Milliseconds 220
 $foreground = [ClaudeClientWindow]::GetForegroundWindow()
 $foregroundPid = [uint32]0
 [void][ClaudeClientWindow]::GetWindowThreadProcessId($foreground, [ref]$foregroundPid)
-if ($foreground -ne $targetHandle) { throw 'Claude Code client did not keep the requested window focus' }
+if ($foregroundPid -ne [uint32]$target.Id) { throw 'Claude Code client did not keep the requested window focus' }
+
+# VS Code chat is hosted in a webview, so HWND focus alone is not enough. Find
+# an editable UI Automation element in the selected IDE process before pasting.
+$root = [System.Windows.Automation.AutomationElement]::FromHandle($targetHandle)
+$editable = New-Object System.Windows.Automation.AndCondition(
+  [System.Windows.Automation.Condition]::new([System.Windows.Automation.AutomationElement]::IsEnabledProperty, $true),
+  [System.Windows.Automation.OrCondition]::new(
+    [System.Windows.Automation.Condition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Document),
+    [System.Windows.Automation.Condition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Edit)
+  )
+)
+$composer = $null
+if ($null -ne $root) {
+  $edits = @($root.FindAll([System.Windows.Automation.TreeScope]::Descendants, $editable))
+  $composer = $edits | Where-Object {
+    $label = "$($_.Current.Name) $($_.Current.ClassName) $($_.Current.AutomationId)"
+    $label -match '(?i)claude|chat|composer|prompt|message'
+  } | Select-Object -First 1
+  if ($null -eq $composer) {
+    $focused = [System.Windows.Automation.AutomationElement]::FocusedElement
+    if ($null -ne $focused -and $focused.Current.ProcessId -eq $target.Id -and ($focused.Current.ControlType -eq [System.Windows.Automation.ControlType]::Document -or $focused.Current.ControlType -eq [System.Windows.Automation.ControlType]::Edit)) { $composer = $focused }
+  }
+  if ($null -eq $composer) { $composer = $edits | Select-Object -Last 1 }
+}
+if ($null -eq $composer) { throw 'Claude Code message editor was not found in the selected client window' }
+try { $composer.SetFocus() } catch { throw 'Claude Code message editor could not receive focus' }
+# ValuePattern is available for native Edit controls. VS Code webviews often do
+# not expose it, in which case the focused composer still receives clipboard paste.
+$valuePattern = $null
+try { $valuePattern = $composer.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern) } catch { }
 
 if ($env:MONITOR_CLAUDE_PASTE -eq '1') {
   [System.Windows.Forms.SendKeys]::SendWait('^v')
@@ -83,10 +115,10 @@ if ($env:MONITOR_CLAUDE_SHORTCUT -eq 'none') {
   $method = 'focus-only'
 } elseif ($env:MONITOR_CLAUDE_SHORTCUT -eq 'ctrl-enter') {
   [System.Windows.Forms.SendKeys]::SendWait('^{ENTER}')
-  $method = 'ctrl-enter'
+  $method = 'uia-composer-ctrl-enter'
 } else {
   [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
-  $method = 'enter'
+  $method = 'uia-composer-enter'
 }
 
 Write-Output (ConvertTo-Json @{
@@ -129,7 +161,7 @@ export function resolveClaudeIdeTarget(claudeHome, cwd = '') {
     } catch { /* IDE lock can be replaced while it is read. */ }
   }
   const target = matches.sort((left, right) => right.score - left.score)[0];
-  if (!target || (cwd && target.score <= 0)) return null;
+  if (!target) return null;
   const name = String(target.ideName || '').toLowerCase();
   const scheme = name.includes('cursor') ? 'cursor'
     : name.includes('windsurf') ? 'windsurf'

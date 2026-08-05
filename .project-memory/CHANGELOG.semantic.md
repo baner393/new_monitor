@@ -1,5 +1,33 @@
 # Semantic change log
 
+## 2026-08-05 - Transparent pet hit testing stabilization
+
+Status: Confirmed in the uncommitted working tree. Evidence: `src/renderer/main.js`, `src/renderer/input.js`, `tests/codex-integration.test.mjs`, `npm test`, and `npm run verify`.
+
+- The pet, transparent-window gate, click-outside handler, and gesture manager now use the same visible body bounds with a forgiving edge, rather than mixing the texture container with the visible body.
+- While the transparent Electron window is click-through, the renderer samples the system cursor at a bounded cadence and switches to capture as the pointer enters the pet. The poll is single-flight and is cleared on renderer unload, removing the event-delivery gap that previously made initial clicks and drags intermittent.
+
+## 2026-08-05 - Claude compatibility, lifecycle, and reasoning controls
+
+Status: Confirmed in the uncommitted working tree. Evidence: `tests/claude-integration.test.mjs`, `tests/codex-integration.test.mjs`, `npm test`, and `npm run verify`.
+
+- Claude config is being moved from version 3 to 4. The legacy per-session `custom` thinking value normalizes to `adaptive`; session preferences continue to retain a bounded effort value.
+- Direct Claude replies now append `--effort` for every selected session preference, while gateway compatibility still disables thinking where required.
+- Claude client-compatible VS Code submission now discovers a UI Automation `Document`/`Edit` composer after deep-link navigation, verifies the foreground process rather than a transient window handle, and supports both Enter and Ctrl+Enter.
+- Transcript titles prefer a user custom title over later AI-generated titles. Owner metadata keeps title information when its process is gone, but running status requires a live owner with an active status so stale sessions do not show as running.
+- Codex and Claude share a discrete effort slider. Claude's thinking mode and effort are parallel controls; Codex retains a separate follow-configuration selection. The top effort tier has an accessible, reduced-motion-aware visual emphasis.
+- Claude Monitor now exposes interruption for Monitor-owned turns and pending approvals through main-process IPC; the common renderer stop button calls the active provider rather than assuming Codex.
+
+## 2026-08-04 - Shared agent controls and reasoning settings
+
+Status: Confirmed. Evidence: commit `2ad1a8e`, `tests/codex-integration.test.mjs`, `tests/claude-integration.test.mjs`, and `tests/mouse-passthrough.test.mjs`.
+
+- Codex and Claude share provider-scoped task controls for replies, approvals, direct-only bypass, configured send shortcuts, and interruption.
+- Direct-mode Codex uses App Server approvals and can interrupt owned turns; pending approval items remain actionable until resolved.
+- Codex and Claude session settings persist independently. Codex gets an effort override for direct turns, obtained from App Server model capabilities; desktop-compatible mode leaves the native client responsible for settings.
+- The renderer uses provider-scoped conversation identities so a Codex and Claude session with the same source id cannot render into each other's detail surface.
+- Mouse passthrough is coordinated across pet and companion hit regions so idle desktop space remains click-through while active interaction surfaces capture input.
+
 ## 2026-07-31 - Active-task reply and complete message repair
 
 Status: Confirmed in the uncommitted working tree. Evidence: `tests/codex-integration.test.mjs`, source builds, and local-session diagnostic.

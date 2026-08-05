@@ -100,6 +100,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       disconnectSession: (sessionId) => ipcRenderer.invoke('claude-session-disconnect', sessionId),
       reply: (sessionId, text) => ipcRenderer.invoke('claude-reply', { sessionId, text }),
       respond: (requestId, response) => ipcRenderer.invoke('claude-respond', { requestId, response }),
+      interrupt: (sessionId) => ipcRenderer.invoke('claude-interrupt', sessionId),
       openApp: (sessionId, title) => ipcRenderer.invoke('claude-open-app', { sessionId, title }),
     openLink: (href) => ipcRenderer.invoke('codex-open-link', href),
     onStatus: (callback) => {

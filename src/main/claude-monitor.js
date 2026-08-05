@@ -65,12 +65,7 @@ export function buildClaudeDirectArgs({
       }));
     }
   }
-  // Only an explicit per-session custom choice may override effort. Auto and
-  // inherit preserve the original Claude Code configuration; compatibility
-  // mode is applied through the child environment below.
-  if (thinkingMode === CLAUDE_THINKING_MODE.CUSTOM) {
-    args.push('--effort', normalizeClaudeEffort(effort) || 'high');
-  }
+  args.push('--effort', normalizeClaudeEffort(effort) || 'high');
   if (cleanText(message)) args.push(cleanText(message));
   return args;
 }
@@ -92,13 +87,12 @@ export function buildClaudeDirectEnv({
     ? (usesThirdPartyClaudeGateway(env, gatewayBaseUrl) ? CLAUDE_THINKING_MODE.DISABLED : CLAUDE_THINKING_MODE.INHERIT)
     : requested;
 
+  env.CLAUDE_CODE_EFFORT_LEVEL = normalizeClaudeEffort(effort) || 'high';
   if (effective === CLAUDE_THINKING_MODE.DISABLED) {
-    delete env.CLAUDE_CODE_EFFORT_LEVEL;
     delete env.MAX_THINKING_TOKENS;
     env.CLAUDE_CODE_DISABLE_THINKING = '1';
-  } else if (effective === CLAUDE_THINKING_MODE.CUSTOM) {
+  } else if (effective === CLAUDE_THINKING_MODE.ADAPTIVE) {
     delete env.CLAUDE_CODE_DISABLE_THINKING;
-    env.CLAUDE_CODE_EFFORT_LEVEL = normalizeClaudeEffort(effort) || 'high';
   }
   return { env, effectiveThinkingMode: effective };
 }
@@ -210,6 +204,7 @@ export function createClaudeTranscriptState({ filePath = '', modifiedAtMs = 0 } 
     sessionId: path.basename(filePath, path.extname(filePath)),
     cwd: '',
     title: '',
+    titleSource: '',
     firstPrompt: '',
     entrypoint: '',
     messages: [],
@@ -241,11 +236,19 @@ function applyClaudeRow(state, row) {
   if (row.uuid) state.lastMessageUuid = String(row.uuid);
 
   if (row.type === 'custom-title') {
-    state.title = cleanText(row.customTitle, 200);
+    const title = cleanText(row.customTitle, 200);
+    if (title) {
+      state.title = title;
+      state.titleSource = 'custom';
+    }
     return;
   }
-  if (row.type === 'ai-title' && !state.title) {
-    state.title = cleanText(row.aiTitle, 200);
+  if (row.type === 'ai-title' && state.titleSource !== 'custom') {
+    const title = cleanText(row.aiTitle, 200);
+    if (title) {
+      state.title = title;
+      state.titleSource = 'ai';
+    }
     return;
   }
   if (row.type === 'permission-mode') {
@@ -474,9 +477,10 @@ export function readClaudeSessionOwners(claudeHome) {
       const data = JSON.parse(fs.readFileSync(path.join(root, entry.name), 'utf8'));
       const pid = Number(data.pid);
       const sessionId = cleanText(data.sessionId, 240);
-      if (!sessionId || !Number.isInteger(pid) || pid <= 0 || !processAlive(pid)) continue;
+      if (!sessionId) continue;
       owners.set(sessionId, {
-        pid,
+        pid: Number.isInteger(pid) && pid > 0 ? pid : 0,
+        alive: Number.isInteger(pid) && pid > 0 && processAlive(pid),
         cwd: cleanText(data.cwd, 2048),
         entrypoint: cleanText(data.entrypoint, 80),
         kind: cleanText(data.kind, 80),
@@ -484,6 +488,9 @@ export function readClaudeSessionOwners(claudeHome) {
         version: cleanText(data.version, 40),
         name: cleanText(data.name, 200),
         nameSource: cleanText(data.nameSource, 40),
+        status: cleanText(data.status, 40).toLowerCase(),
+        updatedAtMs: timestampMs(data.updatedAt),
+        statusUpdatedAtMs: timestampMs(data.statusUpdatedAt),
       });
     } catch { /* A registry file may be replaced while being read. */ }
   }
@@ -686,16 +693,21 @@ export class ClaudeMonitor {
       const owner = this.owners.get(task.id);
       const hasBlockedUnread = allUnread.some((event) => event.threadId === task.id && event.activity === CLAUDE_ACTIVITY.BLOCKED);
       const managedError = this.managedErrors.get(task.id) || '';
+      const ownerIsRunning = owner?.alive === true && ['running', 'active', 'busy'].includes(owner.status);
+      const ownerIsIdle = owner?.alive === true && ['idle', 'completed', 'stopped', 'ready'].includes(owner.status);
       const currentTask = task.activity === CLAUDE_ACTIVITY.BLOCKED && !hasBlockedUnread && !managedError
         ? { ...task, activity: CLAUDE_ACTIVITY.SILENT } : task;
       const taskWithManagedError = managedError ? { ...currentTask, activity: CLAUDE_ACTIVITY.BLOCKED } : currentTask;
       const displayedTask = owner?.name ? { ...taskWithManagedError, title: sanitizeTaskTitle(owner.name) } : taskWithManagedError;
       const managed = this.managedProcesses.has(task.id);
       const pendingApproval = [...this.pendingApprovals.values()].some((pending) => pending.sessionId === task.id);
+      const activity = managed || pendingApproval || ownerIsRunning || !ownerIsIdle
+        ? displayedTask.activity
+        : CLAUDE_ACTIVITY.SILENT;
       let connectionState = CLAUDE_CONNECTION.DISCONNECTED;
       if (this.config.replyTransport === CLAUDE_REPLY_TRANSPORT.DESKTOP) connectionState = CLAUDE_CONNECTION.CONNECTED;
       else if (desired.has(task.id)) {
-        connectionState = owner && !managed
+        connectionState = owner?.alive && !managed
           ? CLAUDE_CONNECTION.TEMPORARY_READ_ONLY
           : CLAUDE_CONNECTION.CONNECTED;
       }
@@ -704,15 +716,16 @@ export class ClaudeMonitor {
           || connectionState === CLAUDE_CONNECTION.CONNECTED);
       return {
         ...displayedTask,
+        activity,
         provider: 'claude',
         owner: owner || null,
         connectionState,
-        connectionError: managedError || (owner && !managed && desired.has(task.id)
+        connectionError: managedError || (owner?.alive && !managed && desired.has(task.id)
           ? '该会话正在原终端或 IDE 中运行，请使用客户端兼容模式'
           : ''),
         canReply,
         hasOwnedRequest: pendingApproval,
-        capabilities: { reply: canReply, approve: pendingApproval, jump: true },
+        capabilities: { reply: canReply, approve: pendingApproval, interrupt: managed || pendingApproval, jump: true },
       };
     });
     const summary = buildClaudeVisibleTasks(tasks, allUnread);
@@ -899,6 +912,27 @@ export class ClaudeMonitor {
     return { accepted: true };
   }
 
+  interrupt(sessionId) {
+    const id = cleanText(sessionId, 240);
+    if (!id || !this.tasks.has(id)) throw new Error('没有找到这个 Claude Code 会话');
+    if (this.config.replyTransport === CLAUDE_REPLY_TRANSPORT.DESKTOP) {
+      throw new Error('客户端兼容模式请在 Claude Code 中停止当前回合');
+    }
+    const child = this.managedProcesses.get(id);
+    const pending = [...this.pendingApprovals.entries()].filter(([, value]) => value.sessionId === id);
+    if (!child && pending.length === 0) throw new Error('当前没有可停止的 Claude Code 回合');
+    for (const [requestId] of pending) this.#resolveClaudeApproval(requestId, 'decline');
+    if (child) {
+      this.managedProcesses.delete(id);
+      child.kill?.();
+    }
+    this.managedErrors.delete(id);
+    const task = this.tasks.get(id);
+    if (task) this.tasks.set(id, { ...task, activity: CLAUDE_ACTIVITY.SILENT, updatedAtMs: Date.now() });
+    this.#rebuildSnapshot();
+    return { interrupted: true, sessionId: id };
+  }
+
   async reply(sessionId, text) {
     const id = cleanText(sessionId, 240);
     const message = cleanText(text);
@@ -910,7 +944,7 @@ export class ClaudeMonitor {
     }
     if (!this.config.desiredSessionIds.includes(id)) throw new Error('请先为这个 Claude Code 会话建立 Monitor 直连');
     const owner = this.owners.get(id);
-    if (owner && !this.managedProcesses.has(id)) {
+    if (owner?.alive && !this.managedProcesses.has(id)) {
       throw new Error('该会话正在原终端或 IDE 中运行，请切换到 Claude Code 客户端兼容模式');
     }
     if (this.managedProcesses.has(id)) throw new Error('Claude Code 正在处理上一条消息，请稍候再发送');
