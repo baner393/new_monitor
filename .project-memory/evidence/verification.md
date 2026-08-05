@@ -22,6 +22,15 @@ Status: Confirmed on 2026-08-05 for tests and structural verification. Evidence:
 - `npm run build:sponsor`: not run after the identical build environment restriction was established.
 - No installer or package command was run.
 
+## Dual-edition installer validation
+
+Status: Confirmed on 2026-08-05 for commit `f2f468f`. Evidence: completed `npm run dist` output in the source environment.
+
+- `npm run dist`: passed after rebuilding both editions.
+- `out/free/TurtleMonitor-Free-Setup.exe`: generated and passed free-edition ASAR boundary and renderer-asset verification.
+- `out/sponsor/TurtleMonitor-Sponsor-Setup.exe`: generated and passed sponsor-edition ASAR boundary and renderer-asset verification.
+- Vite emitted only the pre-existing unresolved-font runtime notices and a renderer chunk-size warning; neither blocked the build nor the installer verification.
+
 Automated results:
 
 - `npm test`: 94/94 tests passed.
