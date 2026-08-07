@@ -47,6 +47,10 @@ export class SkinSelector {
     `;
     this.container.appendChild(title);
 
+    this.catalogNotice = document.createElement('div');
+    this.catalogNotice.style.cssText = 'max-width:700px; width:90%; margin:-16px 0 10px; color:#aab7c5; font-size:12px; text-align:center;';
+    this.container.appendChild(this.catalogNotice);
+
     // 皮肤网格
     this.skinGrid = document.createElement('div');
     this.skinGrid.style.cssText = `
@@ -110,6 +114,8 @@ export class SkinSelector {
         this.skins = config.skins;
       }
 
+      await this._loadOnlineCatalog();
+
       // 从主进程持久化存储加载上次选择的皮肤
       try {
         if (window.electronAPI?.skin?.get) {
@@ -147,6 +153,18 @@ export class SkinSelector {
     } catch (err) {
       console.error('[SkinSelector] Failed to load skins:', err.message);
     }
+  }
+
+  async _loadOnlineCatalog() {
+    const catalog = await window.electronAPI?.subscription?.getSkinCatalog?.();
+    if (!catalog?.success) {
+      this.catalogNotice.textContent = '';
+      return;
+    }
+    this.onlineSkins = catalog.skins || [];
+    this.catalogNotice.textContent = this.onlineSkins.length
+      ? `在线皮肤库：发现 ${this.onlineSkins.length} 个可更新皮肤。下载入口将在首个正式皮肤包发布后开放。`
+      : '在线皮肤库：暂时没有已发布的新皮肤。';
   }
 
   /**
@@ -245,6 +263,17 @@ export class SkinSelector {
 
       this.skinGrid.appendChild(card);
     });
+    for (const skin of this.onlineSkins || []) {
+      if (this.skins.some((local) => local.id === skin.id)) continue;
+      const card = document.createElement('div');
+      card.style.cssText = 'background:#202936;border:2px solid #456b91;border-radius:8px;padding:15px;text-align:center;display:flex;flex-direction:column;align-items:center;gap:8px;';
+      const preview = document.createElement('img'); preview.src = skin.previewUrl; preview.style.cssText = 'width:64px;height:64px;object-fit:contain;image-rendering:pixelated;'; card.appendChild(preview);
+      card.appendChild(Object.assign(document.createElement('strong'), { textContent: skin.displayName || skin.id }));
+      card.appendChild(Object.assign(document.createElement('small'), { textContent: `v${skin.version}` }));
+      const action = document.createElement('button'); action.textContent = '下载';
+      action.onclick = async () => { action.disabled = true; action.textContent = '下载中…'; const result = await window.electronAPI.subscription.installSkin({ skinId: skin.id, version: skin.version, sha256: skin.packageSha256 }); action.textContent = result.success ? '已安装' : '重试下载'; action.disabled = false; if (result.success) await this.reload(); };
+      card.appendChild(action); this.skinGrid.appendChild(card);
+    }
   }
 
   _selectSkin(skinId) {

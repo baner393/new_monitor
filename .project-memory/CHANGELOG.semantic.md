@@ -1,5 +1,14 @@
 # Semantic change log
 
+## 2026-08-08 - Subscription service and online skin delivery
+
+Status: Confirmed in the working tree and deployed Cloudflare service. Evidence: `subscription-service/`, `src/main/subscription-runtime.js`, `src/main/skin-publisher.js`, `src/renderer/skin-selector.js`, `tests/skin-publisher.test.mjs`, `npm test`, and `npm run verify`.
+
+- Added the Afdian-backed Worker and D1 subscription service with device-bound Ed25519 entitlement envelopes and copyable order-binding codes.
+- Bound the `turtle-monitor-skins` R2 bucket and added a release catalog table. Public catalog/preview access is separated from device-proof-gated package downloads that accept either `skins` or `creator` access.
+- Added client-side catalog loading, entitlement-bound download, gzip package parsing, manifest and frame checksum verification, atomic installation, and skin-list reload.
+- Added the developer publisher for validating source skins, writing built-in skins, and preparing online `.skinpack` release artifacts. Automated R2/D1 publication and a real buyer skin-install E2E remain open.
+
 ## 2026-08-05 - Inline approval promotion
 
 Status: Confirmed in the uncommitted working tree. Evidence: `src/renderer/codex-view-state.js`, `tests/codex-integration.test.mjs`, `npm test`, and `npm run verify`.

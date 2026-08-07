@@ -1,6 +1,8 @@
 import { app, BrowserWindow, clipboard, ipcMain, Menu, dialog, powerMonitor, safeStorage, screen, shell } from 'electron';
 import path from 'path';
 import fs from 'fs';
+import zlib from 'zlib';
+import crypto from 'crypto';
 import { SystemMonitor } from './system-monitor.js';
 import { resolveHardwareSensorHostPath } from './hardware-sensor-monitor.js';
 import { isWindowsProcessElevated } from './elevation-restart.js';
@@ -33,9 +35,11 @@ import {
   normalizeClaudeIntegrationConfig,
 } from '../shared/claude-integration.js';
 import { loadSubscriptionConfig, SubscriptionRuntime } from './subscription-runtime.js';
+import { inspectSkinSource, prepareOnlineSkinRelease, writeBuiltInSkin } from './skin-publisher.js';
 
 let mainWindow;
 let customWindow;
+let skinPublisherWindow;
 let canvasWindow;
 let regionWindow;
 let systemMonitor;
@@ -80,6 +84,17 @@ function resolveCustomResource(fileName) {
     fileName,
     isDevelopment: Boolean(MAIN_WINDOW_VITE_DEV_SERVER_URL),
   });
+}
+
+function resolvePublisherResource(fileName) {
+  const sourcePath = path.join(app.getAppPath(), 'src', 'publisher', fileName);
+  const buildPath = path.join(app.getAppPath(), '.vite', 'build', 'src', 'publisher', fileName);
+  if (MAIN_WINDOW_VITE_DEV_SERVER_URL && fs.existsSync(sourcePath)) return sourcePath;
+  return fs.existsSync(buildPath) ? buildPath : sourcePath;
+}
+
+function developerToolsEnabled() {
+  return Boolean(MAIN_WINDOW_VITE_DEV_SERVER_URL || process.env.TURTLE_DEVELOPER_TOOLS === '1' || process.argv.includes('--skin-publisher'));
 }
 
 function requestMainWindowSoftRefresh() {
@@ -813,12 +828,53 @@ ipcMain.handle('monitor-request-elevation', async () => {
 
 ipcMain.handle('subscription-get', () => subscriptionStatus());
 
+ipcMain.handle('subscription-skin-catalog', async () => {
+  try {
+    if (!subscriptionRuntime) return { success: false, error: 'subscription_initializing', skins: [] };
+    const catalog = await subscriptionRuntime.getSkinCatalog();
+    return { success: true, ...catalog };
+  } catch (error) {
+    return { success: false, error: String(error?.message || error), skins: [] };
+  }
+});
+
+ipcMain.handle('subscription-skin-install', async (_event, { skinId, version, sha256 }) => {
+  try {
+    if (!subscriptionRuntime) throw new Error('subscription_initializing');
+    const packed = await subscriptionRuntime.downloadSkinPackage(String(skinId || ''), String(version || ''));
+    if (sha256 && crypto.createHash('sha256').update(packed).digest('hex') !== sha256) throw new Error('skin_package_checksum_mismatch');
+    const payload = JSON.parse(zlib.gunzipSync(packed).toString('utf8'));
+    const manifest = payload?.manifest;
+    if (payload?.schemaVersion !== 1 || manifest?.id !== skinId || manifest?.version !== version || !manifest?.frames?.idle) throw new Error('invalid_skin_package');
+    const target = path.join(SKINS_USER_PATH, manifest.id);
+    const temporary = `${target}.installing`;
+    fs.rmSync(temporary, { recursive: true, force: true }); fs.mkdirSync(temporary, { recursive: true });
+    for (const file of manifest.files || []) {
+      const data = Buffer.from(payload.files?.[file.path] || '', 'base64');
+      if (!data.length || crypto.createHash('sha256').update(data).digest('hex') !== file.sha256) throw new Error('skin_file_checksum_mismatch');
+      fs.writeFileSync(path.join(temporary, path.basename(file.path)), data);
+    }
+    fs.rmSync(target, { recursive: true, force: true }); fs.renameSync(temporary, target);
+    const config = fs.existsSync(SKINS_USER_JSON) ? JSON.parse(fs.readFileSync(SKINS_USER_JSON, 'utf8')) : { customSkins: [] };
+    const entry = { id: manifest.id, name: manifest.id, displayName: manifest.displayName, author: manifest.author, description: manifest.description, frames: Object.fromEntries(Object.entries(manifest.frames).map(([key, file]) => [key, `assets/skins/${manifest.id}/${file}`])), preview: `assets/skins/${manifest.id}/${manifest.preview}`, baseSize: 48, scale: 1 };
+    config.customSkins = (config.customSkins || []).filter((skin) => skin.id !== manifest.id); config.customSkins.push(entry);
+    fs.mkdirSync(SKINS_USER_PATH, { recursive: true }); fs.writeFileSync(SKINS_USER_JSON, JSON.stringify(config, null, 2));
+    mainWindow?.webContents.send('skins-reloaded');
+    return { success: true, skin: entry };
+  } catch (error) { return { success: false, error: String(error?.message || error) }; }
+});
+
 ipcMain.handle('subscription-checkout-start', async (_event, productKey) => {
   try {
     if (!subscriptionRuntime) return { success: false, error: 'subscription_initializing' };
     const checkout = await subscriptionRuntime.beginCheckout(String(productKey || ''));
     await shell.openExternal(checkout.checkoutUrl);
-    return { success: true, checkoutId: checkout.checkoutId };
+    return {
+      success: true,
+      checkoutId: checkout.checkoutId,
+      bindingCode: checkout.bindingCode,
+      expiresAt: checkout.expiresAt,
+    };
   } catch (error) {
     return { success: false, error: String(error?.message || error) };
   }
@@ -898,6 +954,10 @@ ipcMain.on('show-context-menu', (event) => {
         },
       },
     ] : []),
+    ...(developerToolsEnabled() ? [{
+      label: '开发者皮肤发布器',
+      click: () => openSkinPublisher(),
+    }] : []),
     { type: 'separator' },
     {
       label: '退出',
@@ -915,6 +975,67 @@ ipcMain.on('show-context-menu', (event) => {
       }
     },
   });
+});
+
+function openSkinPublisher() {
+  if (skinPublisherWindow && !skinPublisherWindow.isDestroyed()) {
+    skinPublisherWindow.show();
+    skinPublisherWindow.focus();
+    return;
+  }
+  skinPublisherWindow = new BrowserWindow({
+    width: 980,
+    height: 760,
+    minWidth: 760,
+    minHeight: 600,
+    show: false,
+    title: 'Turtle Monitor - 开发者皮肤发布器',
+    backgroundColor: '#10131a',
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      preload: resolvePublisherResource('preload.js'),
+    },
+  });
+  skinPublisherWindow.once('ready-to-show', () => skinPublisherWindow?.show());
+  skinPublisherWindow.loadFile(resolvePublisherResource('index.html')).catch((error) => console.error('[SkinPublisher] Load failed:', error));
+  skinPublisherWindow.on('closed', () => { skinPublisherWindow = null; });
+}
+
+function publisherSender(event) {
+  return skinPublisherWindow && !skinPublisherWindow.isDestroyed() && event.sender === skinPublisherWindow.webContents;
+}
+
+ipcMain.handle('skin-publisher-select-source', async (event) => {
+  if (!publisherSender(event)) return null;
+  const result = await dialog.showOpenDialog(skinPublisherWindow, { title: '选择皮肤图片文件夹', properties: ['openDirectory'] });
+  return result.canceled ? null : result.filePaths[0];
+});
+
+ipcMain.handle('skin-publisher-inspect', (event, payload = {}) => {
+  if (!publisherSender(event)) return { valid: false, errors: ['无效发布器窗口。'] };
+  return inspectSkinSource({ sourceDir: payload.sourceDir, skinId: payload.skinId });
+});
+
+ipcMain.handle('skin-publisher-write-built-in', (event, payload = {}) => {
+  if (!publisherSender(event)) return { success: false, error: '无效发布器窗口。' };
+  try {
+    const result = writeBuiltInSkin({ sourceDir: payload.sourceDir, skinsBasePath: SKINS_BASE_PATH, metadata: payload.metadata || {} });
+    return { success: true, ...result };
+  } catch (error) {
+    return { success: false, error: String(error?.message || error) };
+  }
+});
+
+ipcMain.handle('skin-publisher-prepare-online', (event, payload = {}) => {
+  if (!publisherSender(event)) return { success: false, error: '无效发布器窗口。' };
+  try {
+    const outputDir = path.join(app.getPath('userData'), 'skin-release-staging');
+    const result = prepareOnlineSkinRelease({ sourceDir: payload.sourceDir, outputDir, metadata: payload.metadata || {} });
+    return { success: true, ...result };
+  } catch (error) {
+    return { success: false, error: String(error?.message || error) };
+  }
 });
 
 // ── Custom Mode Window ────────────────────────────────────────

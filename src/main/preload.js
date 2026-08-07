@@ -251,6 +251,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   subscription: {
     get: () => ipcRenderer.invoke('subscription-get'),
+    getSkinCatalog: () => ipcRenderer.invoke('subscription-skin-catalog'),
+    installSkin: (skin) => ipcRenderer.invoke('subscription-skin-install', skin),
     startCheckout: (productKey) => ipcRenderer.invoke('subscription-checkout-start', productKey),
     refresh: () => ipcRenderer.invoke('subscription-refresh'),
     onChanged: (callback) => {

@@ -1,0 +1,22 @@
+name = "license-monitor"
+main = "src/worker.js"
+compatibility_date = "2026-08-06"
+compatibility_flags = ["nodejs_compat"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "license-monitor-db"
+database_id = "REPLACE_WITH_D1_DATABASE_ID"
+
+[vars]
+SERVICE_ORIGIN = "https://licensemonitor.b100.top"
+AFDIAN_PLAN_URL_SKINS_MONTHLY = ""
+AFDIAN_PLAN_URL_SKINS_YEARLY = ""
+AFDIAN_PLAN_URL_CREATOR_MONTHLY = ""
+AFDIAN_PLAN_URL_CREATOR_QUARTERLY = ""
+AFDIAN_PLAN_URL_CREATOR_YEARLY = ""
+AFDIAN_PLAN_SKINS_MONTHLY = ""
+AFDIAN_PLAN_SKINS_YEARLY = ""
+AFDIAN_PLAN_CREATOR_MONTHLY = ""
+AFDIAN_PLAN_CREATOR_QUARTERLY = ""
+AFDIAN_PLAN_CREATOR_YEARLY = ""

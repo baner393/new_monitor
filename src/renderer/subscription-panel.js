@@ -112,6 +112,27 @@ export class SubscriptionPanel {
     body.append(this.cards);
     this.notice = node('p', 'subscription-notice', '订阅通过爱发电完成。付款后回到软件，升级会自动生效。');
     body.append(this.notice);
+    this.bindingBox = node('div', 'subscription-binding');
+    this.bindingBox.hidden = true;
+    this.bindingBox.append(node('strong', '', '订单留言绑定码'));
+    this.bindingCode = node('code', 'subscription-binding-code');
+    this.bindingBox.append(this.bindingCode);
+    this.copyBinding = node('button', 'subscription-binding-copy', '复制绑定码');
+    this.copyBinding.type = 'button';
+    this.copyBinding.addEventListener('click', async () => {
+      const value = this.bindingCode.textContent.trim();
+      if (!value) return;
+      try {
+        await navigator.clipboard.writeText(value);
+        this.copyBinding.textContent = '已复制';
+        window.setTimeout(() => { this.copyBinding.textContent = '复制绑定码'; }, 1600);
+      } catch {
+        this.copyBinding.textContent = '请手动复制';
+      }
+    });
+    this.bindingBox.append(this.copyBinding);
+    this.bindingBox.append(node('small', '', '请把绑定码粘贴到爱发电订单留言中。没有留言绑定码，付款不会自动关联到本设备。'));
+    body.append(this.bindingBox);
     this.panel.append(body);
 
     const footer = node('footer', 'subscription-footer');
@@ -218,11 +239,18 @@ export class SubscriptionPanel {
     const result = await window.electronAPI?.subscription?.startCheckout?.(this._selected[tier]);
     this._busy = false;
     if (result?.success) {
-      this.notice.textContent = '付款完成后回到这里，软件会自动确认并升级。';
+      this.notice.textContent = result.bindingCode
+        ? `请在爱发电订单留言中粘贴绑定码：${result.bindingCode}。付款完成后回到这里，点击“检查订阅状态”自动升级。`
+        : '付款完成后回到这里，软件会自动确认并升级。';
     } else {
       this.notice.textContent = result?.error === 'subscription_service_not_configured'
         ? '订阅服务尚未配置，正式开放时这个按钮会直接进入爱发电。'
         : `打开订阅失败：${result?.error || '请稍后重试'}`;
+    }
+    if (result?.success && result.bindingCode) {
+      this.bindingCode.textContent = result.bindingCode;
+      this.bindingBox.hidden = false;
+      this.notice.textContent = '第一步：复制绑定码。第二步：在爱发电付款页面的订单留言中粘贴绑定码。第三步：付款后回到这里点击“检查订阅状态”。';
     }
     this._renderStatus();
   }

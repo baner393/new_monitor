@@ -1177,6 +1177,11 @@ button:disabled, input:disabled, textarea:disabled, select:disabled { opacity: 0
 .subscription-root button:focus-visible,
 .subscription-root input:focus-visible + span { outline: 2px solid var(--sub-moss); outline-offset: 2px; }
 .subscription-notice { margin: 10px 2px 0; color: var(--sub-muted); font-size: 10px; line-height: 1.4; }
+.subscription-binding { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 7px 9px; align-items: center; margin-top: 10px; padding: 10px; border: 1px solid var(--sub-moss); background: color-mix(in srgb, var(--sub-moss) 10%, transparent); border-radius: 6px; }
+.subscription-binding strong { font-size: 11px; }
+.subscription-binding-code { min-width: 0; overflow: hidden; text-overflow: ellipsis; padding: 5px 7px; background: var(--sub-panel); border: 1px solid var(--sub-line); font-size: 11px; user-select: all; }
+.subscription-binding-copy { padding: 5px 8px; border: 1px solid var(--sub-moss); background: var(--sub-moss); color: #fff; border-radius: 4px; font-size: 10px; cursor: pointer; }
+.subscription-binding small { grid-column: 1 / -1; color: var(--sub-muted); font-size: 10px; line-height: 1.4; }
 .subscription-footer { justify-content: space-between; gap: 16px; padding: 0 22px; border-top: 1px solid var(--sub-line); color: var(--sub-muted); font-size: 9px; }
 
 @media (max-width: 720px), (max-height: 560px) {

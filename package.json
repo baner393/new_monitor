@@ -19,7 +19,8 @@
     "dist:free": "node scripts/package.mjs free",
     "dist:sponsor": "node scripts/package.mjs sponsor",
     "clean": "node scripts/clean.mjs",
-    "test": "node --test tests/*.test.mjs",
+    "test": "node --test tests/*.test.mjs subscription-service/tests/*.test.mjs",
+    "test:subscription-service": "npm --prefix subscription-service test",
     "verify": "node scripts/verify-project.mjs",
     "verify:artifacts": "node scripts/verify-artifacts.mjs"
   },

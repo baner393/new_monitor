@@ -1,4 +1,5 @@
 node_modules/
+subscription-service/wrangler.toml
 out/
 .vite/
 *.log

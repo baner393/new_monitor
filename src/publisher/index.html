@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>开发者皮肤发布器</title>
+  <style>
+    :root { color-scheme: dark; font-family: "Microsoft YaHei", system-ui, sans-serif; background: #10131a; color: #edf2f7; }
+    body { margin: 0; padding: 24px; } h1 { margin: 0 0 6px; font-size: 22px; } p { color: #aab5c5; margin: 0 0 20px; }
+    main { max-width: 920px; margin: auto; } .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .panel { border: 1px solid #2d3748; border-radius: 6px; padding: 18px; background: #171c25; } h2 { margin: 0 0 14px; font-size: 16px; }
+    label { display: block; margin: 12px 0 5px; color: #cbd5e1; font-size: 13px; } input, textarea { width: 100%; box-sizing: border-box; padding: 9px; border: 1px solid #3b4658; border-radius: 4px; background: #0f141c; color: inherit; font: inherit; } textarea { min-height: 72px; resize: vertical; }
+    .source { display: flex; gap: 8px; } .source input { flex: 1; } button { border: 1px solid #4a6d93; border-radius: 4px; padding: 9px 12px; color: #fff; background: #245d8e; cursor: pointer; font: inherit; } button.secondary { background: #252d39; border-color: #455164; } button:disabled { opacity: .5; cursor: wait; }
+    #report { white-space: pre-wrap; min-height: 104px; margin-top: 16px; padding: 14px; border-radius: 4px; background: #0c1016; color: #b9c8da; font: 13px/1.55 ui-monospace, Consolas, monospace; } .actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
+    @media (max-width: 760px) { .grid { grid-template-columns: 1fr; } body { padding: 14px; } }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>开发者皮肤发布器</h1>
+    <p>先校验皮肤资源，再选择写入默认皮肤或准备在线发布包。在线发布包此阶段只写入本机待上传目录。</p>
+    <section class="grid">
+      <div class="panel">
+        <h2>皮肤来源</h2>
+        <label>图片文件夹</label>
+        <div class="source"><input id="sourceDir" readonly placeholder="选择包含 idle.png 的文件夹"><button id="choose">选择</button></div>
+        <label>皮肤 ID</label><input id="skinId" placeholder="例如 cloud_turtle">
+        <label>显示名称</label><input id="displayName" placeholder="例如 云端小龟">
+        <label>作者</label><input id="author" placeholder="可选">
+      </div>
+      <div class="panel">
+        <h2>发布信息</h2>
+        <label>版本</label><input id="version" value="1.0.0">
+        <label>最低客户端版本</label><input id="minAppVersion" value="1.0.0">
+        <label>描述</label><textarea id="description"></textarea>
+        <label>更新说明</label><textarea id="releaseNotes"></textarea>
+      </div>
+    </section>
+    <div class="actions"><button class="secondary" id="inspect">校验资源</button><button id="builtin">写入默认皮肤</button><button id="online">准备在线发布包</button></div>
+    <div id="report">请选择一个皮肤图片文件夹。</div>
+  </main>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const report = (value) => $('report').textContent = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+    const payload = () => ({ sourceDir: $('sourceDir').value, metadata: { skinId: $('skinId').value, displayName: $('displayName').value, author: $('author').value, version: $('version').value, minAppVersion: $('minAppVersion').value, description: $('description').value, releaseNotes: $('releaseNotes').value } });
+    $('choose').onclick = async () => { const dir = await window.skinPublisher.selectSource(); if (dir) { $('sourceDir').value = dir; report('已选择：' + dir); } };
+    $('inspect').onclick = async () => { const value = payload(); const result = await window.skinPublisher.inspect({ sourceDir: value.sourceDir, skinId: value.metadata.skinId }); report(result.valid ? '校验通过\n' + JSON.stringify(result, null, 2) : '校验失败\n' + result.errors.join('\n')); };
+    async function run(button, call) { button.disabled = true; try { const result = await call(); report(result.success ? JSON.stringify(result, null, 2) : '操作失败：' + result.error); } finally { button.disabled = false; } }
+    $('builtin').onclick = () => run($('builtin'), () => window.skinPublisher.writeBuiltIn(payload()));
+    $('online').onclick = () => run($('online'), () => window.skinPublisher.prepareOnline(payload()));
+  </script>
+</body>
+</html>

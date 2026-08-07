@@ -1,4 +1,4 @@
 {
-  "serviceUrl": "",
-  "entitlementPublicKey": ""
+  "serviceUrl": "https://licensemonitor.b100.top",
+  "entitlementPublicKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAMWPcs359VrT+jGTRcOvdNzQkYHVTUOFPfY1bP1fcWrA=\n-----END PUBLIC KEY-----"
 }

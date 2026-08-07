@@ -60,6 +60,9 @@ test('shared agent panel exposes provider-scoped approvals and a direct-only byp
   const cssSource = fs.readFileSync(path.join(process.cwd(), 'src', 'renderer', 'index.css'), 'utf8');
   assert.match(companionSource, /agent-bypass-permissions/);
   assert.match(companionSource, /this\.#api\(provider\)\.respond/);
+  assert.match(companionSource, /const actionableEvent = event\?\.requestId/);
+  assert.match(companionSource, /const approvalLike = \['commandApproval', 'fileApproval', 'permissionApproval', 'approval'\]/);
+  assert.match(companionSource, /else if \(approvalLike\) this\.#renderOpenCodexAction\(actions\)/);
   assert.match(companionSource, /bypassInput\.disabled = replyTransport === 'desktop'/);
   assert.match(preloadSource, /claude-respond/);
   assert.match(preloadSource, /claude-interrupt/);

@@ -170,6 +170,28 @@ export class SubscriptionRuntime {
     return data;
   }
 
+  async getSkinCatalog() {
+    if (!this.config.serviceUrl || typeof this.fetchImpl !== 'function') throw new Error('subscription_service_not_configured');
+    const response = await this.fetchImpl(`${this.config.serviceUrl}/api/v1/skins/catalog`, {
+      headers: { accept: 'application/json' },
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !Array.isArray(data.skins)) throw new Error(data.error || `skin_catalog_${response.status}`);
+    return data;
+  }
+
+  async downloadSkinPackage(skinId, version) {
+    const response = await this.fetchImpl(`${this.config.serviceUrl}/api/v1/skins/${encodeURIComponent(skinId)}/${encodeURIComponent(version)}/download`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ deviceProof: this.#signedDeviceProof('skin_download') }),
+    });
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.error || `skin_download_${response.status}`);
+    }
+    return Buffer.from(await response.arrayBuffer());
+  }
+
   async beginCheckout(productKey) {
     if (!SUBSCRIPTION_PRODUCTS[productKey]) throw new Error('unknown_subscription_product');
     const result = await this.#post('/api/v1/checkouts', {
@@ -178,7 +200,12 @@ export class SubscriptionRuntime {
       deviceProof: this.#signedDeviceProof('checkout'),
     });
     if (!result.checkoutUrl || !result.checkoutId) throw new Error('invalid_checkout_response');
-    return { checkoutUrl: result.checkoutUrl, checkoutId: result.checkoutId };
+    return {
+      checkoutUrl: result.checkoutUrl,
+      checkoutId: result.checkoutId,
+      bindingCode: String(result.bindingCode || ''),
+      expiresAt: String(result.expiresAt || ''),
+    };
   }
 
   async refresh() {

@@ -44,3 +44,11 @@ Status: Confirmed in the uncommitted working tree. Evidence: `src/main/claude-cl
 Claude session preferences migrate from `custom` to `adaptive` and always retain an independent bounded effort. The shared conversation controls render the effort as a discrete slider for Codex and Claude; Claude keeps its thinking mode alongside it, while Codex has an explicit follow-configuration choice. The peak effort tier has a contained visual emphasis that respects reduced-motion preferences.
 
 Claude desktop-compatible sending resolves the newest usable VS Code-family IDE lock even when workspace matching is stale, focuses a UI Automation `Document` or `Edit` composer in the verified client process, then pastes and submits with Enter/Ctrl+Enter fallback. Session-owner metadata retains titles even after its process exits, while a task is treated as externally running only when the owner is alive with an active status. Monitor-managed Claude turns and pending approvals expose the provider-neutral stop action through Claude IPC.
+
+## Subscription integration
+
+Status: Confirmed in the working tree and deployed service. Evidence: `subscription-service/src/worker.js`, `subscription-service/migrations/0002_skin_library.sql`, `src/main/subscription-runtime.js`, `src/main/skin-publisher.js`, `src/renderer/skin-selector.js`, `tests/skin-publisher.test.mjs`, and recent `npm test` / `npm run verify` results.
+
+The public Worker, D1, and R2 bucket are deployed at `https://licensemonitor.b100.top`. The client presents a copyable Afdian order binding code, retrieves the public online skin catalog, and installs entitlement-protected `.skinpack` downloads only after package and per-file SHA-256 verification. The service exposes public catalog and preview endpoints while requiring a device proof carrying `skins` or `creator` entitlement for package download.
+
+The developer skin publisher validates a source directory, writes a built-in skin into `assets/skins`, or prepares a gzip-compressed `.skinpack` containing its manifest and PNG frames for online release. The remaining publication gap is an operator command that uploads the prepared package/preview to R2 and inserts or updates the `skin_releases` D1 record. A non-creator buyer end-to-end order refresh also remains unverified.

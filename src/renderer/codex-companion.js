@@ -1067,14 +1067,20 @@ export class CodexCompanion {
     const questions = this.bubble.querySelector('.codex-bubble-questions');
     const actions = this.bubble.querySelector('.codex-bubble-actions');
     const notice = this.bubble.querySelector('.codex-bubble-notice');
+    const actionableEvent = event?.requestId
+      ? event
+      : task?.events?.find((candidate) => candidate?.requestId && candidate?.supported !== false) || null;
+    const approvalLike = ['commandApproval', 'fileApproval', 'permissionApproval', 'approval'].includes(event?.kind)
+      || event?.activity === CODEX_ACTIVITY.NEEDS_INPUT;
     questions.replaceChildren();
     actions.replaceChildren();
     compose.hidden = true;
     notice.textContent = '';
 
-    if (event.kind === 'question' && event.requestId && event.supported !== false) this.#renderQuestions(event, questions);
-    else if (event.requestId && event.supported !== false) this.#renderApprovalActions(event, actions);
-    else if (event.requestId && event.supported === false) this.#renderOpenCodexAction(actions);
+    if (actionableEvent?.kind === 'question') this.#renderQuestions(actionableEvent, questions);
+    else if (actionableEvent) this.#renderApprovalActions(actionableEvent, actions);
+    else if (event?.requestId && event.supported === false) this.#renderOpenCodexAction(actions);
+    else if (approvalLike) this.#renderOpenCodexAction(actions);
     else if (task?.capabilities?.reply === true || task?.capabilities?.interrupt === true) compose.hidden = false;
     else if (task?.connectionError) notice.textContent = task.connectionError;
     else if (task?.connectionState && task.connectionState !== CODEX_CONNECTION.CONNECTED) notice.textContent = this.#connectionLabel(task.connectionState, provider);
