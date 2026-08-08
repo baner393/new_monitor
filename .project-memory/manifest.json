@@ -1,7 +1,7 @@
 {
   "schema": 1,
-  "created_at": "2026-08-08T02:17:22.914546+00:00",
-  "git_revision": "3e36491c976134d2715206e70668bc0315a30f35",
+  "created_at": "2026-08-08T02:47:03.946081+00:00",
+  "git_revision": "7de7a5a1fb702c0f6fbd041595f16e2a0d6efe1e",
   "git_dirty": true,
   "files": [
     {
@@ -283,6 +283,11 @@
       "path": "assets/uninstaller-icon.png",
       "bytes": 221,
       "sha256": "ee8f36f9a1f0b73f68933ce7ef20072fd681b86a71f3c3e77c41344d45d94f24"
+    },
+    {
+      "path": "developer-skin-publisher.config.cjs",
+      "bytes": 561,
+      "sha256": "0c826a1796271e189c0042847dbc3088ec562cf3b98f494251777570a6dfa4f2"
     },
     {
       "path": "electron-builder.config.js",
@@ -1966,8 +1971,8 @@
     },
     {
       "path": "package.json",
-      "bytes": 1455,
-      "sha256": "7b6b7f6d6a60570ff1ca183d587e687a00df8a044343d49162d4e82cda0d4771"
+      "bytes": 1588,
+      "sha256": "49f63b56e5a4d1ab8c4227fbd7ab91bf3e9835471e3be6918edd77a18a8233e0"
     },
     {
       "path": "public/assets/fonts/Mojang-Regular.ttf",
@@ -2186,13 +2191,18 @@
     },
     {
       "path": "scripts/build.mjs",
-      "bytes": 1972,
-      "sha256": "eb72ec776bc8fb4e214b971c75ddb18fc9f1895571571e9b57342ffdfec047ea"
+      "bytes": 1749,
+      "sha256": "c20ead7ca10a404887aa29c2de3ff66750072dc77128d18f39a9edec081db731"
     },
     {
       "path": "scripts/clean.mjs",
       "bytes": 432,
       "sha256": "fa7e2cd58525499bed8622a0daee6fe8f6e13be74ea77467ee932eb1fe92a51d"
+    },
+    {
+      "path": "scripts/package-skin-publisher.mjs",
+      "bytes": 465,
+      "sha256": "f8f2470017775febabf35d28626e8d7f695f833a975db74b5d488465cb5a83d2"
     },
     {
       "path": "scripts/package.mjs",
@@ -2296,8 +2306,8 @@
     },
     {
       "path": "src/main/index.js",
-      "bytes": 57335,
-      "sha256": "0a269e91ce1b6bf793b196381dd8d9e97e26d8048d3cc548cb279a76e4c3d9da"
+      "bytes": 53305,
+      "sha256": "8bf24427aef59a268b82d3d38c215428c29d8fe8b976cdeceba60a0280de446a"
     },
     {
       "path": "src/main/license.js",
@@ -2315,16 +2325,6 @@
       "sha256": "78218c49b8e268191cecd01cd3239b00cfc0e0e2f363994740d4fd3630130a15"
     },
     {
-      "path": "src/main/skin-publisher.js",
-      "bytes": 5335,
-      "sha256": "bb8be051f12073cc0efb06a2002cb77b49a5a1506a9b9d451ed690f5bad29c17"
-    },
-    {
-      "path": "src/main/skin-release-publisher.js",
-      "bytes": 4048,
-      "sha256": "29efb21a74e30fb566712df89b54527f76de679ba77fec92ae43bc4a4b792e32"
-    },
-    {
       "path": "src/main/subscription-runtime.js",
       "bytes": 8588,
       "sha256": "2b7f34f325332b6da5b127d0f20cacb7aeaf5abcd88acd0cc5b699c7e7e1092d"
@@ -2338,16 +2338,6 @@
       "path": "src/main/window-lifecycle.js",
       "bytes": 5145,
       "sha256": "1ef06542f71a37b2c8653145d29b82798705b6c1f23dd2650ac14469fe7df2ca"
-    },
-    {
-      "path": "src/publisher/index.html",
-      "bytes": 4828,
-      "sha256": "48f5023dbf4d601692e7c880e0e42f42dd5c043013e2010caab7d89b6691e49b"
-    },
-    {
-      "path": "src/publisher/preload.js",
-      "bytes": 544,
-      "sha256": "baebf9baeafab96d2e929948439b8ba08a42c2f5cdd895e60c9a859f5fccad06"
     },
     {
       "path": "src/renderer/codex-companion.js",
@@ -2646,13 +2636,13 @@
     },
     {
       "path": "tests/skin-publisher.test.mjs",
-      "bytes": 1866,
-      "sha256": "6aca29d9eec14fd9b794449d5f1142f9e760fa5371627b78b04fefd9c598013a"
+      "bytes": 1882,
+      "sha256": "012b1d4dbdcd2efc26b483a6eed141b206a6b40f632ddf9cc98737d6551c6af9"
     },
     {
       "path": "tests/skin-release-publisher.test.mjs",
-      "bytes": 1172,
-      "sha256": "3c770e6f763ed9fba5af653d06cead5abc934f111ccbd9bc2106c4d9736badeb"
+      "bytes": 1188,
+      "sha256": "503db84c95b42813f44cebf3cd676013487f5a9d06996f1245d7be806aeeef7b"
     },
     {
       "path": "tests/subscription-model.test.mjs",
@@ -2693,6 +2683,36 @@
       "path": "third_party/LibreHardwareMonitor/THIRD-PARTY-LICENSES.txt",
       "bytes": 26388,
       "sha256": "c8ffa3402809c859a9a526903134868ccee8afac77e1a65be399ebb1c25fdc33"
+    },
+    {
+      "path": "tools/skin-publisher/README.md",
+      "bytes": 996,
+      "sha256": "b5fe3e84eb86d5999fcdf4ed84260c9ec36cd054e02a9c62de112381ab91b7f0"
+    },
+    {
+      "path": "tools/skin-publisher/index.html",
+      "bytes": 4828,
+      "sha256": "48f5023dbf4d601692e7c880e0e42f42dd5c043013e2010caab7d89b6691e49b"
+    },
+    {
+      "path": "tools/skin-publisher/lib/skin-publisher.js",
+      "bytes": 5335,
+      "sha256": "bb8be051f12073cc0efb06a2002cb77b49a5a1506a9b9d451ed690f5bad29c17"
+    },
+    {
+      "path": "tools/skin-publisher/lib/skin-release-publisher.js",
+      "bytes": 4048,
+      "sha256": "29efb21a74e30fb566712df89b54527f76de679ba77fec92ae43bc4a4b792e32"
+    },
+    {
+      "path": "tools/skin-publisher/main.mjs",
+      "bytes": 2639,
+      "sha256": "b7fe32fad326a41ec5a6555c2da282edba48dde039ce521d45afc593ef2e2ed1"
+    },
+    {
+      "path": "tools/skin-publisher/preload.js",
+      "bytes": 544,
+      "sha256": "baebf9baeafab96d2e929948439b8ba08a42c2f5cdd895e60c9a859f5fccad06"
     },
     {
       "path": "tsconfig.json",

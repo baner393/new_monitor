@@ -43,10 +43,6 @@ async function run() {
     fs.cpSync(fontSource, fontDestination, { recursive: true });
   }
 
-  const publisherSource = path.join(root, 'src', 'publisher');
-  const publisherDestination = path.join(root, '.vite', 'build', 'src', 'publisher');
-  fs.cpSync(publisherSource, publisherDestination, { recursive: true });
-
   fs.writeFileSync(
     path.join(root, '.vite', 'build', 'edition.json'),
     `${JSON.stringify({ edition }, null, 2)}\n`,

@@ -35,12 +35,9 @@ import {
   normalizeClaudeIntegrationConfig,
 } from '../shared/claude-integration.js';
 import { loadSubscriptionConfig, SubscriptionRuntime } from './subscription-runtime.js';
-import { inspectSkinSource, prepareOnlineSkinRelease, writeBuiltInSkin } from './skin-publisher.js';
-import { publishOnlineSkinRelease } from './skin-release-publisher.js';
 
 let mainWindow;
 let customWindow;
-let skinPublisherWindow;
 let canvasWindow;
 let regionWindow;
 let systemMonitor;
@@ -86,18 +83,6 @@ function resolveCustomResource(fileName) {
     isDevelopment: Boolean(MAIN_WINDOW_VITE_DEV_SERVER_URL),
   });
 }
-
-function resolvePublisherResource(fileName) {
-  const sourcePath = path.join(app.getAppPath(), 'src', 'publisher', fileName);
-  const buildPath = path.join(app.getAppPath(), '.vite', 'build', 'src', 'publisher', fileName);
-  if (MAIN_WINDOW_VITE_DEV_SERVER_URL && fs.existsSync(sourcePath)) return sourcePath;
-  return fs.existsSync(buildPath) ? buildPath : sourcePath;
-}
-
-function developerToolsEnabled() {
-  return Boolean(MAIN_WINDOW_VITE_DEV_SERVER_URL || process.env.TURTLE_DEVELOPER_TOOLS === '1' || process.argv.includes('--skin-publisher'));
-}
-
 function requestMainWindowSoftRefresh() {
   return mainWindowRefreshCoordinator?.request() ?? false;
 }
@@ -955,10 +940,6 @@ ipcMain.on('show-context-menu', (event) => {
         },
       },
     ] : []),
-    ...(developerToolsEnabled() ? [{
-      label: '开发者皮肤发布器',
-      click: () => openSkinPublisher(),
-    }] : []),
     { type: 'separator' },
     {
       label: '退出',
@@ -976,78 +957,6 @@ ipcMain.on('show-context-menu', (event) => {
       }
     },
   });
-});
-
-function openSkinPublisher() {
-  if (skinPublisherWindow && !skinPublisherWindow.isDestroyed()) {
-    skinPublisherWindow.show();
-    skinPublisherWindow.focus();
-    return;
-  }
-  skinPublisherWindow = new BrowserWindow({
-    width: 980,
-    height: 760,
-    minWidth: 760,
-    minHeight: 600,
-    show: false,
-    title: 'Turtle Monitor - 开发者皮肤发布器',
-    backgroundColor: '#10131a',
-    webPreferences: {
-      nodeIntegration: false,
-      contextIsolation: true,
-      preload: resolvePublisherResource('preload.js'),
-    },
-  });
-  skinPublisherWindow.once('ready-to-show', () => skinPublisherWindow?.show());
-  skinPublisherWindow.loadFile(resolvePublisherResource('index.html')).catch((error) => console.error('[SkinPublisher] Load failed:', error));
-  skinPublisherWindow.on('closed', () => { skinPublisherWindow = null; });
-}
-
-function publisherSender(event) {
-  return skinPublisherWindow && !skinPublisherWindow.isDestroyed() && event.sender === skinPublisherWindow.webContents;
-}
-
-ipcMain.handle('skin-publisher-select-source', async (event) => {
-  if (!publisherSender(event)) return null;
-  const result = await dialog.showOpenDialog(skinPublisherWindow, { title: '选择皮肤图片文件夹', properties: ['openDirectory'] });
-  return result.canceled ? null : result.filePaths[0];
-});
-
-ipcMain.handle('skin-publisher-inspect', (event, payload = {}) => {
-  if (!publisherSender(event)) return { valid: false, errors: ['无效发布器窗口。'] };
-  return inspectSkinSource({ sourceDir: payload.sourceDir, skinId: payload.skinId });
-});
-
-ipcMain.handle('skin-publisher-write-built-in', (event, payload = {}) => {
-  if (!publisherSender(event)) return { success: false, error: '无效发布器窗口。' };
-  try {
-    const result = writeBuiltInSkin({ sourceDir: payload.sourceDir, skinsBasePath: SKINS_BASE_PATH, metadata: payload.metadata || {} });
-    return { success: true, ...result };
-  } catch (error) {
-    return { success: false, error: String(error?.message || error) };
-  }
-});
-
-ipcMain.handle('skin-publisher-prepare-online', (event, payload = {}) => {
-  if (!publisherSender(event)) return { success: false, error: '无效发布器窗口。' };
-  try {
-    const outputDir = path.join(app.getPath('userData'), 'skin-release-staging');
-    const result = prepareOnlineSkinRelease({ sourceDir: payload.sourceDir, outputDir, metadata: payload.metadata || {} });
-    return { success: true, ...result };
-  } catch (error) {
-    return { success: false, error: String(error?.message || error) };
-  }
-});
-
-ipcMain.handle('skin-publisher-publish-online', (event, payload = {}) => {
-  if (!publisherSender(event)) return { success: false, error: '无效发布器窗口。' };
-  try {
-    const outputDir = path.join(app.getPath('userData'), 'skin-release-staging');
-    const release = prepareOnlineSkinRelease({ sourceDir: payload.sourceDir, outputDir, metadata: payload.metadata || {} });
-    return publishOnlineSkinRelease({ release, serviceDir: path.join(app.getAppPath(), 'subscription-service') });
-  } catch (error) {
-    return { success: false, error: String(error?.message || error) };
-  }
 });
 
 // ── Custom Mode Window ────────────────────────────────────────

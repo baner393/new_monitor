@@ -4,7 +4,7 @@ import os from 'os';
 import path from 'path';
 import test from 'node:test';
 
-import { inspectSkinSource, prepareOnlineSkinRelease, writeBuiltInSkin } from '../src/main/skin-publisher.js';
+import { inspectSkinSource, prepareOnlineSkinRelease, writeBuiltInSkin } from '../tools/skin-publisher/lib/skin-publisher.js';
 
 function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'turtle-skin-publisher-'));

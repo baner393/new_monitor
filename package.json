@@ -15,6 +15,8 @@
     "build:sensor-host": "node scripts/build-sensor-host.mjs",
     "build:free": "cross-env VITE_EDITION=free node scripts/build.mjs",
     "build:sponsor": "cross-env VITE_EDITION=sponsor node scripts/build.mjs",
+    "skin-publisher": "electron tools/skin-publisher/main.mjs",
+    "dist:skin-publisher": "node scripts/package-skin-publisher.mjs",
     "dist": "node scripts/build-all.mjs",
     "dist:free": "node scripts/package.mjs free",
     "dist:sponsor": "node scripts/package.mjs sponsor",

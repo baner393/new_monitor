@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildReleaseSql, releaseKeys } from '../src/main/skin-release-publisher.js';
+import { buildReleaseSql, releaseKeys } from '../tools/skin-publisher/lib/skin-release-publisher.js';
 
 const manifest = {
   id: 'official_turtle', version: '1.2.3', displayName: "Official Turtle's Day",
