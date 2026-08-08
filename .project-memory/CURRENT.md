@@ -54,3 +54,5 @@ The public Worker, D1, and R2 bucket are deployed at `https://licensemonitor.b10
 The developer skin publisher validates a source directory, writes a built-in skin into `assets/skins`, prepares a gzip-compressed `.skinpack`, and can publish it with the locally authenticated Wrangler CLI. Publishing uploads the manifest, preview, and package to R2, then performs an idempotent remote D1 upsert into `skin_releases`; no Cloudflare credential is stored in the app or repository. A non-creator buyer end-to-end order refresh remains unverified.
 
 The publisher is a separate developer-only Electron entry under `tools/skin-publisher`. The main app no longer exposes publisher IPC, menu entries, source files, or build-copy steps. Main installers include only `.vite`, runtime assets, and subscription configuration; the publisher has its own `skin-publisher` start and portable-package commands.
+
+The cross-machine Agent runbook is [../DEVELOPER-SKIN-PUBLISHER.md](../DEVELOPER-SKIN-PUBLISHER.md). It documents local Wrangler configuration, `TURTLE_SKIN_REPOSITORY`, source and portable startup, release steps, catalog verification, and common failures.

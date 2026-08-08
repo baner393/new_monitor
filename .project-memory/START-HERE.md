@@ -9,16 +9,17 @@ This package is the compact handoff entry for the Windows Electron desktop-pet p
 ## Reading order
 
 1. Read [../HANDOFF.md](../HANDOFF.md) for the human handoff and current working rules.
-2. Read [REBUILD.md](REBUILD.md) for exact setup, run, test, and source-build commands.
-3. Read [SPEC.md](SPEC.md), then [CURRENT.md](CURRENT.md), for system boundaries and the architecture map.
-4. Open only the relevant contract:
+2. Read [../DEVELOPER-SKIN-PUBLISHER.md](../DEVELOPER-SKIN-PUBLISHER.md) when publishing official or online skins from another developer machine.
+3. Read [REBUILD.md](REBUILD.md) for exact setup, run, test, and source-build commands.
+4. Read [SPEC.md](SPEC.md), then [CURRENT.md](CURRENT.md), for system boundaries and the architecture map.
+5. Open only the relevant contract:
    - [contracts/editions.json](contracts/editions.json)
    - [contracts/monitor-panel-config.schema.json](contracts/monitor-panel-config.schema.json)
    - [contracts/codex-integration-config.schema.json](contracts/codex-integration-config.schema.json)
    - [contracts/claude-integration-config.schema.json](contracts/claude-integration-config.schema.json)
    - [contracts/codex-state-machine.yaml](contracts/codex-state-machine.yaml)
    - [contracts/renderer-api.md](contracts/renderer-api.md)
-5. Read [gaps.md](gaps.md) before changing hardware elevation, Codex App Server compatibility, or packaging.
+6. Read [gaps.md](gaps.md) before changing hardware elevation, Codex App Server compatibility, skin publication, or packaging.
 
 ## Hard invariants
 

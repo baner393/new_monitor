@@ -21,6 +21,7 @@
 
 - 免费版和赞助版是两个正式版本；赞助版才有自定义/开发者入口。完整矩阵见 [`.project-memory/contracts/editions.json`](.project-memory/contracts/editions.json)。
 - 两个版本共用硬件监控、管理器、动效和 Codex 接入逻辑。
+- 开发者皮肤发布器已拆为独立工具；不要从主应用右键菜单寻找它。Agent 应先阅读 [`DEVELOPER-SKIN-PUBLISHER.md`](DEVELOPER-SKIN-PUBLISHER.md)。
 - 桌宠渲染帧率不能为了省电而降低；后台数据读取可以分级、缓存和降频。
 - 所有路径必须跨电脑工作，不写死盘符、用户名或当前工作区。
 - 刷新必须同时完成数据刷新和界面状态整理，并保持点击穿透安全；相关决策见 `ADR-0002`。

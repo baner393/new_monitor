@@ -1,7 +1,7 @@
 {
   "schema": 1,
-  "created_at": "2026-08-08T02:47:03.946081+00:00",
-  "git_revision": "7de7a5a1fb702c0f6fbd041595f16e2a0d6efe1e",
+  "created_at": "2026-08-08T02:53:48.333448+00:00",
+  "git_revision": "58a9ed7103d5e26064f859391223a9fcc6b8c66c",
   "git_dirty": true,
   "files": [
     {
@@ -136,8 +136,8 @@
     },
     {
       "path": "BUILDING.md",
-      "bytes": 2973,
-      "sha256": "0c8f9682345b22038b25688f05c7a5f23f93081c37a0bee9c8a13be67196ddb7"
+      "bytes": 3177,
+      "sha256": "3c467307ff85773059aa08624204aef58d72045339aba58bfe50bbd68a1f86d2"
     },
     {
       "path": "DEPLOY-SECURITY.md",
@@ -145,14 +145,19 @@
       "sha256": "a987ce3425410cb0fc3dade9ed87e691cfd5784289e3d6739017438d89aa1082"
     },
     {
+      "path": "DEVELOPER-SKIN-PUBLISHER.md",
+      "bytes": 2343,
+      "sha256": "36732553b7052164999f725a498c848a315eb333b6aad1ec021f6d3f9ca33007"
+    },
+    {
       "path": "HANDOFF.md",
-      "bytes": 4868,
-      "sha256": "088747bfceddef891c1f8f8f277f81a45471a0b9eb27335ee9ea4e77db32db33"
+      "bytes": 5043,
+      "sha256": "cb597c1c46df7f3725854ea78f65fbf559f4b10e5305fc3f91db533422808a25"
     },
     {
       "path": "NEXT-WINDOW-PROMPT.md",
-      "bytes": 2022,
-      "sha256": "59b63c4a9121d7f6d64253718fad24f3056a0e60d0beb5c5279e53a8d8247d19"
+      "bytes": 2182,
+      "sha256": "c29c88f80e279d5c7013e2d5c739467090f8f19a4657e7ca6bec992ddb9db5b4"
     },
     {
       "path": "README.md",

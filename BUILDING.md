@@ -19,6 +19,8 @@ npm run verify
 
 ## 开发启动
 
+开发者皮肤发布器是独立工具，不会进入主应用安装包。其他开发电脑的配置、启动、发布和排错步骤见 [`DEVELOPER-SKIN-PUBLISHER.md`](DEVELOPER-SKIN-PUBLISHER.md)。
+
 ```powershell
 npm run start:free
 npm run start:sponsor

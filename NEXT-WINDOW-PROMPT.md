@@ -21,6 +21,7 @@
 - remote 必须是 https://baner393@github.com/baner393/new_monitor.git。
 - 不要自动制作安装包；只有我在当前请求明确要求打包时才运行 dist、dist:free、dist:sponsor 或 verify:artifacts。
 - 免费版没有自定义/开发者入口，赞助版有；其余监控和 Codex 能力共用。
+- 皮肤发布是独立开发者工具流程，先读 [`DEVELOPER-SKIN-PUBLISHER.md`](DEVELOPER-SKIN-PUBLISHER.md)，不要尝试从主应用启动发布器。
 - 不要通过降低桌宠帧率省电。
 - 不写死本机路径；保护透明窗口点击穿透和可重复软刷新。
 - 修改后自行测试；需要推送时提交并推到 stable-81e7580。

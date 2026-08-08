@@ -10,6 +10,7 @@ Status: Confirmed in the working tree and deployed Cloudflare service. Evidence:
 - Added the developer publisher for validating source skins, writing built-in skins, and preparing online `.skinpack` release artifacts. Automated R2/D1 publication and a real buyer skin-install E2E remain open.
 - The developer publisher now uploads the release manifest, preview, and package through the machine's logged-in Wrangler CLI and upserts the published D1 release record. It keeps credentials outside the desktop application and repository.
 - Moved the publisher into `tools/skin-publisher` with independent source/start/package commands. The Turtle Monitor build no longer copies publisher UI files or exposes publisher IPC; the portable developer tool is configured separately with `TURTLE_SKIN_REPOSITORY` and local Wrangler credentials.
+- Added the root-level `DEVELOPER-SKIN-PUBLISHER.md` runbook and linked it from the handoff, build guide, next-window prompt, and project-memory bootstrap so another developer Agent can operate the tool without relying on conversation history.
 
 ## 2026-08-05 - Inline approval promotion
 
