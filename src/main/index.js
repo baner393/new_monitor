@@ -36,6 +36,7 @@ import {
 } from '../shared/claude-integration.js';
 import { loadSubscriptionConfig, SubscriptionRuntime } from './subscription-runtime.js';
 import { inspectSkinSource, prepareOnlineSkinRelease, writeBuiltInSkin } from './skin-publisher.js';
+import { publishOnlineSkinRelease } from './skin-release-publisher.js';
 
 let mainWindow;
 let customWindow;
@@ -1033,6 +1034,17 @@ ipcMain.handle('skin-publisher-prepare-online', (event, payload = {}) => {
     const outputDir = path.join(app.getPath('userData'), 'skin-release-staging');
     const result = prepareOnlineSkinRelease({ sourceDir: payload.sourceDir, outputDir, metadata: payload.metadata || {} });
     return { success: true, ...result };
+  } catch (error) {
+    return { success: false, error: String(error?.message || error) };
+  }
+});
+
+ipcMain.handle('skin-publisher-publish-online', (event, payload = {}) => {
+  if (!publisherSender(event)) return { success: false, error: '无效发布器窗口。' };
+  try {
+    const outputDir = path.join(app.getPath('userData'), 'skin-release-staging');
+    const release = prepareOnlineSkinRelease({ sourceDir: payload.sourceDir, outputDir, metadata: payload.metadata || {} });
+    return publishOnlineSkinRelease({ release, serviceDir: path.join(app.getAppPath(), 'subscription-service') });
   } catch (error) {
     return { success: false, error: String(error?.message || error) };
   }

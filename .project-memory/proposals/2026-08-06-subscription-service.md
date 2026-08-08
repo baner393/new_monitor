@@ -23,7 +23,7 @@ Evidence: `subscription-service/src/worker.js`, `subscription-service/migrations
 - Confirmed: R2 bucket `turtle-monitor-skins` is bound to the Worker. Migration `0002_skin_library.sql` adds `skin_releases`; the Worker exposes public catalog and preview endpoints plus device-proof-protected package downloads.
 - Confirmed: the desktop client fetches the catalog, downloads `.skinpack` releases only with `skins` or `creator` entitlement, verifies the package and each declared PNG SHA-256, then atomically installs the skin in user data.
 - Confirmed: the developer publisher can validate skin sources, update the built-in skin index, and create a gzip-compressed `.skinpack` staging artifact.
-- Not implemented: an operator publish command to upload the staging artifact and preview to R2 and insert/update the corresponding `skin_releases` row; the catalog is therefore empty until that command exists or an operator performs the equivalent steps manually.
+- Confirmed: the developer publisher invokes the locally authenticated Wrangler CLI to upload manifest, preview, and package to R2, then performs an idempotent remote D1 upsert of a published `skin_releases` row. Credentials remain in the local Wrangler profile rather than the app or repository.
 
 ## Promotion notes
 

@@ -8,6 +8,7 @@ Status: Confirmed in the working tree and deployed Cloudflare service. Evidence:
 - Bound the `turtle-monitor-skins` R2 bucket and added a release catalog table. Public catalog/preview access is separated from device-proof-gated package downloads that accept either `skins` or `creator` access.
 - Added client-side catalog loading, entitlement-bound download, gzip package parsing, manifest and frame checksum verification, atomic installation, and skin-list reload.
 - Added the developer publisher for validating source skins, writing built-in skins, and preparing online `.skinpack` release artifacts. Automated R2/D1 publication and a real buyer skin-install E2E remain open.
+- The developer publisher now uploads the release manifest, preview, and package through the machine's logged-in Wrangler CLI and upserts the published D1 release record. It keeps credentials outside the desktop application and repository.
 
 ## 2026-08-05 - Inline approval promotion
 

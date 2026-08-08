@@ -5,4 +5,5 @@ contextBridge.exposeInMainWorld('skinPublisher', {
   inspect: (payload) => ipcRenderer.invoke('skin-publisher-inspect', payload),
   writeBuiltIn: (payload) => ipcRenderer.invoke('skin-publisher-write-built-in', payload),
   prepareOnline: (payload) => ipcRenderer.invoke('skin-publisher-prepare-online', payload),
+  publishOnline: (payload) => ipcRenderer.invoke('skin-publisher-publish-online', payload),
 });

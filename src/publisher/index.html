@@ -48,6 +48,11 @@
     async function run(button, call) { button.disabled = true; try { const result = await call(); report(result.success ? JSON.stringify(result, null, 2) : '操作失败：' + result.error); } finally { button.disabled = false; } }
     $('builtin').onclick = () => run($('builtin'), () => window.skinPublisher.writeBuiltIn(payload()));
     $('online').onclick = () => run($('online'), () => window.skinPublisher.prepareOnline(payload()));
+    const publish = document.createElement('button');
+    publish.id = 'publish';
+    publish.textContent = '\u53d1\u5e03\u5230\u76ae\u80a4\u5e93';
+    publish.onclick = () => run(publish, () => window.skinPublisher.publishOnline(payload()));
+    document.querySelector('.actions').appendChild(publish);
   </script>
 </body>
 </html>

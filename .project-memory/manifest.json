@@ -1,7 +1,7 @@
 {
   "schema": 1,
-  "created_at": "2026-08-07T16:14:11.538766+00:00",
-  "git_revision": "870ab07f17ce2f4bc333efa2b7b3a0bcef6793ad",
+  "created_at": "2026-08-08T02:17:22.914546+00:00",
+  "git_revision": "3e36491c976134d2715206e70668bc0315a30f35",
   "git_dirty": true,
   "files": [
     {
@@ -2296,8 +2296,8 @@
     },
     {
       "path": "src/main/index.js",
-      "bytes": 56665,
-      "sha256": "75808c9b8344bc1012b28456ca22270ce19fa8ecdd1101763c6c180f75c43d0d"
+      "bytes": 57335,
+      "sha256": "0a269e91ce1b6bf793b196381dd8d9e97e26d8048d3cc548cb279a76e4c3d9da"
     },
     {
       "path": "src/main/license.js",
@@ -2320,6 +2320,11 @@
       "sha256": "bb8be051f12073cc0efb06a2002cb77b49a5a1506a9b9d451ed690f5bad29c17"
     },
     {
+      "path": "src/main/skin-release-publisher.js",
+      "bytes": 4048,
+      "sha256": "29efb21a74e30fb566712df89b54527f76de679ba77fec92ae43bc4a4b792e32"
+    },
+    {
       "path": "src/main/subscription-runtime.js",
       "bytes": 8588,
       "sha256": "2b7f34f325332b6da5b127d0f20cacb7aeaf5abcd88acd0cc5b699c7e7e1092d"
@@ -2336,13 +2341,13 @@
     },
     {
       "path": "src/publisher/index.html",
-      "bytes": 4524,
-      "sha256": "cd6143e24c358a9aa0ca0937825c9ddc06657b22a5846501f76d78283a89c9a5"
+      "bytes": 4828,
+      "sha256": "48f5023dbf4d601692e7c880e0e42f42dd5c043013e2010caab7d89b6691e49b"
     },
     {
       "path": "src/publisher/preload.js",
-      "bytes": 452,
-      "sha256": "d06fc3ef8a63d0e2492984989cede80a3eab29b9e78fbbf7b319c0e3d5f068fb"
+      "bytes": 544,
+      "sha256": "baebf9baeafab96d2e929948439b8ba08a42c2f5cdd895e60c9a859f5fccad06"
     },
     {
       "path": "src/renderer/codex-companion.js",
@@ -2643,6 +2648,11 @@
       "path": "tests/skin-publisher.test.mjs",
       "bytes": 1866,
       "sha256": "6aca29d9eec14fd9b794449d5f1142f9e760fa5371627b78b04fefd9c598013a"
+    },
+    {
+      "path": "tests/skin-release-publisher.test.mjs",
+      "bytes": 1172,
+      "sha256": "3c770e6f763ed9fba5af653d06cead5abc934f111ccbd9bc2106c4d9736badeb"
     },
     {
       "path": "tests/subscription-model.test.mjs",
