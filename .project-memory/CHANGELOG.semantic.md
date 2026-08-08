@@ -1,5 +1,11 @@
 # Semantic change log
 
+## 2026-08-08 - Afdian price synchronization
+
+Status: Confirmed. Evidence: `src/shared/subscription-model.js`, `subscription-service/src/core.js`, affected tests, and deployed Worker version `8c63af30-549d-4a9c-ada5-41c865425be3`.
+
+- Updated the authoritative Afdian ladder to `1 / 9.8 / 4.2 / 7.7 / 24.5` CNY. The client display and the Worker strict order-amount check use the matching values.
+
 ## 2026-08-08 - Subscription service and online skin delivery
 
 Status: Confirmed in the working tree and deployed Cloudflare service. Evidence: `subscription-service/`, `src/main/subscription-runtime.js`, `src/main/skin-publisher.js`, `src/renderer/skin-selector.js`, `tests/skin-publisher.test.mjs`, `npm test`, and `npm run verify`.

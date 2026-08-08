@@ -14,10 +14,10 @@ export const SUBSCRIPTION_CAPABILITY = Object.freeze({
 
 export const SUBSCRIPTION_PRODUCTS = Object.freeze({
   skins_monthly: Object.freeze({ tier: SUBSCRIPTION_TIER.SKINS, months: 1, priceCny: 1 }),
-  skins_yearly: Object.freeze({ tier: SUBSCRIPTION_TIER.SKINS, months: 12, priceCny: 9 }),
-  creator_monthly: Object.freeze({ tier: SUBSCRIPTION_TIER.CREATOR, months: 1, priceCny: 3 }),
-  creator_quarterly: Object.freeze({ tier: SUBSCRIPTION_TIER.CREATOR, months: 3, priceCny: 7 }),
-  creator_yearly: Object.freeze({ tier: SUBSCRIPTION_TIER.CREATOR, months: 12, priceCny: 19 }),
+  skins_yearly: Object.freeze({ tier: SUBSCRIPTION_TIER.SKINS, months: 12, priceCny: 9.8 }),
+  creator_monthly: Object.freeze({ tier: SUBSCRIPTION_TIER.CREATOR, months: 1, priceCny: 4.2 }),
+  creator_quarterly: Object.freeze({ tier: SUBSCRIPTION_TIER.CREATOR, months: 3, priceCny: 7.7 }),
+  creator_yearly: Object.freeze({ tier: SUBSCRIPTION_TIER.CREATOR, months: 12, priceCny: 24.5 }),
 });
 
 const VALID_TIERS = new Set(Object.values(SUBSCRIPTION_TIER));

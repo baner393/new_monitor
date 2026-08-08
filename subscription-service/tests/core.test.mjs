@@ -21,7 +21,7 @@ test('plan mapping uses only the approved five Afdian plans', () => {
   const plans = buildPlanMap(env);
   assert.equal(plans.size, 5);
   assert.deepEqual(plans.get('plan-creator_yearly'), {
-    key: 'creator_yearly', tier: 'creator', months: 12, priceCents: 1900, env: 'AFDIAN_PLAN_CREATOR_YEARLY',
+    key: 'creator_yearly', tier: 'creator', months: 12, priceCents: 2450, env: 'AFDIAN_PLAN_CREATOR_YEARLY',
   });
 });
 

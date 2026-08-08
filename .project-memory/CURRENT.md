@@ -51,6 +51,8 @@ Status: Confirmed in the working tree and deployed service. Evidence: `subscript
 
 The public Worker, D1, and R2 bucket are deployed at `https://licensemonitor.b100.top`. The client presents a copyable Afdian order binding code, retrieves the public online skin catalog, and installs entitlement-protected `.skinpack` downloads only after package and per-file SHA-256 verification. The service exposes public catalog and preview endpoints while requiring a device proof carrying `skins` or `creator` entitlement for package download.
 
+The authoritative subscription price ladder is `src/shared/subscription-model.js`: skin monthly `1`, skin yearly `9.8`, creator monthly `4.2`, creator quarterly `7.7`, and creator yearly `24.5` CNY. The Worker mirrors these as cents in `subscription-service/src/core.js` and was deployed with the updated strict amount validation.
+
 The developer skin publisher validates a source directory, writes a built-in skin into `assets/skins`, prepares a gzip-compressed `.skinpack`, and can publish it with the locally authenticated Wrangler CLI. Publishing uploads the manifest, preview, and package to R2, then performs an idempotent remote D1 upsert into `skin_releases`; no Cloudflare credential is stored in the app or repository. A non-creator buyer end-to-end order refresh remains unverified.
 
 The publisher is a separate developer-only Electron entry under `tools/skin-publisher`. The main app no longer exposes publisher IPC, menu entries, source files, or build-copy steps. Main installers include only `.vite`, runtime assets, and subscription configuration; the publisher has its own `skin-publisher` start and portable-package commands.

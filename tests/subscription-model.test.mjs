@@ -84,10 +84,10 @@ test('legacy sponsor build remains available during migration', () => {
 
 test('published products match the approved price ladder', () => {
   assert.deepEqual(productForKey('skins_monthly'), { tier: 'skins', months: 1, priceCny: 1 });
-  assert.deepEqual(productForKey('skins_yearly'), { tier: 'skins', months: 12, priceCny: 9 });
-  assert.deepEqual(productForKey('creator_monthly'), { tier: 'creator', months: 1, priceCny: 3 });
-  assert.deepEqual(productForKey('creator_quarterly'), { tier: 'creator', months: 3, priceCny: 7 });
-  assert.deepEqual(productForKey('creator_yearly'), { tier: 'creator', months: 12, priceCny: 19 });
+  assert.deepEqual(productForKey('skins_yearly'), { tier: 'skins', months: 12, priceCny: 9.8 });
+  assert.deepEqual(productForKey('creator_monthly'), { tier: 'creator', months: 1, priceCny: 4.2 });
+  assert.deepEqual(productForKey('creator_quarterly'), { tier: 'creator', months: 3, priceCny: 7.7 });
+  assert.deepEqual(productForKey('creator_yearly'), { tier: 'creator', months: 12, priceCny: 24.5 });
 });
 
 test('Ed25519 entitlement envelope is canonical, device-bound and time-bound', () => {

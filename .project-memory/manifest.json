@@ -1,7 +1,7 @@
 {
   "schema": 1,
-  "created_at": "2026-08-08T02:53:48.333448+00:00",
-  "git_revision": "58a9ed7103d5e26064f859391223a9fcc6b8c66c",
+  "created_at": "2026-08-08T03:21:43.547147+00:00",
+  "git_revision": "09de77ff0205d25be85370361496dfcb55b644d4",
   "git_dirty": true,
   "files": [
     {
@@ -20,14 +20,14 @@
       "sha256": "27c83ca235c3ab99d5d35df35d78b5ac4018421a4287b1b4ea657b2299996d38"
     },
     {
+      "path": ".vite/renderer/main_window/assets/index-DPaN25Tb.js",
+      "bytes": 706662,
+      "sha256": "435994874ea440a3b29845de23fbe6bdd2a0e942d0cdb032ba7bbe57e9d23ba5"
+    },
+    {
       "path": ".vite/renderer/main_window/assets/index-Dm99VASI.css",
       "bytes": 55017,
       "sha256": "37cef0796892f6a394ac9a9d8cd22b519de0a92d53f52d06de274b75169d4155"
-    },
-    {
-      "path": ".vite/renderer/main_window/assets/index-v3hVGnad.js",
-      "bytes": 706650,
-      "sha256": "414feb03fcc7256cb49a909a9627709cbae299e9b430853e65a1694aa6916f46"
     },
     {
       "path": ".vite/renderer/main_window/assets/skins/cat/blink.png",
@@ -127,7 +127,7 @@
     {
       "path": ".vite/renderer/main_window/index.html",
       "bytes": 1245,
-      "sha256": "cdf27a028376ac3d4d68917df91fbb591d3915d38b1947e5d19443fcf17dcce6"
+      "sha256": "1cf851764140be8bc3c497eb20dccff254b0c3968dce56fc4f2dc0a714450ebd"
     },
     {
       "path": "AGENTS.md",
@@ -2451,8 +2451,8 @@
     },
     {
       "path": "src/renderer/subscription-panel.js",
-      "bytes": 12843,
-      "sha256": "5168118c2b83bf09e3f1b267fea49fe542f26aadb051a2d499a4e08676f85cfb"
+      "bytes": 12855,
+      "sha256": "442000f14a7758598550b3dd4679aa717c9d3b22d2e1efcb807ea326b97eda28"
     },
     {
       "path": "src/renderer/velocity-tracker.js",
@@ -2491,8 +2491,8 @@
     },
     {
       "path": "src/shared/subscription-model.js",
-      "bytes": 5060,
-      "sha256": "7fc27d242a2ea7d701cf2cede85fc77e59caf26f0a62d773150ae97ebdf0c2a9"
+      "bytes": 5068,
+      "sha256": "3328f269ed842e6666ad16929e067c82011d32e5c61efb9d2fbeadafe7dc1684"
     },
     {
       "path": "subscription-service/README.md",
@@ -2517,7 +2517,7 @@
     {
       "path": "subscription-service/src/core.js",
       "bytes": 4770,
-      "sha256": "d6f17d525191ce824598455eff492c68f7b7cb16d107e0f8484a33ccfcb93342"
+      "sha256": "b3a70aa5fec25a7c2b0c1c9074f160cb490e70c4a210f0d84a2397e40448f706"
     },
     {
       "path": "subscription-service/src/worker.js",
@@ -2527,7 +2527,7 @@
     {
       "path": "subscription-service/tests/core.test.mjs",
       "bytes": 3032,
-      "sha256": "d2b09f0219843e757c319766829266edbe3fa0e00785b1fa7c3908afe751ea35"
+      "sha256": "4390ed3d6c4f8b59e0e1bf8e23d0ca686ca3fcd430764dfaeb4e36f19999baff"
     },
     {
       "path": "subscription-service/wrangler.toml",
@@ -2651,8 +2651,8 @@
     },
     {
       "path": "tests/subscription-model.test.mjs",
-      "bytes": 4931,
-      "sha256": "f554d4cc56710c9c0388f046836e2b1230dcbd1657d5e7488361de196dbdde96"
+      "bytes": 4939,
+      "sha256": "a38a48969562c1eb3816a85f42a5e57c314bc6ba750a54b0bd650f514f2b2268"
     },
     {
       "path": "tests/subscription-runtime.test.mjs",
@@ -2661,8 +2661,8 @@
     },
     {
       "path": "tests/subscription-ui.test.mjs",
-      "bytes": 1627,
-      "sha256": "1cfa81aea7fbc4bed1b9497cc79df5b59b6819004d0a9002809737b63d07f544"
+      "bytes": 1446,
+      "sha256": "132c4edc48f35982526336767f6b4ba1097a2a29a21d86f132c44365b7170ae0"
     },
     {
       "path": "tests/system-monitor.test.mjs",

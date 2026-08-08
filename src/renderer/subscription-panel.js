@@ -6,7 +6,7 @@ const PLAN_COPY = Object.freeze({
     features: ['订阅期间的新皮肤', '官方皮肤动作更新', '到期后已下载皮肤仍可使用'],
     products: [
       { key: 'skins_monthly', label: '月付', price: '¥1' },
-      { key: 'skins_yearly', label: '年付', price: '¥9', recommended: true },
+      { key: 'skins_yearly', label: '年付', price: '￥9.8', recommended: true },
     ],
   },
   creator: {
@@ -15,9 +15,9 @@ const PLAN_COPY = Object.freeze({
     description: '把自己的角色真正接入桌面宠物工作流。',
     features: ['包含全部皮肤会员权益', '绘画、生成与表情编辑', '皮肤导入、管理和自定义切换'],
     products: [
-      { key: 'creator_monthly', label: '月付', price: '¥3' },
-      { key: 'creator_quarterly', label: '季度', price: '¥7' },
-      { key: 'creator_yearly', label: '年付', price: '¥19', recommended: true },
+      { key: 'creator_monthly', label: '月付', price: '￥4.2' },
+      { key: 'creator_quarterly', label: '季度', price: '￥7.7' },
+      { key: 'creator_yearly', label: '年付', price: '￥24.5', recommended: true },
     ],
   },
 });

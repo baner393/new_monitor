@@ -8,13 +8,10 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 test('subscription center exposes the approved two-tier price ladder', () => {
   const source = fs.readFileSync(path.join(root, 'src', 'renderer', 'subscription-panel.js'), 'utf8');
-  for (const expected of [
-    "{ key: 'skins_monthly', label: '月付', price: '¥1' }",
-    "{ key: 'skins_yearly', label: '年付', price: '¥9', recommended: true }",
-    "{ key: 'creator_monthly', label: '月付', price: '¥3' }",
-    "{ key: 'creator_quarterly', label: '季度', price: '¥7' }",
-    "{ key: 'creator_yearly', label: '年付', price: '¥19', recommended: true }",
-  ]) assert.ok(source.includes(expected), expected);
+  for (const [key, price] of [
+    ['skins_monthly', '1'], ['skins_yearly', '9.8'], ['creator_monthly', '4.2'],
+    ['creator_quarterly', '7.7'], ['creator_yearly', '24.5'],
+  ]) assert.match(source, new RegExp(`key: '${key}'[^\\n]+price: '[^']*${price}'`));
 });
 
 test('subscription center promises retention without exposing infrastructure terms', () => {

@@ -17,6 +17,7 @@ Evidence: `subscription-service/src/worker.js`, `subscription-service/migrations
 - Confirmed: D1 database `license-monitor-db` exists with the initial five-table schema.
 - Confirmed: Worker `license-monitor` is deployed at `https://licensemonitor.b100.top`; `GET /health` returns `{\"ok\":true,\"service\":\"license-monitor\"}`.
 - Confirmed: the five Afdian plan IDs and `https://ifdian.net/item/<plan_id>` URLs are configured as Worker variables; the three private secrets were uploaded outside Git.
+- Confirmed: the five current plan prices are `1`, `9.8`, `4.2`, `7.7`, and `24.5` CNY in product order. The deployed Worker validates the same amounts in cents before granting access.
 - Confirmed: client `resources/subscription/config.json` points to the service and contains the matching Ed25519 public key.
 - Confirmed: the subscription panel presents the checkout binding code in a dedicated copyable block and explains the required Afdian order remark step.
 - Unknown: a real non-creator buyer order has completed the full webhook-to-entitlement refresh path.
