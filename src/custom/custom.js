@@ -182,6 +182,8 @@
   const zoomOutBtn = document.getElementById('toolZoomOut');
   const fullscreenBtn = document.getElementById('toolFullscreen');
   const exportCanvasBtn = document.getElementById('exportCanvasBtn');
+  const canvasImportBtn = document.getElementById('canvasImportBtn');
+  const canvasImportInput = document.getElementById('canvasImportInput');
   const canvasSizeSelect = document.getElementById('canvasSize');
 
   let canvasGridSize = 64;
@@ -238,6 +240,73 @@
     pushCanvasHistory();
     setStatus(`画布初始化: ${canvasGridSize}×${canvasGridSize}`);
   }
+
+  function imageToGrid(image, size) {
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    const context = canvas.getContext('2d');
+    context.imageSmoothingEnabled = false;
+    context.drawImage(image, 0, 0, size, size);
+    const imageData = context.getImageData(0, 0, size, size);
+    const grid = createEmptyGrid(size);
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        const offset = (y * size + x) * 4;
+        if (imageData.data[offset + 3] > 128) {
+          grid[y][x] = `rgb(${imageData.data[offset]},${imageData.data[offset + 1]},${imageData.data[offset + 2]})`;
+        }
+      }
+    }
+    return grid;
+  }
+
+  function loadImageFile(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error('读取 PNG 失败'));
+      reader.onload = (event) => {
+        const image = new Image();
+        image.onload = () => resolve(image);
+        image.onerror = () => reject(new Error('解析 PNG 失败'));
+        image.src = event.target.result;
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function loadCanvasPng(file) {
+    if (!file || file.type !== 'image/png') {
+      setStatus('请选择 PNG 图片');
+      return;
+    }
+    try {
+      const image = await loadImageFile(file);
+      const supportedSize = image.width === image.height && [...canvasSizeSelect.options]
+        .some((option) => Number(option.value) === image.width);
+      const targetSize = supportedSize ? image.width : canvasGridSize;
+      if (supportedSize) canvasSizeSelect.value = String(targetSize);
+      canvasGridSize = targetSize;
+      pixelGrid = imageToGrid(image, targetSize);
+      canvasHistory = [];
+      canvasHistoryIndex = -1;
+      resetCanvasPan();
+      pixelScale = getCanvasBaseScale();
+      canvasZoomPercent = 100;
+      zoomLevelLabel.textContent = '100%';
+      resizeCanvas();
+      pushCanvasHistory();
+      const resized = image.width !== targetSize || image.height !== targetSize;
+      setStatus(`已导入 ${file.name}，可继续绘制${resized ? `（已像素化适配为 ${targetSize}×${targetSize}）` : ''}`);
+    } catch (error) {
+      setStatus(`导入 PNG 失败：${error.message}`);
+    } finally {
+      canvasImportInput.value = '';
+    }
+  }
+
+  canvasImportBtn?.addEventListener('click', () => canvasImportInput?.click());
+  canvasImportInput?.addEventListener('change', (event) => loadCanvasPng(event.target.files?.[0]));
 
   function resizeCanvas() {
     drawCanvas.width = canvasGridSize * pixelScale;
@@ -966,43 +1035,34 @@
   // ── Load existing skins ──
   loadSkinsBtn?.addEventListener('click', () => skinFilesInput?.click());
 
+  async function loadSkinFramesIntoExpressionEditor(skin) {
+    const stateMap = { idle: 'idle', hover: 'hover', pull: 'pull', happy: 'happy', pain: 'pain', blink_closed: 'blink', blink: 'blink' };
+    let loaded = 0;
+    await Promise.all(Object.entries(skin.frames || {}).map(async ([state, url]) => {
+      const expressionId = stateMap[state];
+      if (!expressionId || !exprData[expressionId]) return;
+      const image = await new Promise((resolve, reject) => {
+        const candidate = new Image();
+        candidate.onload = () => resolve(candidate);
+        candidate.onerror = () => reject(new Error(`读取 ${state} 失败`));
+        candidate.src = url;
+      });
+      const size = Math.max(image.width, image.height, Number(skin.baseSize) || 0);
+      exprData[expressionId] = { grid: imageToGrid(image, size), size, loaded: true };
+      loaded++;
+    }));
+    refreshAllThumbnails();
+    const firstLoaded = exprData.idle?.loaded ? 'idle' : EXPRESSIONS.find((item) => exprData[item.id]?.loaded)?.id || 'idle';
+    switchTab('expressions');
+    selectExpression(firstLoaded);
+    return loaded;
+  }
+
   document.getElementById('loadActiveSkinBtn')?.addEventListener('click', async () => {
     try {
       const current = await window.electronAPI?.skinGetCurrent?.();
       if (!current?.success) throw new Error(current?.error || '没有找到当前皮肤');
-      const stateMap = { idle: 'idle', hover: 'hover', pull: 'pull', happy: 'happy', pain: 'pain', blink_closed: 'blink', blink: 'blink' };
-      let loaded = 0;
-      await Promise.all(Object.entries(current.frames || {}).map(async ([state, url]) => {
-        const expressionId = stateMap[state];
-        if (!expressionId || !exprData[expressionId]) return;
-        const image = await new Promise((resolve, reject) => {
-          const candidate = new Image();
-          candidate.onload = () => resolve(candidate);
-          candidate.onerror = () => reject(new Error(`读取 ${state} 失败`));
-          candidate.src = url;
-        });
-        const size = Math.max(image.width, image.height, Number(current.baseSize) || 0);
-        const canvas = document.createElement('canvas');
-        canvas.width = size;
-        canvas.height = size;
-        const context = canvas.getContext('2d');
-        context.imageSmoothingEnabled = false;
-        context.drawImage(image, 0, 0, size, size);
-        const imageData = context.getImageData(0, 0, size, size);
-        const grid = createEmptyGrid(size);
-        for (let y = 0; y < size; y++) {
-          for (let x = 0; x < size; x++) {
-            const offset = (y * size + x) * 4;
-            if (imageData.data[offset + 3] > 128) {
-              grid[y][x] = `rgb(${imageData.data[offset]},${imageData.data[offset + 1]},${imageData.data[offset + 2]})`;
-            }
-          }
-        }
-        exprData[expressionId] = { grid, size, loaded: true };
-        loaded++;
-      }));
-      refreshAllThumbnails();
-      selectExpression(exprData.idle?.loaded ? 'idle' : EXPRESSIONS.find((item) => exprData[item.id]?.loaded)?.id || 'idle');
+      const loaded = await loadSkinFramesIntoExpressionEditor(current);
       setStatus(`已载入当前皮肤 ${current.skinId} 的 ${loaded} 个状态`);
     } catch (error) {
       setStatus(`载入当前皮肤失败：${error.message}`);
@@ -2287,6 +2347,15 @@
     // Refresh skin library
     loadSkinLibrary(config.skins);
 
+    // The imported files are already copied locally. Load that exact saved skin
+    // into editable expression frames before clearing the import selection.
+    const importedSkin = await window.electronAPI?.skinGetFrames?.(skinId);
+    if (importedSkin?.success) {
+      const loaded = await loadSkinFramesIntoExpressionEditor(importedSkin);
+      skinImportStatus.textContent = `已导入 ${displayName}，并载入 ${loaded} 个状态供继续编辑`;
+      setStatus(`已导入皮肤库并打开表情编辑：${displayName}`);
+    }
+
     // Notify main window to reload skins
     // The main window will re-fetch skins.json on next skin selector open
     skinImportBtn.disabled = false;
@@ -2370,6 +2439,24 @@
         setStatus(`已删除皮肤: ${skinName}`);
       });
     });
+
+    skinLibraryList.querySelectorAll('[data-edit-skin]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const skinId = btn.getAttribute('data-edit-skin');
+        const skinName = btn.getAttribute('data-skin-name') || skinId;
+        try {
+          btn.disabled = true;
+          const skin = await window.electronAPI?.skinGetFrames?.(skinId);
+          if (!skin?.success) throw new Error(skin?.error || '读取皮肤失败');
+          const loaded = await loadSkinFramesIntoExpressionEditor(skin);
+          setStatus(`已载入 ${skinName} 的 ${loaded} 个状态，可继续编辑`);
+        } catch (error) {
+          setStatus(`载入 ${skinName} 失败：${error.message}`);
+        } finally {
+          btn.disabled = false;
+        }
+      });
+    });
   }
 
   function renderSkinCard(skin, canDelete) {
@@ -2382,7 +2469,8 @@
           <div style="font-size:10px; color:#888; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${skin.author || 'Unknown'} · ${skin.id}</div>
           ${skin.description ? `<div style="font-size:10px; color:#666; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${skin.description}</div>` : ''}
         </div>
-        ${canDelete ? `<button class="btn" data-delete-skin="${skin.id}" data-skin-name="${skin.displayName || skin.id}" style="padding:4px 8px; font-size:11px; color:#cc6666; border-color:#663333; flex-shrink:0;">🗑️</button>` : `<span style="font-size:10px; color:#555; flex-shrink:0;">内置</span>`}
+        <button class="btn" data-edit-skin="${skin.id}" data-skin-name="${skin.displayName || skin.id}" title="载入表情编辑器" style="padding:4px 8px; font-size:11px; flex-shrink:0;">编辑</button>
+        ${canDelete ? `<button class="btn" data-delete-skin="${skin.id}" data-skin-name="${skin.displayName || skin.id}" title="删除皮肤" style="padding:4px 8px; font-size:11px; color:#cc6666; border-color:#663333; flex-shrink:0;">🗑️</button>` : `<span style="font-size:10px; color:#555; flex-shrink:0;">内置</span>`}
       </div>
     `;
   }

@@ -76,6 +76,14 @@ Status: Confirmed in the uncommitted working tree. Evidence: `tests/codex-integr
 
 Record only changes that affect rebuilding, behavior, integration, or architecture.
 
+## 2026-08-10 - Custom mode imports become editable
+
+Status: Confirmed. Evidence: `src/custom/custom.js`, `src/custom/index.html`, `src/custom/preload.js`, `src/main/index.js`, `tests/custom-mode-ui.test.mjs`; verified by `npm test`, `npm run verify`, and `npm run build:free`.
+
+- Pixel canvas now imports PNG into the active pixel grid, adapts unsupported dimensions with nearest-neighbor sampling, and records the result in undo history.
+- Imported skin-library entries and existing library cards now open their resolved frames in the expression editor for direct editing.
+- Added named `skin-get-frames` IPC for built-in and user skin frame resolution; active-skin loading uses the same renderer-side frame conversion path.
+
 ## 2026-07-31 — Codex companion integration rebuilt
 
 Status: Confirmed. Evidence: commit `f464545`, `tests/codex-integration.test.mjs`.

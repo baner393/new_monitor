@@ -57,4 +57,12 @@ The developer skin publisher validates a source directory, writes a built-in ski
 
 The publisher is a separate developer-only Electron entry under `tools/skin-publisher`. The main app no longer exposes publisher IPC, menu entries, source files, or build-copy steps. Main installers include only `.vite`, runtime assets, and subscription configuration; the publisher has its own `skin-publisher` start and portable-package commands.
 
+## Custom editor import workflows
+
+Status: Confirmed in the working tree. Evidence: `src/custom/custom.js`, `src/custom/index.html`, `src/custom/preload.js`, `src/main/index.js`, and `tests/custom-mode-ui.test.mjs`.
+
+The pixel canvas accepts PNG files through `canvasImportBtn`/`canvasImportInput`. Square images using a supported canvas size keep their native grid; other images are nearest-neighbor adapted to the selected canvas size. The imported grid is placed in the normal canvas history, so drawing, undo, export, and expression handoff continue to work.
+
+The expression editor has a shared skin-frame loader. Current skin loading, skin-library import completion, and each skin-library card's `编辑` action load resolved frames into `exprData`, refresh thumbnails, switch to the expression tab, and select the first available state. The main-process `skin-get-frames` IPC resolves both built-in ASAR skins and user skins without changing the active skin.
+
 The cross-machine Agent runbook is [../DEVELOPER-SKIN-PUBLISHER.md](../DEVELOPER-SKIN-PUBLISHER.md). It documents local Wrangler configuration, `TURTLE_SKIN_REPOSITORY`, source and portable startup, release steps, catalog verification, and common failures.

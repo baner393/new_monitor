@@ -28,11 +28,15 @@ test('freehand canvas can enter both generation and state-editing workflows', as
     source('src/custom/custom.js'),
   ]);
   assert.match(html, /id="canvasUseAsBaseBtn"/);
+  assert.match(html, /id="canvasImportBtn"/);
+  assert.match(html, /id="canvasImportInput"/);
   assert.match(html, /id="canvasTargetExpression"/);
   assert.match(html, /id="canvasSendToExpressionBtn"/);
   assert.match(js, /canvasUseAsBaseBtn/);
   assert.match(js, /canvasSendToExpressionBtn/);
   assert.match(js, /loadConverterFile\(file\)/);
+  assert.match(js, /loadCanvasPng\(file\)/);
+  assert.match(js, /imageToGrid\(image, targetSize\)/);
   assert.match(js, /exprData\[expressionId\]/);
 });
 
@@ -44,6 +48,20 @@ test('expression editor starts with an actionable state and can load the active 
   assert.match(html, /id="loadActiveSkinBtn"/);
   assert.match(js, /selectExpression\('idle'\)/);
   assert.match(js, /skinGetCurrent/);
+  assert.match(js, /loadSkinFramesIntoExpressionEditor/);
+  assert.match(js, /skinGetFrames/);
+});
+
+test('skin-library entries can enter the editable expression workflow', async () => {
+  const [js, preload, main] = await Promise.all([
+    source('src/custom/custom.js'),
+    source('src/custom/preload.js'),
+    source('src/main/index.js'),
+  ]);
+  assert.match(js, /data-edit-skin/);
+  assert.match(js, /已导入皮肤库并打开表情编辑/);
+  assert.match(preload, /skinGetFrames/);
+  assert.match(main, /skin-get-frames/);
 });
 
 test('guided marker returns exact target-grid coordinates', async () => {

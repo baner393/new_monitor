@@ -38,5 +38,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // ── Expression Editor APIs ──
   skinGetCurrent: () => ipcRenderer.invoke('skin-get-current'),
+  skinGetFrames: (skinId) => ipcRenderer.invoke('skin-get-frames', skinId),
   skinSavePng: (skinId, exprId, pngBase64) => ipcRenderer.invoke('skin-save-png', { skinId, exprId, pngBase64 }),
 });

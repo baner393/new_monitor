@@ -1317,6 +1317,36 @@ if (__IS_SPONSOR__) {
     return { success: true, skinId: currentId, frames, baseSize: skin.baseSize || 24 };
   });
 
+  // Read a named skin into the expression editor without changing the active pet.
+  ipcMain.handle('skin-get-frames', async (_event, skinId) => {
+    const requestedId = String(skinId || '');
+    if (!requestedId || path.basename(requestedId) !== requestedId) {
+      return { success: false, error: 'invalid skin id' };
+    }
+    try {
+      const builtInConfig = JSON.parse(fs.readFileSync(SKINS_JSON_PATH, 'utf-8'));
+      const builtInSkin = (builtInConfig.skins || []).find((skin) => skin.id === requestedId);
+      let skin = builtInSkin;
+      if (!skin && fs.existsSync(SKINS_USER_JSON)) {
+        const userConfig = JSON.parse(fs.readFileSync(SKINS_USER_JSON, 'utf-8'));
+        skin = (userConfig.customSkins || userConfig.skins || []).find((entry) => entry.id === requestedId);
+      }
+      if (!skin) return { success: false, error: `skin not found: ${requestedId}` };
+
+      const frames = {};
+      for (const [state, relPath] of Object.entries(skin.frames || {})) {
+        const fullPath = builtInSkin
+          ? path.join(SKINS_BASE_PATH, String(relPath).replace('assets/skins/', ''))
+          : path.join(SKINS_USER_PATH, requestedId, path.basename(String(relPath)));
+        if (fs.existsSync(fullPath)) frames[state] = `file://${fullPath.replace(/\\/g, '/')}`;
+      }
+      if (!Object.keys(frames).length) return { success: false, error: `no readable frames: ${requestedId}` };
+      return { success: true, skinId: requestedId, frames, baseSize: skin.baseSize || 24 };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  });
+
   // Save a PNG file into the skins folder (write to userData)
   ipcMain.handle('skin-save-png', async (event, { skinId, exprId, pngBase64 }) => {
     try {

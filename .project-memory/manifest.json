@@ -1,7 +1,7 @@
 {
   "schema": 1,
-  "created_at": "2026-08-08T03:21:43.547147+00:00",
-  "git_revision": "09de77ff0205d25be85370361496dfcb55b644d4",
+  "created_at": "2026-08-10T06:57:08.246179+00:00",
+  "git_revision": "7d0ee6689cec49f4452898fbc9b49dbc5b29acd1",
   "git_dirty": true,
   "files": [
     {
@@ -2251,8 +2251,8 @@
     },
     {
       "path": "src/custom/custom.js",
-      "bytes": 99439,
-      "sha256": "7243ed0a1b8ddf477eb8acc66eecf67da306974028cfc9d8a7c724f259f4326e"
+      "bytes": 103176,
+      "sha256": "2ff963e69b55b3ffca1ef2a90f9e5372a3664b3ff7fbdd08961210b6e6eb13d6"
     },
     {
       "path": "src/custom/expression-generator.js",
@@ -2261,13 +2261,13 @@
     },
     {
       "path": "src/custom/index.html",
-      "bytes": 60681,
-      "sha256": "113bd1adee2f212bc748fb8c118f5b29a287bb515742bc6d70fc1724f179e060"
+      "bytes": 60882,
+      "sha256": "a9af61baa50a47edb4ace5e8296d725ca7c5b4769486985ab4ae2cb4062744eb"
     },
     {
       "path": "src/custom/preload.js",
-      "bytes": 2197,
-      "sha256": "065f7719142b7d9248f001292ff7ccfadedaa38270037938d8d27421a2e05fe1"
+      "bytes": 2270,
+      "sha256": "60c8cfb0a356cf838dfa7f2fc89396eb5ea62256e969dbf036535e482df93d56"
     },
     {
       "path": "src/main/claude-client-bridge.js",
@@ -2311,8 +2311,8 @@
     },
     {
       "path": "src/main/index.js",
-      "bytes": 53305,
-      "sha256": "8bf24427aef59a268b82d3d38c215428c29d8fe8b976cdeceba60a0280de446a"
+      "bytes": 54888,
+      "sha256": "95b163f48fc500cbbfb653ef3a930b09fcd1ef1c0d37bf4683a87ac79ba1dd69"
     },
     {
       "path": "src/main/license.js",
@@ -2556,8 +2556,8 @@
     },
     {
       "path": "tests/custom-mode-ui.test.mjs",
-      "bytes": 2100,
-      "sha256": "90c24c11f9f2c7d62ea0d96b0672ef2c6d518f4b4121bc1a4c60615f519a69f3"
+      "bytes": 2827,
+      "sha256": "bbe20c644675db4ab60c9e0b73a85c5b3a4d54358ad48ac92bbb13b6f7fe1258"
     },
     {
       "path": "tests/dashboard-model.test.mjs",
