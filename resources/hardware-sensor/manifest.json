@@ -20,8 +20,8 @@
     },
     {
       "file": "HardwareSensorHost.exe.config",
-      "bytes": 176,
-      "sha256": "ad8267122c40d37dcd9d99e1412d763187a1825732f378db8867f3ecf675cf70"
+      "bytes": 171,
+      "sha256": "435ea23443d8dd98eeb707aad9d3a5c1fe6046f8d76647a44d495d94ea4597ef"
     },
     {
       "file": "HidSharp.dll",
@@ -30,8 +30,8 @@
     },
     {
       "file": "LICENSE.txt",
-      "bytes": 17098,
-      "sha256": "2684de17300e0a434686f1ec7f8af6045207a4b457a3fe04b2b9ce655e7c5d50"
+      "bytes": 16725,
+      "sha256": "1f256ecad192880510e84ad60474eab7589218784b9a50bc7ceee34c2b91f1d5"
     },
     {
       "file": "LibreHardwareMonitorLib.dll",
@@ -85,8 +85,8 @@
     },
     {
       "file": "THIRD-PARTY-LICENSES.txt",
-      "bytes": 26388,
-      "sha256": "c8ffa3402809c859a9a526903134868ccee8afac77e1a65be399ebb1c25fdc33"
+      "bytes": 25903,
+      "sha256": "b887094f525e7afd14cfae8319ff012700f641e07090da420031dbfac31de1f0"
     }
   ]
 }
