@@ -40,14 +40,18 @@ test('freehand canvas can enter both generation and state-editing workflows', as
   assert.match(js, /exprData\[expressionId\]/);
 });
 
-test('expression editor starts with an actionable state and can load the active skin', async () => {
+test('expression editor starts with an actionable state and can load one image into all states', async () => {
   const [html, js] = await Promise.all([
     source('src/custom/index.html'),
     source('src/custom/custom.js'),
   ]);
   assert.match(html, /id="loadActiveSkinBtn"/);
+  assert.match(html, /载入一张皮肤到各态/);
   assert.match(js, /selectExpression\('idle'\)/);
-  assert.match(js, /skinGetCurrent/);
+  // The button was repurposed: it no longer reads the currently active skin,
+  // it picks one image and clones it into every expression state.
+  assert.match(js, /_loadOneToAll/);
+  assert.match(js, /cloneGrid\(grid\)/);
   assert.match(js, /loadSkinFramesIntoExpressionEditor/);
   assert.match(js, /skinGetFrames/);
 });

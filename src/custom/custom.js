@@ -1058,15 +1058,10 @@
     return loaded;
   }
 
-  document.getElementById('loadActiveSkinBtn')?.addEventListener('click', async () => {
-    try {
-      const current = await window.electronAPI?.skinGetCurrent?.();
-      if (!current?.success) throw new Error(current?.error || '没有找到当前皮肤');
-      const loaded = await loadSkinFramesIntoExpressionEditor(current);
-      setStatus(`已载入当前皮肤 ${current.skinId} 的 ${loaded} 个状态`);
-    } catch (error) {
-      setStatus(`载入当前皮肤失败：${error.message}`);
-    }
+  document.getElementById('loadActiveSkinBtn')?.addEventListener('click', () => {
+    // Repurposed: pick ONE image and load it into every expression state.
+    _loadOneToAll = true;
+    skinFilesInput?.click();
   });
 
   skinFilesInput?.addEventListener('change', (e) => {
@@ -1142,6 +1137,48 @@
       finishSkinLoad();
     }
 
+    // ── Load ONE image into ALL expression states ──
+    if (_loadOneToAll) {
+      _loadOneToAll = false;
+      const file = files[0];
+      if (file) {
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+          const img = new Image();
+          img.onload = () => {
+            let targetSize = Math.max(img.width, img.height);
+            if (resMode === 'custom') targetSize = customResSize;
+            const grid = imageToGrid(img, targetSize);
+            EXPRESSIONS.forEach(exp => {
+              exprData[exp.id] = { grid: cloneGrid(grid), size: targetSize, loaded: true };
+            });
+            refreshAllThumbnails();
+            // Refresh the editor if an expression is currently selected
+            if (currentExprId && exprData[currentExprId]) {
+              pixelGrid = cloneGrid(exprData[currentExprId].grid);
+              requestAnimationFrame(function () {
+                exprPixelScale = getExprBaseScale();
+                exprZoomPercent = 100;
+                exprZoomLabel.textContent = '100%';
+                resetExprPan();
+                resizeExprCanvas();
+              });
+            }
+            const modeLabel = resMode === 'custom' ? ' → 缩放至 ' + customResSize + '×' + customResSize : '';
+            setStatus('✅ 已将图片载入所有状态 (' + targetSize + '×' + targetSize + ')' + modeLabel);
+            skinFilesInput.value = '';
+          };
+          img.onerror = () => {
+            setStatus('❌ 读取图片失败: ' + file.name);
+            skinFilesInput.value = '';
+          };
+          img.src = ev.target.result;
+        };
+        reader.readAsDataURL(file);
+      }
+      return;
+    }
+
     Array.from(files).forEach(file => {
       // If loading into current expression, skip filename matching
       if (_loadToCurrentExpr) {
@@ -1151,26 +1188,27 @@
             const img = new Image();
             img.onload = () => {
               const size = Math.max(img.width, img.height);
-              const grid = createEmptyGrid(size);
-              const tmpCanvas = document.createElement('canvas');
-              tmpCanvas.width = img.width;
-              tmpCanvas.height = img.height;
-              const tmpCtx = tmpCanvas.getContext('2d');
-              tmpCtx.imageSmoothingEnabled = false;
-              tmpCtx.drawImage(img, 0, 0);
-              const imageData = tmpCtx.getImageData(0, 0, img.width, img.height);
-              for (let y = 0; y < img.height; y++) {
-                for (let x = 0; x < img.width; x++) {
-                  const i = (y * img.width + x) * 4;
-                  const a = imageData.data[i + 3];
-                  if (a > 128) {
-                    grid[y][x] = 'rgb(' + imageData.data[i] + ',' + imageData.data[i + 1] + ',' + imageData.data[i + 2] + ')';
-                  }
-                }
-              }
+              // Use the shared sampler so scaling/positioning stays consistent
+              // with loadSkinFramesIntoExpressionEditor (scales to fill the square).
+              const grid = imageToGrid(img, size);
               exprData[currentExprId] = { grid, size, loaded: true };
+              // Sync the editor buffer so switching expressions doesn't overwrite
+              // the just-loaded frame with the stale pixelGrid (which previously
+              // let the old/default skin leak back into this state).
+              pixelGrid = cloneGrid(grid);
               refreshAllThumbnails();
+              requestAnimationFrame(function () {
+                exprPixelScale = getExprBaseScale();
+                exprZoomPercent = 100;
+                exprZoomLabel.textContent = '100%';
+                resetExprPan();
+                resizeExprCanvas();
+              });
               setStatus('✅ 已加载到 ' + currentExprId + ' (' + size + '×' + size + ')');
+              _loadToCurrentExpr = false;
+            };
+            img.onerror = () => {
+              setStatus('❌ 读取图片失败: ' + file.name);
               _loadToCurrentExpr = false;
             };
             img.src = ev.target.result;
@@ -1904,6 +1942,7 @@
 
   // Reuse the existing skinFilesInput for file picking
   let _loadToCurrentExpr = false;
+  let _loadOneToAll = false;
   loadCurrentSkinBtn?.addEventListener('click', () => {
     if (!currentExprId) {
       setStatus('⚠ 请先点击一个表情卡片（如 idle/hover/pull）选中它');
