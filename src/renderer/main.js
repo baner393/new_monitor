@@ -526,8 +526,10 @@ function setAnchorMode(nextMode) {
     console.log(`[Charm] anchor mode → top (rope ${physics.restRopeLength})`);
   }
 
-  // 无论切换来源（托盘/设置同步），都把「新模式绳长」持久化——
-  // settings-changed 回环会再次进入 applySettings，同值幂等，不会成环。
+  // 无论切换来源（托盘/设置同步），都把新模式与「新模式绳长」一并持久化——
+  // 只写 ropeLength 的话，回环广播会带着旧 anchorMode 把切换翻回去。
+  // settings-changed 回环再次进入 applySettings 时同值幂等，不会成环。
+  window.electronAPI.settings.set('anchorMode', nextMode);
   window.electronAPI.settings.set('ropeLength', physics.restRopeLength);
   window.electronAPI.settings.save();
 }

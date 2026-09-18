@@ -809,7 +809,14 @@ app.whenReady().then(() => {
   });
   stopCharmHook = startCharmHook({
     onPhase: (phase) => {
-      // 渲染进程消费 down/up 相位驱动环形菜单；显隐占位语义已移除。
+      // 窗口隐藏（托盘/环菜单 hide）后的第一次按压 = 恢复显示，不开环——
+      // 否则环画在不可见窗口里，用户将没有任何键盘途径找回宠物。
+      if (phase === 'down' && mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) {
+        mainWindow.show();
+        charmTray?.rebuild();
+        console.log('[Charm] visibility restored by hotkey');
+        return;
+      }
       sendToMainWindow('charm-hotkey', { phase });
     },
   });
