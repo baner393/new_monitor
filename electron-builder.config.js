@@ -22,6 +22,13 @@ module.exports = {
     '.vite/**/*',
     'assets/icon.png',
     'package.json',
+    // 键盘钩子（Ctrl+Alt+A）的 napi 原生包：vite external 后运行时 require。
+    // .node 二进制由 electron-builder smartUnpack 自动落到 app.asar.unpacked；
+    // 只带 win32-x64 prebuild（其余平台二进制占掉绝大部分体积）。
+    'node_modules/uiohook-napi/dist/**/*',
+    'node_modules/uiohook-napi/package.json',
+    'node_modules/uiohook-napi/prebuilds/win32-x64/**/*',
+    'node_modules/node-gyp-build/**/*',
   ],
   extraResources: [
     {
