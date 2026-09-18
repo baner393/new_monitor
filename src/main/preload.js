@@ -161,6 +161,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener('open-onboarding', listener);
   },
 
+  /**
+   * Subscribe to global charm hotkey phases from the low-level keyboard hook
+   * (Ctrl+Alt+A hold/release). payload = { phase: 'down' | 'up' }.
+   * @param {(payload: { phase: string }) => void} callback
+   * @returns {() => void} unsubscribe function
+   */
+  onCharmHotkey: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on('charm-hotkey', listener);
+    return () => ipcRenderer.removeListener('charm-hotkey', listener);
+  },
+
   /** Notify an awaiting guide after the native context menu has closed. */
   onContextMenuClosed: (callback) => {
     const listener = () => callback();

@@ -35,6 +35,8 @@ import {
   normalizeClaudeIntegrationConfig,
 } from '../shared/claude-integration.js';
 import { loadSubscriptionConfig, SubscriptionRuntime } from './subscription-runtime.js';
+import { createCharmTray } from './charm-tray.js';
+import { startCharmHook } from './charm-hook.js';
 
 let mainWindow;
 let customWindow;
@@ -46,6 +48,8 @@ let claudeMonitor;
 let subscriptionRuntime;
 let mainWindowInputGuard;
 let mainWindowRefreshCoordinator;
+let charmTray = null;
+let stopCharmHook = null;
 let pendingWindowRecovery = null;
 let pendingGridData = null;
 let pendingRegionImage = null; // temp storage for region marker image data
@@ -536,6 +540,48 @@ ipcMain.handle('skin-list-get', async () => {
   };
 });
 
+function sendToMainWindow(channel, payload) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send(channel, payload);
+  }
+}
+
+function toggleCharmVisibility() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isVisible()) {
+    mainWindow.hide();
+  } else {
+    mainWindow.show();
+  }
+  console.log(`[Charm] visibility toggled → ${mainWindow.isVisible() ? 'shown' : 'hidden'}`);
+  charmTray?.rebuild();
+}
+
+function dispatchCharmTrayAction(id) {
+  switch (id) {
+    case 'toggle-visibility':
+      toggleCharmVisibility();
+      break;
+    case 'refresh':
+      requestMainWindowSoftRefresh();
+      break;
+    case 'open-settings':
+    case 'open-skin-selector':
+    case 'open-subscription':
+    case 'open-onboarding':
+      sendToMainWindow(id);
+      break;
+    case 'open-custom-mode':
+      openCustomMode();
+      break;
+    case 'quit':
+      app.quit();
+      break;
+    default:
+      break;
+  }
+}
+
 function createWindow({ show = true } = {}) {
   // Get screen dimensions for full-screen transparent window
   const primaryDisplay = screen.getPrimaryDisplay();
@@ -736,6 +782,25 @@ app.whenReady().then(() => {
   codexMonitor.start();
   claudeMonitor.start();
   createWindow();
+
+  // 托盘 + 低级键盘钩子：挂饰模式全程 click-through 后的非点击保底入口。
+  charmTray = createCharmTray({
+    iconPath: path.join(__dirname, '..', '..', 'assets', 'icon.png'),
+    handlers: dispatchCharmTrayAction,
+    isVisible: () => Boolean(mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()),
+    isCreatorAccess: hasCreatorAccess,
+  });
+  stopCharmHook = startCharmHook({
+    onPhase: (phase) => {
+      // 渲染进程从步骤①起就能收到 down/up 相位（环形菜单在步骤③消费）。
+      sendToMainWindow('charm-hotkey', { phase });
+      // 占位语义：一次完整按压 = 显隐切换。环形菜单接管松手语义后移除这一行。
+      if (phase === 'up') {
+        toggleCharmVisibility();
+      }
+    },
+  });
+
   powerMonitor.on('on-battery', () => systemMonitor?.setActivityState({ onBattery: true }));
   powerMonitor.on('on-ac', () => systemMonitor?.setActivityState({ onBattery: false }));
   powerMonitor.on('suspend', () => systemMonitor?.setActivityState({ suspended: true }));
@@ -1388,6 +1453,14 @@ app.on('window-all-closed', () => {
 app.on('before-quit', () => {
   codexMonitor?.stop();
   claudeMonitor?.stop();
+  if (stopCharmHook) {
+    stopCharmHook();
+    stopCharmHook = null;
+  }
+  if (charmTray) {
+    charmTray.tray.destroy();
+    charmTray = null;
+  }
   if (canvasWindow && !canvasWindow.isDestroyed()) {
     canvasWindow.destroy();
     canvasWindow = null;

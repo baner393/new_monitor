@@ -19,7 +19,7 @@ export default defineConfig({
         format: 'cjs',
         entryFileNames: 'index.js',
       },
-      external: ['electron', 'child_process', 'path', 'fs', 'os'],
+      external: ['electron', 'child_process', 'path', 'fs', 'os', 'uiohook-napi'],
     },
   },
   ssr: {

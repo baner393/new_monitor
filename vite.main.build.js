@@ -18,7 +18,7 @@ export default defineConfig({
       fileName: () => 'index.js',
     },
     rollupOptions: {
-      external: ['electron', 'child_process', 'path', 'fs', 'os'],
+      external: ['electron', 'child_process', 'path', 'fs', 'os', 'uiohook-napi'],
     },
     outDir: '.vite/build',
     emptyOutDir: true,
