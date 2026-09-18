@@ -173,6 +173,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener('charm-hotkey', listener);
   },
 
+  /** Request the custom (developer) mode; the main process gates on creator access. */
+  requestCustomMode: () => {
+    ipcRenderer.send('custom-mode-request');
+  },
+
+  /** Ask the main process to hide the pet window (ring menu "hide" action). */
+  requestCharmHide: () => {
+    ipcRenderer.send('charm-visibility-hide');
+  },
+
   /** Notify an awaiting guide after the native context menu has closed. */
   onContextMenuClosed: (callback) => {
     const listener = () => callback();

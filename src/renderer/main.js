@@ -27,6 +27,8 @@ import { resolveAmbientSwingEnabled } from '../shared/pet-settings-model.js';
 import { ANCHOR_MODES, DEFAULT_ROPE_LENGTHS } from '../shared/anchor-model.js';
 import { resolveMousePassthrough } from './mouse-passthrough.js';
 import { CharmAnchorSampler } from './charm-anchor.js';
+import { RingMenu } from './ring-menu.js';
+import { preloadRingIconTextures } from './ring-icons.js';
 
 // ── Font loading gate ─────────────────────────────────────────────────
 async function waitForFonts() {
@@ -166,6 +168,12 @@ const codexWorkGraphics = new PIXI.Graphics();
 pixiApp.stage.addChild(codexParticleGraphics);
 pixiApp.stage.addChild(codexWorkGraphics);
 pixiApp.stage.addChild(codexStatusGraphics);
+
+// ── Ring menu（环形菜单，最顶层）─────────────────────────────────────
+preloadRingIconTextures();
+const ringMenu = new RingMenu({ getRadius: () => physics.restRopeLength });
+pixiApp.stage.addChild(ringMenu.container);
+pixiApp.stage.addChild(ringMenu.labelContainer);
 const codexParticles = [];
 const reducedMotionQuery = window.matchMedia?.('(prefers-reduced-motion: reduce)');
 
@@ -492,6 +500,11 @@ function charmAnchorFrozen() {
     || codexCompanion.capturesOutsideClicks;
 }
 
+/** 监控面板生命周期（EXPANDING→PANEL_OPEN→COLLAPSING）期间锚点同样冻结。 */
+function monitorPanelStateActive(state) {
+  return ['EXPANDING', 'HAPPY', 'PANEL_OPEN', 'COLLAPSING'].includes(state);
+}
+
 function setAnchorMode(nextMode) {
   if (nextMode !== ANCHOR_MODES.TOP && nextMode !== ANCHOR_MODES.CURSOR) return;
   if (nextMode === charmState.mode) return;
@@ -518,6 +531,86 @@ function setAnchorMode(nextMode) {
   window.electronAPI.settings.set('ropeLength', physics.restRopeLength);
   window.electronAPI.settings.save();
 }
+
+// ── Ring menu 交互（角色互换模型）────────────────────────────────────
+// Ctrl+Alt+A 按住开环（宠物钉死为圆心），松手按方位角触发。不新增状态机
+// 状态（设计文档 §5.9.7）：环是 overlay，PANEL_OPEN 下也要能开。
+
+function ringMenuBlockedByPanels() {
+  return settingsPanel.isOpen || settingsPanel.isAnimating
+    || subscriptionPanel.isOpen || skinSelector.isOpen
+    || codexCompanion.capturesOutsideClicks;
+}
+
+function ringMenuCursor() {
+  return charmAnchorSampler.sample() || lastCursorPosition;
+}
+
+function openRingMenu() {
+  if (ringMenu.isOpen || ringMenuBlockedByPanels()) return;
+  const state = stateMachine.getState();
+  if (['PULLING', 'PULLEY_DRAG', 'BOUNCING', 'EXPANDING', 'COLLAPSING'].includes(state)) return;
+  // 求值顺序陷阱（mockup openRing）：先取宠物位置，再开环
+  ringMenu.open({ x: sprite.x, y: sprite.y }, ringMenuCursor());
+  console.log(`[Ring] open at (${sprite.x.toFixed(0)}, ${sprite.y.toFixed(0)})`);
+}
+
+function dispatchRingAction(actionId) {
+  switch (actionId) {
+    case 'panel':
+      console.log('[Ring] act: panel → EXPANDING');
+      stateMachine.transition('OPEN_PANEL');
+      break;
+    case 'settings':
+      openSettingsPanel();
+      break;
+    case 'skin':
+      if (settingsPanel.isOpen || settingsPanel.isAnimating) settingsPanel.close();
+      if (subscriptionPanel.isOpen) subscriptionPanel.close();
+      skinSelector.open?.();
+      requestAnimationFrame(() => synchronizeMousePassthroughFromSystem(true));
+      break;
+    case 'hide':
+      window.electronAPI.requestCharmHide?.();
+      break;
+    case 'sub':
+      openSubscriptionPanel();
+      break;
+    case 'mode':
+      setAnchorMode(isCharmMode() ? ANCHOR_MODES.TOP : ANCHOR_MODES.CURSOR);
+      break;
+    case 'help':
+      if (settingsPanel.isOpen || settingsPanel.isAnimating) settingsPanel.close();
+      if (subscriptionPanel.isOpen) subscriptionPanel.close();
+      onboardingGuide.restart();
+      break;
+    case 'custom':
+      window.electronAPI.requestCustomMode?.();
+      break;
+    default:
+      break;
+  }
+}
+
+function closeRingMenu() {
+  if (!ringMenu.isOpen) return;
+  const result = ringMenu.close();
+  if (!result) return;
+  if (result.reason === 'hit') {
+    console.log(`[Ring] fire #${result.index} → ${result.action}`);
+    dispatchRingAction(result.action);
+  } else if (result.reason === 'mistap') {
+    console.log('[Ring] mistap → cancelled');
+  } else if (result.reason === 'dead-zone') {
+    console.log('[Ring] dead zone → cancelled');
+  }
+}
+
+window.electronAPI.onCharmHotkey?.(({ phase }) => {
+  if (phase === 'down') openRingMenu();
+  else if (phase === 'up') closeRingMenu();
+});
+if (import.meta.env.DEV) window.__ringMenuForDiagnostics = ringMenu;
 
 /**
  * Apply settings to the physics engine and renderer.
@@ -921,12 +1014,12 @@ function onStateChange() {
   }
 
   // ── Panel transitions ────────────────────────────────────────────
-  // BOUNCING → EXPANDING: pull exceeded threshold, open panel
-  if (prevState === 'BOUNCING' && newState === 'EXPANDING') {
+  // → EXPANDING: pull exceeded threshold (click flow) or ring menu panel action
+  if (newState === 'EXPANDING') {
     console.log('[Panel] EXPANDING — showing panel + HAPPY sprite');
     window.electronAPI.setMonitorActivity?.({ panelOpen: true });
-    // Position panel below the sprite
-    const anchorX = physics.screenAnchorX * window.innerWidth;
+    // Position panel below the sprite（挂饰锚点=光标滑轮；经典=顶边）
+    const anchorX = isCharmMode() ? physics.pulley.x : physics.screenAnchorX * window.innerWidth;
     panel.setPosition(anchorX, sprite.y + 80);
     panel.expand(() => {
       console.log('[Panel] Fully open → PANEL_OPEN');
@@ -1067,14 +1160,17 @@ pixiApp.ticker.add((delta) => {
   );
 
   const isCharm = isCharmMode();
+  const ringOpen = ringMenu.isOpen;
 
   // Update physics (skipped during PULLING and BOUNCING)
-  if (!isCharm) {
+  if (ringOpen) {
+    // 环形菜单开环：宠物钉死为圆心，全部物理静置（角色互换模型）
+  } else if (!isCharm) {
     physics.updatePendulum(dt);
     physics.updatePulleyMomentum(dt);
   } else {
-    // 挂饰模式：光标驱动滑轮（面板打开时冻结），乌龟跑同一套 2D 方程
-    if (!charmAnchorFrozen()) {
+    // 挂饰模式：光标驱动滑轮（面板打开/面板态冻结锚点），乌龟跑同一套 2D 方程
+    if (state === 'IDLE' && !charmAnchorFrozen() && !monitorPanelStateActive(state)) {
       const cursor = charmAnchorSampler.sample();
       if (cursor) physics.setCharmAnchor(cursor);
     }
@@ -1090,6 +1186,9 @@ pixiApp.ticker.add((delta) => {
       _painCooldown -= dt;
     }
   }
+
+  // Ring menu 推进（开环 + 收环动画都走这里）
+  ringMenu.update(dt, ringMenuCursor(), performance.now());
 
   // Update panel animation
   panel.updateAnimation(dt);
@@ -1299,7 +1398,14 @@ pixiApp.ticker.add((delta) => {
     sprite.y = pendulumY;
   }
 
+  // Ring menu 开环：宠物钉死在圆心（覆盖一切状态分支的位置输出）
+  if (ringOpen && ringMenu.ringCenter) {
+    sprite.x = ringMenu.ringCenter.x;
+    sprite.y = ringMenu.ringCenter.y;
+  }
+
   const codexMotionEnabled = (state === 'IDLE' || state === 'HOVER')
+    && !ringMenu.isOpen
     && !settingsPanel.isOpen
     && !settingsPanel.isAnimating
     && !subscriptionPanel.isOpen
@@ -1386,6 +1492,17 @@ pixiApp.ticker.add((delta) => {
     ropeAnchorY = physics.pulley.y;
   }
 
+  // Ring menu 开环：绳锚点被牵在圆上（角色互换）
+  let ringAnchorApplied = false;
+  if (ringOpen) {
+    const ringAnchor = ringMenu.ropeAnchor;
+    if (ringAnchor) {
+      ropeAnchorX = ringAnchor.x;
+      ropeAnchorY = ringAnchor.y;
+      ringAnchorApplied = true;
+    }
+  }
+
   const sag = RopeRenderer.calcSagAmount(
     physics.ropeLength,
     physics.pendulumOmega,
@@ -1407,7 +1524,7 @@ pixiApp.ticker.add((delta) => {
 
   // Charm mode: same tension term, plus a whip term driven by the turtle's
   // angular velocity around the anchor (系数照抄原版 omega*5 / 上限 15).
-  if (isCharm && state === 'IDLE') {
+  if (isCharm && state === 'IDLE' && !ringOpen) {
     const dx = sprite.x - ropeAnchorX;
     const dy = sprite.y - ropeAnchorY;
     const dist = Math.sqrt(dx * dx + dy * dy);
@@ -1416,6 +1533,11 @@ pixiApp.ticker.add((delta) => {
     const omegaTurtle = Math.abs(physics.turtle.vx * -dy + physics.turtle.vy * dx) / Math.max(1, dist * dist);
     const whip = Math.min(omegaTurtle * 5, 15);
     adjustedSag = (sag + whip) * Math.max(0.1, 1 - tension * 0.8);
+  }
+
+  // Ring menu 开环期：固定小垂度（钉死无摆动，mockup 同款）
+  if (ringAnchorApplied) {
+    adjustedSag = ringMenu.openSag;
   }
 
   ropeRenderer.draw(ropeAnchorX, ropeAnchorY, sprite.x, sprite.y, adjustedSag, ROPE_WIDTH);

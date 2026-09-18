@@ -702,7 +702,7 @@ function createWindow({ show = true } = {}) {
   // Listen for console messages from renderer (new API)
   browserWindow.webContents.on('console-message', (event) => {
     const message = event.message;
-    if (message.includes('[BOUNCE]') || message.includes('[Input]') || message.includes('[GameLoop]') || message.includes('[FPS]') || message.includes('[Skin]') || message.includes('[SkinSelector]')) {
+    if (message.includes('[BOUNCE]') || message.includes('[Input]') || message.includes('[GameLoop]') || message.includes('[FPS]') || message.includes('[Skin]') || message.includes('[SkinSelector]') || message.includes('[Charm]') || message.includes('[Ring]')) {
       console.log(`[RENDERER] ${message}`);
     }
   });
@@ -809,12 +809,8 @@ app.whenReady().then(() => {
   });
   stopCharmHook = startCharmHook({
     onPhase: (phase) => {
-      // 渲染进程从步骤①起就能收到 down/up 相位（环形菜单在步骤③消费）。
+      // 渲染进程消费 down/up 相位驱动环形菜单；显隐占位语义已移除。
       sendToMainWindow('charm-hotkey', { phase });
-      // 占位语义：一次完整按压 = 显隐切换。环形菜单接管松手语义后移除这一行。
-      if (phase === 'up') {
-        toggleCharmVisibility();
-      }
     },
   });
 
@@ -836,13 +832,24 @@ ipcMain.on('set-ignore-mouse', (event, ignore, generation) => {
   }
 });
 
+// IPC: ring menu "custom" action — creator gating lives in the main process
+ipcMain.on('custom-mode-request', (event) => {
+  if (mainWindow && event.sender === mainWindow.webContents && hasCreatorAccess()) {
+    openCustomMode();
+  }
+});
+
+// IPC: ring menu "hide" action
+ipcMain.on('charm-visibility-hide', () => {
+  toggleCharmVisibility();
+});
+
 ipcMain.handle('renderer-input-generation-get', (event) => {
   if (!mainWindow || event.sender !== mainWindow.webContents) return null;
   return mainWindowInputGuard?.generation ?? null;
 });
 
-ipcMain.on('renderer-input-ready', (event, ignore, generation) => {
-  if (mainWindow && event.sender === mainWindow.webContents) {
+ipcMain.on('renderer-input-ready', (event, ignore, generation) => {  if (mainWindow && event.sender === mainWindow.webContents) {
     const accepted = mainWindowInputGuard?.markRendererReady(ignore, generation);
     console.log(`[Window] Renderer input generation ${mainWindowInputGuard?.generation} ready; passthrough=${Boolean(ignore)} accepted=${Boolean(accepted)}`);
     if (accepted) completeWindowRecovery(mainWindow);
