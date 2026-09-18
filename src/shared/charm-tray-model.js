@@ -8,6 +8,8 @@
 
 export const CHARM_TRAY_ITEM_IDS = [
   'toggle-visibility',
+  'mode-top',
+  'mode-cursor',
   'refresh',
   'open-settings',
   'open-skin-selector',
@@ -17,9 +19,12 @@ export const CHARM_TRAY_ITEM_IDS = [
   'quit',
 ];
 
-export function buildCharmTrayTemplate({ isVisible = true, creatorAccess = false } = {}) {
+export function buildCharmTrayTemplate({ isVisible = true, creatorAccess = false, anchorMode = 'top' } = {}) {
   return [
     { id: 'toggle-visibility', label: isVisible ? '隐藏挂饰' : '显示挂饰' },
+    { type: 'separator' },
+    { id: 'mode-top', label: '经典模式（顶边悬挂）', type: 'radio', checked: anchorMode === 'top' },
+    { id: 'mode-cursor', label: '挂饰模式（跟随鼠标）', type: 'radio', checked: anchorMode === 'cursor' },
     { type: 'separator' },
     { id: 'refresh', label: '刷新' },
     { id: 'open-settings', label: '设置' },

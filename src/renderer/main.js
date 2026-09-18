@@ -24,7 +24,9 @@ import { CodexMotionController, codexStatusSymbol } from './codex-motion.js';
 import { PANEL_DRAG_CONTEXT, resolvePanelDragContext, resolvePanelDragSettledState } from './panel-drag-context.js';
 import { CODEX_ACTIVITY } from '../shared/codex-integration.js';
 import { resolveAmbientSwingEnabled } from '../shared/pet-settings-model.js';
+import { ANCHOR_MODES, DEFAULT_ROPE_LENGTHS } from '../shared/anchor-model.js';
 import { resolveMousePassthrough } from './mouse-passthrough.js';
+import { CharmAnchorSampler } from './charm-anchor.js';
 
 // ── Font loading gate ─────────────────────────────────────────────────
 async function waitForFonts() {
@@ -459,17 +461,68 @@ async function loadAndApplySettings() {
     const saved = await window.electronAPI.settings.get();
     if (saved) {
       console.log('[Settings] Loaded saved settings:', saved);
-      applySettings(saved);
+      applySettings(saved, { isInitialLoad: true });
     }
   } catch (err) {
     console.warn('[Settings] Failed to load settings on startup:', err);
   }
 }
 
+// ── Anchor mode（经典顶边悬挂 / 挂饰跟随鼠标）─────────────────────────
+// ropeLength 是「当前模式的绳长」：切换模式时渲染端记住各自的值并持久化，
+// 避免经典 150 串进挂饰（挂饰默认 80）。
+const charmAnchorSampler = new CharmAnchorSampler();
+const charmState = {
+  mode: ANCHOR_MODES.TOP,
+  ropeLengths: {
+    [ANCHOR_MODES.TOP]: DEFAULT_ROPE_LENGTHS[ANCHOR_MODES.TOP],
+    [ANCHOR_MODES.CURSOR]: DEFAULT_ROPE_LENGTHS[ANCHOR_MODES.CURSOR],
+  },
+};
+
+function isCharmMode() {
+  return charmState.mode === ANCHOR_MODES.CURSOR;
+}
+
+// 面板打开期间光标必然去操作面板内容，锚点必须冻结在原位，否则宠物会
+// 跟着光标撞进面板；乌龟方程继续跑，宠物自然垂稳。
+function charmAnchorFrozen() {
+  return settingsPanel.isOpen || settingsPanel.isAnimating
+    || subscriptionPanel.isOpen || skinSelector.isOpen
+    || codexCompanion.capturesOutsideClicks;
+}
+
+function setAnchorMode(nextMode) {
+  if (nextMode !== ANCHOR_MODES.TOP && nextMode !== ANCHOR_MODES.CURSOR) return;
+  if (nextMode === charmState.mode) return;
+  charmState.mode = nextMode;
+
+  if (nextMode === ANCHOR_MODES.CURSOR) {
+    const cursor = charmAnchorSampler.sample() || lastCursorPosition
+      || { x: window.innerWidth / 2, y: window.innerHeight / 2 };
+    physics.enterCharmMode({ turtleX: sprite.x, turtleY: sprite.y, cursor });
+    physics.ropeLength = charmState.ropeLengths[ANCHOR_MODES.CURSOR];
+    physics.restRopeLength = charmState.ropeLengths[ANCHOR_MODES.CURSOR];
+    console.log(`[Charm] anchor mode → cursor (rope ${physics.restRopeLength})`);
+  } else {
+    physics.exitCharmMode();
+    physics.ropeLength = charmState.ropeLengths[ANCHOR_MODES.TOP];
+    physics.restRopeLength = charmState.ropeLengths[ANCHOR_MODES.TOP];
+    physics.pendulumAngle = 0;
+    physics.pendulumOmega = 0;
+    console.log(`[Charm] anchor mode → top (rope ${physics.restRopeLength})`);
+  }
+
+  // 无论切换来源（托盘/设置同步），都把「新模式绳长」持久化——
+  // settings-changed 回环会再次进入 applySettings，同值幂等，不会成环。
+  window.electronAPI.settings.set('ropeLength', physics.restRopeLength);
+  window.electronAPI.settings.save();
+}
+
 /**
  * Apply settings to the physics engine and renderer.
  */
-function applySettings(settings) {
+function applySettings(settings, { isInitialLoad = false } = {}) {
   if (settings.gravity !== undefined) physics.gravity = settings.gravity;
   if (settings.damping !== undefined) physics.damping = settings.damping;
   if (settings.pulleyFriction !== undefined) physics.pulleyFriction = settings.pulleyFriction;
@@ -500,11 +553,29 @@ function applySettings(settings) {
     console.log(`[Settings] Turtle size: ${settings.turtleSize}, scale: ${scale.toFixed(2)} (baseSize: ${currentSkinBaseSize})`);
   }
   
-  // Handle ropeLength - update default rope length in physics
-  if (settings.ropeLength !== undefined) {
+  // Handle anchorMode FIRST — switching modes re-seeds physics positions and
+  // rope length. A mode-switch broadcast carries the *previous* mode's
+  // ropeLength (the write-back lands after the broadcast was snapshotted), so
+  // on a switch frame the ropeLength below must be ignored, then re-persisted.
+  // On the initial load the saved pair (anchorMode, ropeLength) is consistent.
+  const switchingMode = !isInitialLoad
+    && settings.anchorMode !== undefined
+    && settings.anchorMode !== charmState.mode;
+  if (settings.anchorMode !== undefined) {
+    setAnchorMode(settings.anchorMode);
+  }
+
+  if (settings.ropeLength !== undefined && !switchingMode) {
+    charmState.ropeLengths[charmState.mode] = settings.ropeLength;
     physics.ropeLength = settings.ropeLength;
     physics.restRopeLength = settings.ropeLength;
-    console.log(`[Settings] Rope length: ${settings.ropeLength}`);
+    console.log(`[Settings] Rope length (${charmState.mode}): ${settings.ropeLength}`);
+  }
+
+  if (switchingMode) {
+    // Persist the new mode's rope length; the echo broadcast is same-value idempotent.
+    window.electronAPI.settings.set('ropeLength', physics.restRopeLength);
+    window.electronAPI.settings.save();
   }
 }
 
@@ -569,7 +640,9 @@ function applyMousePassthrough(ignore, force = false) {
 function synchronizeMousePassthrough(x, y, force = false) {
   const state = stateMachine.getState();
   const bounds = bodySprite.getBounds();
-  const overSprite = isPointWithinBounds(bounds, x, y, PET_HIT_PADDING);
+  // 挂饰模式下宠物贴着光标走，overSprite 恒真会把窗口切成可交互吃掉桌面
+  // 点击——挂饰全程 click-through，宠物本体不参与命中测试。
+  const overSprite = !isCharmMode() && isPointWithinBounds(bounds, x, y, PET_HIT_PADDING);
   const overCodex = codexCompanion.containsPoint(x, y);
   const overOnboarding = onboardingGuide.containsPoint(x, y);
   const ignore = resolveMousePassthrough({
@@ -603,7 +676,10 @@ async function synchronizeMousePassthroughFromSystem(force = false, announceRead
   mouseSyncInFlight = true;
   try {
     const cursor = await window.electronAPI.getCursorPosition();
-    if (cursor) lastCursorPosition = cursor;
+    if (cursor) {
+      lastCursorPosition = cursor;
+      charmAnchorSampler.noteScreenCursor(cursor.x, cursor.y);
+    }
     const ignore = cursor ? synchronizeMousePassthrough(cursor.x, cursor.y, force) : true;
     if (!cursor) window.electronAPI.setIgnoreMouseEvents(true);
     if (announceReady) window.electronAPI.markRendererInputReady(ignore);
@@ -620,6 +696,7 @@ async function synchronizeMousePassthroughFromSystem(force = false, announceRead
 
 document.addEventListener('mousemove', (event) => {
   lastCursorPosition = { x: event.clientX, y: event.clientY };
+  charmAnchorSampler.noteWindowCursor(event.clientX, event.clientY);
   synchronizeMousePassthrough(event.clientX, event.clientY);
 });
 
@@ -989,9 +1066,30 @@ pixiApp.ticker.add((delta) => {
     monitorFollowPanelOpen || codexCompanion.isFollowPanelOpen,
   );
 
+  const isCharm = isCharmMode();
+
   // Update physics (skipped during PULLING and BOUNCING)
-  physics.updatePendulum(dt);
-  physics.updatePulleyMomentum(dt);
+  if (!isCharm) {
+    physics.updatePendulum(dt);
+    physics.updatePulleyMomentum(dt);
+  } else {
+    // 挂饰模式：光标驱动滑轮（面板打开时冻结），乌龟跑同一套 2D 方程
+    if (!charmAnchorFrozen()) {
+      const cursor = charmAnchorSampler.sample();
+      if (cursor) physics.setCharmAnchor(cursor);
+    }
+    physics.updateCharmStep(dt);
+
+    // 疼表情：与 PULLEY_PHYSICS 分支同一通道（状态分支链之外）
+    if (physics._justCollided && _painCooldown <= 0) {
+      physics._justCollided = false;
+      _showPainTimer = 0.4;
+      _painCooldown = 0.8;
+    }
+    if (_painCooldown > 0) {
+      _painCooldown -= dt;
+    }
+  }
 
   // Update panel animation
   panel.updateAnimation(dt);
@@ -999,9 +1097,10 @@ pixiApp.ticker.add((delta) => {
   // Update settings panel animation
   settingsPanel.updateAnimation(dt);
 
-  // Compute rope anchor (top of window; offset 50px down because window extends 50px above screen to hide white border)
-  const anchorX = physics.screenAnchorX * window.innerWidth;
-  const anchorY = 50;
+  // Compute rope anchor — charm: pulley = cursor (1:1); classic: top edge
+  // (offset 50px down because window extends 50px above screen to hide white border)
+  const anchorX = isCharm ? physics.pulley.x : physics.screenAnchorX * window.innerWidth;
+  const anchorY = isCharm ? physics.pulley.y : 50;
 
   // Calculate pull distance BEFORE updating physics
   const pullDist = (state === 'PULLING') ? 
@@ -1042,8 +1141,8 @@ pixiApp.ticker.add((delta) => {
   }
 
   // State-specific behavior
-  // ── Hover detection (IDLE ↔ HOVER) ──
-  if (state === 'IDLE' || state === 'HOVER') {
+  // ── Hover detection (IDLE ↔ HOVER) ── 挂饰模式全程穿透，宠物不可交互，跳过
+  if (!isCharm && (state === 'IDLE' || state === 'HOVER')) {
     let mx = 0, my = 0;
     try {
       const events = pixiApp.renderer && pixiApp.renderer.events;
@@ -1186,6 +1285,10 @@ pixiApp.ticker.add((delta) => {
     // Update panel position to follow sprite
     panel.setPosition(anchorX, sprite.y + 80);
     
+  } else if (isCharm) {
+    // 挂饰 IDLE：位置由乌龟物理给出（ticker 前段已步进）
+    sprite.x = physics.turtle.x;
+    sprite.y = physics.turtle.y;
   } else {
     // IDLE/HOVER - pendulum drives position
     // Rope return: 0.5s smoothstep animation to default length
@@ -1300,6 +1403,19 @@ pixiApp.ticker.add((delta) => {
     const tension = stretch / physics.restRopeLength; // 0 ~ 1+
     // Higher tension → less sag (rope becomes taut)
     adjustedSag = sag * Math.max(0.1, 1 - tension * 0.8);
+  }
+
+  // Charm mode: same tension term, plus a whip term driven by the turtle's
+  // angular velocity around the anchor (系数照抄原版 omega*5 / 上限 15).
+  if (isCharm && state === 'IDLE') {
+    const dx = sprite.x - ropeAnchorX;
+    const dy = sprite.y - ropeAnchorY;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    const stretch = Math.max(0, dist - physics.restRopeLength);
+    const tension = stretch / Math.max(1, physics.restRopeLength);
+    const omegaTurtle = Math.abs(physics.turtle.vx * -dy + physics.turtle.vy * dx) / Math.max(1, dist * dist);
+    const whip = Math.min(omegaTurtle * 5, 15);
+    adjustedSag = (sag + whip) * Math.max(0.1, 1 - tension * 0.8);
   }
 
   ropeRenderer.draw(ropeAnchorX, ropeAnchorY, sprite.x, sprite.y, adjustedSag, ROPE_WIDTH);

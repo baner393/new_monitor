@@ -121,6 +121,11 @@ function recreateMainWindow(reason) {
 
 // ── Chromium flags (must be before app.whenReady) ────────────
 app.commandLine.appendSwitch('enable-transparent-visuals');
+// DEV 诊断：设置 TURTLE_CDP_PORT 环境变量可开启 CDP 远程调试（运行时/视觉验证用），
+// 未设置时零影响。
+if (process.env.TURTLE_CDP_PORT) {
+  app.commandLine.appendSwitch('remote-debugging-port', process.env.TURTLE_CDP_PORT);
+}
 
 // ── Settings persistence ────────────────────────────────────────────
 // Use Electron's userData directory for reliable cross-platform persistence
@@ -130,6 +135,7 @@ const DEFAULT_MONITOR_PANEL = createDefaultMonitorPanelConfig();
 const DEFAULT_SETTINGS = {
   turtleSize:       64,
   ropeLength:       150,
+  anchorMode:       'top',  // 'top' = 经典顶边悬挂 | 'cursor' = 挂饰（跟随鼠标）
   gravity:          800,
   damping:          0.995,
   pulleyFriction:   0.92,
@@ -562,6 +568,16 @@ function dispatchCharmTrayAction(id) {
     case 'toggle-visibility':
       toggleCharmVisibility();
       break;
+    case 'mode-top':
+    case 'mode-cursor': {
+      const nextMode = id === 'mode-cursor' ? 'cursor' : 'top';
+      if (currentSettings.anchorMode !== nextMode) {
+        currentSettings.anchorMode = nextMode;
+        saveSettings(); // settings-changed 广播给渲染进程 → applyAnchorMode
+      }
+      charmTray?.rebuild();
+      break;
+    }
     case 'refresh':
       requestMainWindowSoftRefresh();
       break;
@@ -789,6 +805,7 @@ app.whenReady().then(() => {
     handlers: dispatchCharmTrayAction,
     isVisible: () => Boolean(mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()),
     isCreatorAccess: hasCreatorAccess,
+    getAnchorMode: () => currentSettings.anchorMode,
   });
   stopCharmHook = startCharmHook({
     onPhase: (phase) => {

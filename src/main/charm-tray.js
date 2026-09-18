@@ -15,6 +15,7 @@ export function createCharmTray({
   handlers,
   isVisible,
   isCreatorAccess,
+  getAnchorMode,
 }) {
   const tray = new Tray(iconPath);
   tray.setToolTip(tooltip);
@@ -23,6 +24,7 @@ export function createCharmTray({
     const template = buildCharmTrayTemplate({
       isVisible: isVisible ? isVisible() : true,
       creatorAccess: isCreatorAccess ? isCreatorAccess() : false,
+      anchorMode: getAnchorMode ? getAnchorMode() : 'top',
     }).map((item) => {
       if (item.type === 'separator') return item;
       return {

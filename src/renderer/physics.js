@@ -10,6 +10,7 @@
  */
 
 import { VelocityTracker } from './velocity-tracker.js';
+import { clampCharmAnchor } from '../shared/anchor-model.js';
 
 // ────────────────────────────────────────────
 // 物理常量
@@ -69,6 +70,12 @@ class PhysicsEngine {
       x: 0, y: 50,       // 像素坐标 (y=50 matches anchorY compensation)
       vx: 0,             // 水平速度 (px/s)
     }
+
+    // ── 挂饰模式（鼠标当滑轮）：锚点 = 光标 1:1，乌龟跑同一套 2D 方程 ──
+    // true 时：updatePendulum/updatePulleyMomentum 由调用方跳过；
+    // updateCharmStep 驱动乌龟；滑轮位置由 setCharmAnchor（光标）直接给定，
+    // 滑轮惯性/摩擦/边界段不参与，screenAnchorX 保持不动（切回经典原样恢复）。
+    this.charmMode = false
 
     // ── 甩动物理参数 ──
     this.ropeStiffness     = ROPE_STIFFNESS
@@ -202,6 +209,43 @@ class PhysicsEngine {
     // 安全 dt
     dt = Math.min(dt, 0.033) // 最大 33ms
 
+    const turtleSpeed = this._stepTurtlePhysics(dt)
+
+    // ── 滑轮物理 ──
+
+    // 摩擦
+    this.pulley.vx *= Math.pow(this.pulleyFriction, dt * 60)
+
+    // 积分滑轮位置
+    this.pulley.x += this.pulley.vx * dt
+
+    // 滑轮边界
+    const pulleyMargin = 50
+    if (this.pulley.x < pulleyMargin) {
+      this.pulley.x = pulleyMargin
+      this.pulley.vx = Math.abs(this.pulley.vx) * 0.5
+    }
+    if (this.pulley.x > this.windowWidth - pulleyMargin) {
+      this.pulley.x = this.windowWidth - pulleyMargin
+      this.pulley.vx = -Math.abs(this.pulley.vx) * 0.5
+    }
+
+    // 更新归一化锚点
+    this.screenAnchorX = this.pulley.x / this.windowWidth
+
+    // ── 停止检测 ──
+    const pulleySpeed = Math.abs(this.pulley.vx)
+    const totalEnergy = turtleSpeed + pulleySpeed
+
+    return totalEnergy
+  }
+
+  // ──────────────────────────────────────────
+  // 乌龟物理一步（重力 + 绳弹簧力 + 空气阻尼 + 碰撞）
+  // updatePulleyPhysics（右键甩动）与挂饰模式共用；方程与原版逐行一致。
+  // 返回乌龟速度模长（挂饰模式不参与滑轮，停止判定由调用方自理）。
+  // ──────────────────────────────────────────
+  _stepTurtlePhysics(dt) {
     // ── 乌龟物理 ──
 
     // 重力
@@ -287,34 +331,55 @@ class PhysicsEngine {
       this._justCollided = true
     }
 
-    // ── 滑轮物理 ──
+    return Math.sqrt(this.turtle.vx * this.turtle.vx + this.turtle.vy * this.turtle.vy)
+  }
 
-    // 摩擦
-    this.pulley.vx *= Math.pow(this.pulleyFriction, dt * 60)
+  // ──────────────────────────────────────────
+  // 挂饰模式一步：乌龟跑同一套 2D 方程，滑轮由光标直接驱动（无惯性）。
+  // 仅在 charmMode + IDLE 时生效；返回乌龟速度模长，未激活返回 undefined。
+  // ──────────────────────────────────────────
+  updateCharmStep(dt) {
+    if (!this.charmMode || this.state !== 'IDLE') return undefined
+    dt = Math.min(dt, 0.033)
+    return this._stepTurtlePhysics(dt)
+  }
 
-    // 积分滑轮位置
-    this.pulley.x += this.pulley.vx * dt
+  // ──────────────────────────────────────────
+  // 挂饰模式：光标驱动滑轮（锚点）。畸形采样整点丢弃并返回 false，
+  // 保持上一帧锚点——绝不让 NaN 进 pulley（NaN 会经绳弹簧污染乌龟）。
+  // ──────────────────────────────────────────
+  setCharmAnchor(cursor) {
+    const clamped = clampCharmAnchor(cursor, this.windowWidth, this.windowHeight)
+    if (!clamped) return false
+    this.pulley.x = clamped.x
+    this.pulley.y = clamped.y
+    return true
+  }
 
-    // 滑轮边界
-    const pulleyMargin = 50
-    if (this.pulley.x < pulleyMargin) {
-      this.pulley.x = pulleyMargin
-      this.pulley.vx = Math.abs(this.pulley.vx) * 0.5
-    }
-    if (this.pulley.x > this.windowWidth - pulleyMargin) {
-      this.pulley.x = this.windowWidth - pulleyMargin
-      this.pulley.vx = -Math.abs(this.pulley.vx) * 0.5
-    }
+  // ──────────────────────────────────────────
+  // 进入挂饰模式：乌龟从当前姿态无缝接管（弹簧自然过渡到光标下方）。
+  // ──────────────────────────────────────────
+  enterCharmMode({ turtleX, turtleY, cursor } = {}) {
+    this.charmMode = true
+    this.pendulumAngle = 0
+    this.pendulumOmega = 0
+    this.turtle.x = (typeof turtleX === 'number' && Number.isFinite(turtleX)) ? turtleX : this.pulley.x
+    this.turtle.y = (typeof turtleY === 'number' && Number.isFinite(turtleY)) ? turtleY : this.pulley.y
+    this.turtle.vx = 0
+    this.turtle.vy = 0
+    this.turtle.dragging = false
+    this.setCharmAnchor(cursor || { x: this.pulley.x, y: this.pulley.y })
+  }
 
-    // 更新归一化锚点
-    this.screenAnchorX = this.pulley.x / this.windowWidth
-
-    // ── 停止检测 ──
-    const turtleSpeed = Math.sqrt(this.turtle.vx * this.turtle.vx + this.turtle.vy * this.turtle.vy)
-    const pulleySpeed = Math.abs(this.pulley.vx)
-    const totalEnergy = turtleSpeed + pulleySpeed
-
-    return totalEnergy
+  // ──────────────────────────────────────────
+  // 退出挂饰模式：screenAnchorX 挂饰期间未被触碰，经典锚点原样恢复。
+  // ──────────────────────────────────────────
+  exitCharmMode() {
+    this.charmMode = false
+    this.pulley.x = this.screenAnchorX * this.windowWidth
+    this.pulley.y = 50
+    this.pulley.vx = 0
+    this.turtle.dragging = false
   }
 
   // ──────────────────────────────────────────

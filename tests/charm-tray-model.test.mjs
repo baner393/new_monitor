@@ -28,9 +28,17 @@ test('visibility label toggles between hide and show', () => {
   assert.equal(hidden.label, '显示挂饰');
 });
 
-test('template separates action groups with three separators', () => {
+test('template separates action groups with four separators', () => {
   const template = buildCharmTrayTemplate({ creatorAccess: false });
-  assert.equal(template.filter((item) => item.type === 'separator').length, 3);
+  assert.equal(template.filter((item) => item.type === 'separator').length, 4);
+});
+
+test('mode radio items reflect the current anchor mode', () => {
+  const template = buildCharmTrayTemplate({ anchorMode: 'cursor' });
+  const radios = template.filter((item) => item.type === 'radio');
+  assert.deepEqual(radios.map((r) => r.id), ['mode-top', 'mode-cursor']);
+  assert.equal(radios[0].checked, false);
+  assert.equal(radios[1].checked, true);
 });
 
 test('every non-separator item carries an id and a label', () => {
