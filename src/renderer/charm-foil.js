@@ -62,12 +62,20 @@ export function buildFoilAssets(skinFrame, grip = { x: 0.5, y: 0.12 }) {
   bctx.drawImage(skinFrame, 0, 0, S, SH);
   const baseData = bctx.getImageData(0, 0, S, SH);
 
-  // alpha / luma 场
+  // alpha / luma 场 + 可见像素紧致边界（侧棱贴可见轮廓而非帧缘）
   const alpha = new Float32Array(S * SH);
   const luma = new Float32Array(S * SH);
+  let minX = S, maxX = -1, minY = SH, maxY = -1;
   for (let i = 0; i < S * SH; i++) {
     alpha[i] = baseData.data[i * 4 + 3] / 255;
     luma[i] = (0.299 * baseData.data[i * 4] + 0.587 * baseData.data[i * 4 + 1] + 0.114 * baseData.data[i * 4 + 2]) / 255 * alpha[i];
+    if (alpha[i] > 0.1) {
+      const x = i % S, y = (i / S) | 0;
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+    }
   }
 
   // ── 箔面：暗场全息（source-atop 等效：只在 alpha 内出像素）──
@@ -154,7 +162,29 @@ export function buildFoilAssets(skinFrame, grip = { x: 0.5, y: 0.12 }) {
   }
   ectx.putImageData(eimg, 0, 0);
 
-  return { foil, band, edge, size: S, frameW: W, frameH: H, pad: EDGE_PAD, grip };
+  return {
+    foil, band, edge, size: S, frameW: W, frameH: H, pad: EDGE_PAD, grip,
+    // 可见像素紧致边界（源帧像素坐标）：厚度侧棱贴这个轮廓
+    tight: { lx: minX / FOIL_SCALE, rx: (maxX + 1) / FOIL_SCALE, ty: minY / FOIL_SCALE, by: (maxY + 1) / FOIL_SCALE },
+  };
+}
+
+/**
+ * 侧棱白闪纹理：中央亮白、两侧渐隐的竖条（ADD 混合叠加在厚度侧棱上，
+ * 翻转经过侧棱瞬间的「硬币闪光」）。
+ * @param {number} h 高度（与箔面同高）
+ */
+export function buildEdgeFlashTexture(h) {
+  const w = 16;
+  const c = makeCanvas(w, h);
+  const ctx = c.getContext('2d');
+  const g = ctx.createLinearGradient(0, 0, w, 0);
+  g.addColorStop(0, 'rgba(255,255,255,0)');
+  g.addColorStop(0.5, 'rgba(255,255,255,0.95)');
+  g.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, w, h);
+  return c;
 }
 
 /**
