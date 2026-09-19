@@ -1,79 +1,57 @@
 /**
- * charm-mount.js — 鼠标挂环（穿孔鼠标挂饰的金属钥匙扣环）绘制
+ * charm-mount.js — 鼠标挂环（穿孔鼠标挂饰的金属钥匙扣环）
  *
- * 视觉规格来自效果图 v3（.project-memory/proposals/charm-cursor-mockup.html）：
- * 金属感 = 沿弧分布的锐利镜面色带（高光带与暗部紧邻），不是柔和渐变。
+ * 质感方案：高质量 SVG（多段金属渐变 + 高光弧 + 内壁反光 + split-ring 开口
+ * 端面）经 data URL 渲染成 PIXI 纹理，运行时是纯 Sprite 贴图——每帧只改
+ * position，没有 Graphics 重绘/tessellation 开销。SVG 的渐变能力远超
+ * Graphics 逐段弧线，金属感由「斜跨线性渐变 + 顶部高光带 + 底部暗部 +
+ * 内外缘描边」合成（图标库式的少而精，避免细碎色带噪点）。
  *
- * 结构（环心为原点，外圈 r=6.5，管宽 ~2.4）：
- *   · 后弧外露段（右上 -60°~0°）：背光中暗 + 内侧高光线
- *   · 前弧（下半 0°~180°）：外缘暗描边 + 四段镜面色带
- *   · 内圈：暗内壁 + 55°~95° 反光亮线
- *   · 开口缝（右下 28°）+ 两枚管口端面亮椭圆
- *
- * 系统箭头光标绘制在 OS 硬件层，永远盖在窗口内容之上——环的左半会被
- * 箭头自然遮住（「穿在鼠标背后挂在边缘」的真实遮挡），因此这里只画
- * 效果图中的外露部分，孔和环左半无需绘制。
- *
- * 锚点约定：绳固定端（physics.pulley）= 环底 = 环心 + (0, +6.5)。
- * 光标到环心偏移 (15, 17)，即光标到绳锚点偏移 (15, 23.5)。
- * 环心放在箭头右缘外一点：系统光标盖住环的左半，右缘露出 C 形段。
+ * 锚点约定：绳固定端（physics.pulley）= 环底。纹理 44x44，环心 (22,22)，
+ * 环底 (22, 37.7)——Sprite anchor (0.5, 0.857) 使 position 即锚点。
+ * 光标到锚点偏移 (16, 27)。
  */
 
-export const CHARM_MOUNT_CENTER_OFFSET = { x: 15, y: 17 };
-export const CHARM_MOUNT_ANCHOR_OFFSET = { x: 15, y: 23.5 };
+import * as PIXI from 'pixi.js';
 
-const RING_R = 6.5;
-const RING_INNER_R = 4.6;
+export const CHARM_MOUNT_ANCHOR_OFFSET = { x: 16, y: 27 };
 
-const DEG = Math.PI / 180;
+const MOUNT_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 44 44">
+  <defs>
+    <linearGradient id="m" x1="0.9" y1="0.1" x2="0" y2="0.95">
+      <stop offset="0" stop-color="#f5f8fb"/>
+      <stop offset="0.35" stop-color="#c3ccd8"/>
+      <stop offset="0.65" stop-color="#7d8794"/>
+      <stop offset="1" stop-color="#414954"/>
+    </linearGradient>
+  </defs>
+  <circle cx="22" cy="22" r="13" fill="none" stroke="#171c24" stroke-width="7.5" stroke-opacity="0.9"/>
+  <path d="M 12.74 30.5 A 13 13 0 1 1 17.5 35.26" fill="none" stroke="url(#m)" stroke-width="5"/>
+  <circle cx="22" cy="22" r="15.7" fill="none" stroke="#2a313c" stroke-width="0.8"/>
+  <circle cx="22" cy="22" r="10.4" fill="none" stroke="#313945" stroke-width="1"/>
+  <path d="M 30.5 11.5 A 13 13 0 0 1 34.9 27.3" fill="none" stroke="#ffffff" stroke-opacity="0.85" stroke-width="1.8" stroke-linecap="round"/>
+  <path d="M 22.6 35.3 A 13 13 0 0 0 32.4 31.2" fill="none" stroke="#cdd5df" stroke-opacity="0.5" stroke-width="1" stroke-linecap="round"/>
+  <circle cx="12.74" cy="30.5" r="1.15" fill="#8d97a4"/>
+  <circle cx="17.5" cy="35.26" r="1.15" fill="#d5dce4"/>
+</svg>`;
 
-// 前弧四段镜面色带（0°=右，顺时针，y 向下；光源左上）
-const FRONT_SEGMENTS = [
-  { a0: 0, a1: 55, color: 0xdfe5ec },
-  { a0: 55, a1: 95, color: 0xf8fafc },
-  { a0: 95, a1: 137, color: 0x59616c },
-  { a0: 137, a1: 180, color: 0x3d444e },
-];
+// 光源在右：系统光标盖住环的左半，可见部分是右半+底部——高光带放在右侧
+// 弧段（-45°~75°）才能在遮挡后依然呈现金属亮面。
 
-/**
- * 在 (cx, cy)（环心）绘制金属挂环。每帧整体重绘由调用方的 Graphics 承担。
- */
-export function drawCharmMount(graphics, cx, cy) {
-  graphics.clear();
+let mountTexture = null;
 
-  // 前弧外缘暗描边（管壁截断感）
-  graphics.lineStyle(3.0, 0x242a33, 1);
-  graphics.arc(cx, cy, RING_R, 0, 180 * DEG);
-
-  // 后弧外露段（右上，背光面）+ 内侧高光
-  graphics.lineStyle(2.4, 0x7a8492, 1);
-  graphics.arc(cx, cy, RING_R, -60 * DEG, 0);
-  graphics.lineStyle(0.9, 0x9aa4b0, 1);
-  graphics.arc(cx, cy, RING_R - 0.35, -58 * DEG, -8 * DEG);
-
-  // 前弧四段镜面色带
-  for (const seg of FRONT_SEGMENTS) {
-    graphics.lineStyle(2.2, seg.color, 1);
-    graphics.arc(cx, cy, RING_R, seg.a0 * DEG, seg.a1 * DEG);
+function getMountTexture() {
+  if (!mountTexture) {
+    const dataUrl = `data:image/svg+xml;utf8,${encodeURIComponent(MOUNT_SVG)}`;
+    mountTexture = PIXI.Texture.from(dataUrl);
   }
+  return mountTexture;
+}
 
-  // 内圈：暗内壁 + 反光亮线
-  graphics.lineStyle(1.4, 0x4c545e, 1);
-  graphics.arc(cx, cy, RING_INNER_R, 0, 180 * DEG);
-  graphics.lineStyle(0.9, 0xaeb8c3, 1);
-  graphics.arc(cx, cy, RING_INNER_R, 55 * DEG, 95 * DEG);
-
-  // 开口缝（右下 28° 方向）
-  graphics.lineStyle(1.6, 0x121824, 1);
-  graphics.moveTo(cx + 3.7, cy + 2.4);
-  graphics.lineTo(cx + 5.2, cy + 3.1);
-
-  // 管口端面（两枚小亮椭圆，近似无旋转）
-  graphics.lineStyle(0);
-  graphics.beginFill(0xd5dce4, 1);
-  graphics.drawEllipse(cx + 5.35, cy + 3.0, 0.75, 0.55);
-  graphics.endFill();
-  graphics.beginFill(0x9aa4b0, 1);
-  graphics.drawEllipse(cx + 3.85, cy + 1.7, 0.7, 0.5);
-  graphics.endFill();
+/** 创建挂环 Sprite（anchor 对齐环底；position 即绳锚点）。随窗口销毁由 PIXI GC。 */
+export function createCharmMountSprite() {
+  const sprite = new PIXI.Sprite(getMountTexture());
+  sprite.anchor.set(0.5, 37.7 / 44);
+  sprite.visible = false;
+  return sprite;
 }

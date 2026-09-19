@@ -40,4 +40,27 @@ export class CharmAnchorSampler {
       screenAt: this._screenAt,
     });
   }
+
+  /**
+   * 单飞 IPC 采样（未返回不重发）。挂饰模式跟随的手感关键：80ms 的
+   * passthrough 轮询对锚点跟随来说只有 12.5Hz——鼠标快速移动时锚点每
+   * 80ms 跳一步，体感卡顿。挂饰分支每帧调用本方法，锚点采样延迟从
+   * 80ms 降到单次 IPC 往返（约 2-4ms）。
+   */
+  pollOnce() {
+    if (this._inFlight || !this._getCursorPosition) return;
+    this._inFlight = true;
+    Promise.resolve()
+      .then(() => this._getCursorPosition())
+      .then((pos) => {
+        this._inFlight = false;
+        if (pos && Number.isFinite(pos.x) && Number.isFinite(pos.y)) {
+          this._screenCursor = { x: pos.x, y: pos.y };
+          this._screenAt = performance.now();
+        }
+      })
+      .catch(() => {
+        this._inFlight = false;
+      });
+  }
 }

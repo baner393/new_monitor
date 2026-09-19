@@ -27,7 +27,7 @@ import { resolveAmbientSwingEnabled } from '../shared/pet-settings-model.js';
 import { ANCHOR_MODES, DEFAULT_ROPE_LENGTHS } from '../shared/anchor-model.js';
 import { resolveMousePassthrough } from './mouse-passthrough.js';
 import { CharmAnchorSampler } from './charm-anchor.js';
-import { drawCharmMount, CHARM_MOUNT_ANCHOR_OFFSET, CHARM_MOUNT_CENTER_OFFSET } from './charm-mount.js';
+import { createCharmMountSprite, CHARM_MOUNT_ANCHOR_OFFSET } from './charm-mount.js';
 import { RingMenu } from './ring-menu.js';
 import { preloadRingIconTextures } from './ring-icons.js';
 
@@ -153,10 +153,11 @@ turtleContainer.y = 150;
 turtleContainer.eventMode = 'static';
 turtleContainer.cursor = 'pointer';
 pixiApp.stage.addChild(turtleContainer);
-// 鼠标挂环（穿孔挂饰的金属环）：画在绳锚点上方，系统光标（OS 硬件层）自然
-// 遮住环的左半——「穿在鼠标背后挂在边缘」的遮挡关系由此形成。
-const charmMountGraphics = new PIXI.Graphics();
-pixiApp.stage.addChild(charmMountGraphics);
+// 鼠标挂环（穿孔挂饰的金属环）：SVG 渐变纹理 Sprite，position 即绳锚点
+// （环底）。系统光标（OS 硬件层）自然遮住环的左半——「穿在鼠标背后挂在
+// 边缘」的遮挡关系由此形成。
+const charmMountSprite = createCharmMountSprite();
+pixiApp.stage.addChild(charmMountSprite);
 
 // Body sprite (main texture). The container is the rope/grip joint; the
 // texture hangs below it so rotation has visible body inertia.
@@ -1184,8 +1185,11 @@ pixiApp.ticker.add((delta) => {
     physics.updatePulleyMomentum(dt);
   } else {
     // 挂饰模式：光标驱动滑轮（面板打开/面板态冻结锚点），乌龟跑同一套 2D 方程。
-    // 锚点 = 环底（光标 + 环偏移），金属环画在锚点上方、绳从环底垂下。
+    // 锚点 = 环底（光标 + 环偏移），金属环画在锚点上、绳从环底垂下。
     if (state === 'IDLE' && !charmAnchorFrozen() && !monitorPanelStateActive(state)) {
+      // 跟随手感关键：每帧单飞 IPC 采样，锚点延迟 = 单次 IPC 往返（2-4ms），
+      // 而不是 80ms 轮询的 12.5Hz 跳步。
+      charmAnchorSampler.pollOnce();
       const cursor = charmAnchorSampler.sample();
       if (cursor) {
         physics.setCharmAnchor({
@@ -1221,12 +1225,13 @@ pixiApp.ticker.add((delta) => {
   const anchorX = isCharm ? physics.pulley.x : physics.screenAnchorX * window.innerWidth;
   const anchorY = isCharm ? physics.pulley.y : 50;
 
-  // 金属挂环：环心 = 绳锚点（环底）正上方 6.5px。环随锚点走——锚点冻结
-  // （面板打开）时环与绳保持一体；环形菜单开环或经典模式下不画。
+  // 金属挂环：环底 = 绳锚点（sprite anchor 已对齐环底）。环随锚点走——
+  // 锚点冻结（面板打开）时环与绳保持一体；环形菜单开环或经典模式下不画。
   if (isCharm && !ringOpen) {
-    drawCharmMount(charmMountGraphics, physics.pulley.x, physics.pulley.y - 6.5);
+    charmMountSprite.visible = true;
+    charmMountSprite.position.set(physics.pulley.x, physics.pulley.y);
   } else {
-    charmMountGraphics.clear();
+    charmMountSprite.visible = false;
   }
 
   // Calculate pull distance BEFORE updating physics
@@ -1531,6 +1536,21 @@ pixiApp.ticker.add((delta) => {
       ropeAnchorX = ringAnchor.x;
       ropeAnchorY = ringAnchor.y;
       ringAnchorApplied = true;
+    }
+  }
+
+  // 挂饰模式：绳绕挂环滑动——绳的视觉起点 = 环缘上朝向乌龟的点。
+  // 乌龟垂在下方时挂点即环底；被甩到锚点上方时挂点绕到环顶，绳不再
+  // 从环中间穿过（真实挂环的行为）。
+  if (isCharm && !ringOpen) {
+    const mountCenterX = anchorX;
+    const mountCenterY = anchorY - 9;
+    const dx = sprite.x - mountCenterX;
+    const dy = sprite.y - mountCenterY;
+    const d = Math.hypot(dx, dy);
+    if (d > 1) {
+      ropeAnchorX = mountCenterX + (dx / d) * 13;
+      ropeAnchorY = mountCenterY + (dy / d) * 13;
     }
   }
 
