@@ -27,6 +27,7 @@ import { resolveAmbientSwingEnabled } from '../shared/pet-settings-model.js';
 import { ANCHOR_MODES, DEFAULT_ROPE_LENGTHS } from '../shared/anchor-model.js';
 import { resolveMousePassthrough } from './mouse-passthrough.js';
 import { CharmAnchorSampler } from './charm-anchor.js';
+import { drawCharmMount, CHARM_MOUNT_ANCHOR_OFFSET, CHARM_MOUNT_CENTER_OFFSET } from './charm-mount.js';
 import { RingMenu } from './ring-menu.js';
 import { preloadRingIconTextures } from './ring-icons.js';
 
@@ -152,6 +153,10 @@ turtleContainer.y = 150;
 turtleContainer.eventMode = 'static';
 turtleContainer.cursor = 'pointer';
 pixiApp.stage.addChild(turtleContainer);
+// 鼠标挂环（穿孔挂饰的金属环）：画在绳锚点上方，系统光标（OS 硬件层）自然
+// 遮住环的左半——「穿在鼠标背后挂在边缘」的遮挡关系由此形成。
+const charmMountGraphics = new PIXI.Graphics();
+pixiApp.stage.addChild(charmMountGraphics);
 
 // Body sprite (main texture). The container is the rope/grip joint; the
 // texture hangs below it so rotation has visible body inertia.
@@ -1171,10 +1176,16 @@ pixiApp.ticker.add((delta) => {
     physics.updatePendulum(dt);
     physics.updatePulleyMomentum(dt);
   } else {
-    // 挂饰模式：光标驱动滑轮（面板打开/面板态冻结锚点），乌龟跑同一套 2D 方程
+    // 挂饰模式：光标驱动滑轮（面板打开/面板态冻结锚点），乌龟跑同一套 2D 方程。
+    // 锚点 = 环底（光标 + 环偏移），金属环画在锚点上方、绳从环底垂下。
     if (state === 'IDLE' && !charmAnchorFrozen() && !monitorPanelStateActive(state)) {
       const cursor = charmAnchorSampler.sample();
-      if (cursor) physics.setCharmAnchor(cursor);
+      if (cursor) {
+        physics.setCharmAnchor({
+          x: cursor.x + CHARM_MOUNT_ANCHOR_OFFSET.x,
+          y: cursor.y + CHARM_MOUNT_ANCHOR_OFFSET.y,
+        });
+      }
     }
     physics.updateCharmStep(dt);
 
@@ -1198,10 +1209,18 @@ pixiApp.ticker.add((delta) => {
   // Update settings panel animation
   settingsPanel.updateAnimation(dt);
 
-  // Compute rope anchor — charm: pulley = cursor (1:1); classic: top edge
+  // Compute rope anchor — charm: pulley = cursor + ring offset (1:1); classic: top edge
   // (offset 50px down because window extends 50px above screen to hide white border)
   const anchorX = isCharm ? physics.pulley.x : physics.screenAnchorX * window.innerWidth;
   const anchorY = isCharm ? physics.pulley.y : 50;
+
+  // 金属挂环：环心 = 绳锚点（环底）正上方 6.5px。环随锚点走——锚点冻结
+  // （面板打开）时环与绳保持一体；环形菜单开环或经典模式下不画。
+  if (isCharm && !ringOpen) {
+    drawCharmMount(charmMountGraphics, physics.pulley.x, physics.pulley.y - 6.5);
+  } else {
+    charmMountGraphics.clear();
+  }
 
   // Calculate pull distance BEFORE updating physics
   const pullDist = (state === 'PULLING') ? 

@@ -135,7 +135,7 @@ const DEFAULT_MONITOR_PANEL = createDefaultMonitorPanelConfig();
 const DEFAULT_SETTINGS = {
   turtleSize:       64,
   ropeLength:       150,
-  anchorMode:       'top',  // 'top' = 经典顶边悬挂 | 'cursor' = 挂饰（跟随鼠标）
+  anchorMode:       'cursor',  // 默认形态 = 鼠标挂饰；'top' = 经典顶边悬挂
   gravity:          800,
   damping:          0.995,
   pulleyFriction:   0.92,
