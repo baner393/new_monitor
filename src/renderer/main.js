@@ -316,6 +316,7 @@ if (import.meta.env.DEV) window.__codexCompanionForDiagnostics = codexCompanion;
 // ── Settings Panel ─────────────────────────────────────────────────────
 const onboardingGuide = new OnboardingGuide({
   settings: window.electronAPI.settings,
+  isCharmMode: () => isCharmMode(),
   onVisibilityChange: () => requestAnimationFrame(() => synchronizeMousePassthroughFromSystem(true)),
 });
 const settingsPanel = new SettingsPanel({
@@ -486,6 +487,9 @@ async function loadAndApplySettings() {
 // ropeLength 是「当前模式的绳长」：切换模式时渲染端记住各自的值并持久化，
 // 避免经典 150 串进挂饰（挂饰默认 80）。
 const charmAnchorSampler = new CharmAnchorSampler();
+// 挂饰指引第 1 课（移动鼠标）的累计位移
+let charmGuideTravel = 0;
+let charmGuideLastCursor = null;
 const charmState = {
   mode: ANCHOR_MODES.TOP,
   ropeLengths: {
@@ -531,6 +535,8 @@ function setAnchorMode(nextMode) {
     physics.pendulumOmega = 0;
     console.log(`[Charm] anchor mode → top (rope ${physics.restRopeLength})`);
   }
+  // 指引按新模式切换课程（活动中重置到第一课；未激活时按需自动开始）
+  onboardingGuide.onAnchorModeChanged?.();
 
   // 无论切换来源（托盘/设置同步），都把新模式与「新模式绳长」一并持久化——
   // 只写 ropeLength 的话，回环广播会带着旧 anchorMode 把切换翻回去。
@@ -560,6 +566,7 @@ function openRingMenu() {
   if (['PULLING', 'PULLEY_DRAG', 'BOUNCING', 'EXPANDING', 'COLLAPSING'].includes(state)) return;
   // 求值顺序陷阱（mockup openRing）：先取宠物位置，再开环
   ringMenu.open({ x: sprite.x, y: sprite.y }, ringMenuCursor());
+  onboardingGuide.completeGesture('charm-ring');
   console.log(`[Ring] open at (${sprite.x.toFixed(0)}, ${sprite.y.toFixed(0)})`);
 }
 
@@ -586,6 +593,7 @@ function dispatchRingAction(actionId) {
       break;
     case 'agent':
       console.log('[Ring] act: agent → conversation/tray');
+      onboardingGuide.completeGesture('charm-agent');
       codexCompanion.openAgentConversation?.();
       break;
     case 'mode':
@@ -809,6 +817,19 @@ async function synchronizeMousePassthroughFromSystem(force = false, announceRead
 document.addEventListener('mousemove', (event) => {
   lastCursorPosition = { x: event.clientX, y: event.clientY };
   charmAnchorSampler.noteWindowCursor(event.clientX, event.clientY);
+  // 挂饰指引第 1 课：累计光标位移，足够了就推进（guide 内部按当前步骤过滤）
+  if (isCharmMode()) {
+    if (charmGuideLastCursor) {
+      charmGuideTravel += Math.hypot(event.clientX - charmGuideLastCursor.x, event.clientY - charmGuideLastCursor.y);
+      if (charmGuideTravel >= 500) {
+        charmGuideTravel = 0;
+        onboardingGuide.completeGesture('charm-follow');
+      }
+    }
+    charmGuideLastCursor = { x: event.clientX, y: event.clientY };
+  } else {
+    charmGuideLastCursor = null;
+  }
   synchronizeMousePassthrough(event.clientX, event.clientY);
 });
 
@@ -1478,7 +1499,13 @@ pixiApp.ticker.add((delta) => {
   const codexBodyBounds = bodySprite.getBounds();
   const codexVisualX = codexBodyBounds.x + codexBodyBounds.width / 2;
   const codexVisualY = codexBodyBounds.y + codexBodyBounds.height / 2;
-  onboardingGuide.setAnchor(codexVisualX, codexVisualY);
+  // 挂饰下指引卡片锚定屏幕固定点：卡片若锚定宠物（物理摆动）或锚点
+  // （1:1 跟随光标），都会出现「光标永远追不上/晃到无法阅读」的问题。
+  if (isCharm && !ringOpen) {
+    onboardingGuide.setAnchor(window.innerWidth / 2, window.innerHeight * 0.62);
+  } else {
+    onboardingGuide.setAnchor(codexVisualX, codexVisualY);
+  }
   onboardingGuide.setPaused(
     !['IDLE', 'HOVER'].includes(state)
       || settingsPanel.isOpen

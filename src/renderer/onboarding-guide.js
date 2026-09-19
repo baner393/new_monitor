@@ -1,12 +1,12 @@
 import {
-  ONBOARDING_STEPS,
+  ONBOARDING_STEP_SETS,
   completeOnboardingStep,
   createDefaultOnboardingState,
   isOnboardingComplete,
   normalizeOnboardingState,
 } from '../shared/onboarding-model.js';
 
-const LESSONS = Object.freeze({
+const CLASSIC_LESSONS = Object.freeze({
   'left-click': {
     eyebrow: '先认识任务入口',
     title: '左键点我',
@@ -30,6 +30,32 @@ const LESSONS = Object.freeze({
   },
 });
 
+const CHARM_LESSONS = Object.freeze({
+  'charm-follow': {
+    eyebrow: '先认识你的挂件',
+    title: '移动鼠标',
+    description: '宠物挂在金属环下，跟着光标摆动。',
+    gesture: 'charm-follow',
+    hint: '随意晃一晃鼠标',
+  },
+  'charm-ring': {
+    eyebrow: '再学会呼出圆盘',
+    title: '按住 Ctrl+Alt+A',
+    description: '宠物钉成圆心，移动鼠标画弧瞄准，松手触发。',
+    gesture: 'charm-ring',
+    hint: '按住 · 画弧 · 松手',
+  },
+  'charm-agent': {
+    eyebrow: '最后进入任务',
+    title: '圆盘选「任务对话」',
+    description: '瞄准它松手，直接打开 Codex 与 Claude 的任务对话。',
+    gesture: 'charm-agent',
+    hint: '瞄准 · 松手',
+  },
+});
+
+const LESSON_SETS = Object.freeze({ top: CLASSIC_LESSONS, cursor: CHARM_LESSONS });
+
 function element(tag, className = '', text = '') {
   const node = document.createElement(tag);
   if (className) node.className = className;
@@ -38,8 +64,9 @@ function element(tag, className = '', text = '') {
 }
 
 export class OnboardingGuide {
-  constructor({ settings, onVisibilityChange = null } = {}) {
+  constructor({ settings, isCharmMode = null, onVisibilityChange = null } = {}) {
     this.settings = settings;
+    this.isCharmMode = typeof isCharmMode === 'function' ? isCharmMode : null;
     this.onVisibilityChange = typeof onVisibilityChange === 'function' ? onVisibilityChange : null;
     this.state = createDefaultOnboardingState();
     this.sessionSteps = [];
@@ -67,7 +94,8 @@ export class OnboardingGuide {
     const head = element('header', 'pet-onboarding-head');
     this.progress = element('div', 'pet-onboarding-progress');
     this.progress.setAttribute('aria-label', '指引进度');
-    for (let index = 0; index < ONBOARDING_STEPS.length; index += 1) {
+    // 两组课程各三课，进度结点固定 3 个（模式切换时复用）
+    for (let index = 0; index < 3; index += 1) {
       const knot = element('i', 'pet-onboarding-knot');
       knot.setAttribute('aria-hidden', 'true');
       this.progress.append(knot);
@@ -115,13 +143,13 @@ export class OnboardingGuide {
     } catch (error) {
       console.warn('[Onboarding] Failed to load state:', error);
     }
-    if (isOnboardingComplete(this.state) || this.state.dismissed) return;
+    if (isOnboardingComplete(this.state, this._mode()) || this.state.dismissed) return;
     clearTimeout(this._startTimer);
     this._startTimer = setTimeout(() => this.start(), Math.max(0, delay));
   }
 
   start() {
-    if (isOnboardingComplete(this.state) || this.state.dismissed) return;
+    if (isOnboardingComplete(this.state, this._mode()) || this.state.dismissed) return;
     this.replaying = false;
     this.sessionSteps = [...this.state.completedSteps];
     this.finishing = false;
@@ -141,6 +169,18 @@ export class OnboardingGuide {
     this._render();
   }
 
+  _mode() {
+    return this.isCharmMode?.() ? 'cursor' : 'top';
+  }
+
+  _activeSteps() {
+    return ONBOARDING_STEP_SETS[this._mode()];
+  }
+
+  _activeLessons() {
+    return LESSON_SETS[this._mode()];
+  }
+
   completeGesture(gesture) {
     if (!this.active || this.finishing || gesture !== this.currentStep) return false;
     if (!this.sessionSteps.includes(gesture)) this.sessionSteps.push(gesture);
@@ -149,18 +189,41 @@ export class OnboardingGuide {
       this._persist();
     }
 
-    if (this.sessionSteps.length >= ONBOARDING_STEPS.length) {
-      this.state = {
-        ...normalizeOnboardingState(this.state),
-        completedSteps: [...ONBOARDING_STEPS],
-        dismissed: false,
-      };
-      this._persist();
+    const modeSteps = this._activeSteps();
+    if (modeSteps.every((step) => this.sessionSteps.includes(step))) {
+      if (!this.replaying) {
+        this.state = {
+          ...normalizeOnboardingState(this.state),
+          completedSteps: [...new Set([...this.state.completedSteps, ...modeSteps])],
+          dismissed: false,
+        };
+        this._persist();
+      }
       this.finishing = true;
-      this.awaitingContextMenuClose = gesture === 'right-click';
+      // 经典版完成页挂在「右键菜单关闭」上；挂饰版没有该事件，直接展示。
+      this.awaitingContextMenuClose = this._mode() === 'top' && gesture === 'right-click';
+      if (this._mode() === 'cursor') this.revealCompletion();
     }
     this._render();
     return true;
+  }
+
+  /**
+   * 锚点模式切换：活动中的指引切回该模式第一课；未激活时若新模式组
+   * 未完成且未被跳过，自动开始（老用户切到挂饰时补学挂饰课）。
+   */
+  onAnchorModeChanged() {
+    if (this.replaying) return;
+    if (this.active) {
+      this.sessionSteps = [];
+      this.finishing = false;
+      this.awaitingContextMenuClose = false;
+      this._render();
+      return;
+    }
+    if (!isOnboardingComplete(this.state, this._mode()) && !this.state.dismissed) {
+      this.start();
+    }
   }
 
   revealCompletion() {
@@ -225,23 +288,25 @@ export class OnboardingGuide {
     if (this.finishing) {
       [...this.progress.children].forEach((knot) => { knot.dataset.state = 'done'; });
       this.card.dataset.gesture = 'complete';
-      this.eyebrow.textContent = '三个动作都学会了';
+      const charm = this._mode() === 'cursor';
+      this.eyebrow.textContent = charm ? '挂饰玩法都学会了' : '三个动作都学会了';
       this.title.textContent = '现在交给你啦';
       this.description.textContent = '随时可以在右键菜单或设置中重新查看。';
-      this.hint.textContent = '右键拖动宠物，还藏着一个小彩蛋';
+      this.hint.textContent = charm ? '甩一甩鼠标，挂件会跟着荡起来' : '右键拖动宠物，还藏着一个小彩蛋';
       this.counter.textContent = '完成';
       this.skipButton.hidden = true;
       this.closeButton.setAttribute('aria-label', '关闭指引');
     } else {
       const step = this.currentStep;
-      const lesson = LESSONS[step];
-      const index = Math.max(0, ONBOARDING_STEPS.indexOf(step));
+      const lesson = this._activeLessons()[step];
+      const steps = this._activeSteps();
+      const index = Math.max(0, steps.indexOf(step));
       this.card.dataset.gesture = lesson.gesture;
       this.eyebrow.textContent = lesson.eyebrow;
       this.title.textContent = lesson.title;
       this.description.textContent = lesson.description;
       this.hint.textContent = lesson.hint;
-      this.counter.textContent = `${index + 1} / ${ONBOARDING_STEPS.length}`;
+      this.counter.textContent = `${index + 1} / ${steps.length}`;
       this.skipButton.hidden = false;
       this.closeButton.setAttribute('aria-label', '关闭，下次启动时再提醒');
       [...this.progress.children].forEach((knot, knotIndex) => {
@@ -280,7 +345,7 @@ export class OnboardingGuide {
   }
 
   get currentStep() {
-    return ONBOARDING_STEPS.find((step) => !this.sessionSteps.includes(step)) || null;
+    return this._activeSteps().find((step) => !this.sessionSteps.includes(step)) || null;
   }
 
   get isVisible() {
