@@ -156,3 +156,28 @@ export function buildFoilAssets(skinFrame, grip = { x: 0.5, y: 0.12 }) {
 
   return { foil, band, edge, size: S, frameW: W, frameH: H, pad: EDGE_PAD, grip };
 }
+
+/**
+ * 侧棱纹理（硬币厚度式）：竖向银虹彩条，翻转经过时显示。
+ * @param {number} h 高度（与箔面同高）
+ */
+export function buildSideTexture(h) {
+  const w = 12;
+  const c = makeCanvas(w, h);
+  const ctx = c.getContext('2d');
+  const img = ctx.createImageData(w, h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const di = (y * w + x) << 2;
+      // 水平向银渐变（中间亮、两侧暗 = 圆管截面）+ 沿高度虹彩偏移
+      const t = Math.abs(x / w - 0.5) * 2;
+      let base = mix([250, 252, 255], [120, 130, 146], t);
+      const [hr, hg, hb] = hsl((((y / h) * 1.6 + 0.1) % 1 + 1) % 1, 0.4, 0.7);
+      base = mix(base, [hr, hg, hb], 0.28);
+      img.data[di] = base[0]; img.data[di + 1] = base[1]; img.data[di + 2] = base[2];
+      img.data[di + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  return c;
+}

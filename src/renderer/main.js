@@ -28,7 +28,8 @@ import { ANCHOR_MODES, DEFAULT_ROPE_LENGTHS } from '../shared/anchor-model.js';
 import { resolveMousePassthrough } from './mouse-passthrough.js';
 import { CharmAnchorSampler } from './charm-anchor.js';
 import { createCharmMountSprite, CHARM_MOUNT_ANCHOR_OFFSET } from './charm-mount.js';
-import { buildFoilAssets } from './charm-foil.js';
+import { buildFoilAssets, buildSideTexture } from './charm-foil.js';
+import { createFlipState, updateFlip, applyFlip } from './charm-flip.js';
 import { RingMenu } from './ring-menu.js';
 import { preloadRingIconTextures } from './ring-icons.js';
 
@@ -230,19 +231,18 @@ function updateFoilFx(dt) {
   // 驱动量：挂饰用乌龟速度，经典用钟摆摆速
   const charmSpeed = Math.hypot(physics.turtle.vx, physics.turtle.vy);
   const pendSpeed = Math.abs(physics.pendulumOmega) * Math.max(20, physics.ropeLength);
-  const motion = physics.pendulumAngle !== undefined ? Math.max(charmSpeed, pendSpeed) : charmSpeed;
-  const speedK = Math.min(1, motion / 500);
-  foilFx.phase += dt * (0.5 + speedK * 1.3);
-  const intensity = 0.35 + 0.65 * speedK;
-  const sweep = Math.max(0, Math.sin(foilFx.phase));
-
-  // 箔面：摆动相位「闪现-消失」
-  foilFoilSprite.alpha = intensity * Math.pow(sweep, 1.2);
-  // 光带：错相扫过（横移穿出 mask）
-  const bandSweep = Math.max(0, Math.sin(foilFx.phase + Math.PI / 3));
-  foilBandSprite.alpha = Math.pow(bandSweep, 1.4) * intensity;
-  const span = foilFx.size * bodySprite.scale.x / 3;
-  foilBandSprite.position.x = -((foilFx.phase * 0.4) % 1.6 - 0.3) * span;
+  const motion = Math.max(charmSpeed, pendSpeed);
+  const dirX = physics.turtle ? Math.max(-1, Math.min(1, physics.turtle.vx / 320)) : 0;
+  const flip = updateFlip(flipState, dt, motion, dirX);
+  prevMotion = motion;
+  applyFlip(
+    { body: bodySprite, foil: foilFoilSprite, band: foilBandSprite, side: foilSideSprite, container: turtleContainer },
+    flipState,
+    bodySprite.scale.y, // 基准 scale（翻转只改 x）
+    (0.5 - currentGripPoint.x) * currentSkinBaseSize * bodySprite.scale.y,
+    currentSkinBaseSize * bodySprite.scale.y, // 光带扫动范围 = 精灵显示宽
+    motion,
+  );
 }
 
 // Body sprite (main texture). The container is the rope/grip joint; the
