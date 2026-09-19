@@ -7,7 +7,7 @@
  * 扇区边界落在两中心之间），距离不参与命中，只有死区（< 24px 判未瞄准）。
  */
 
-export const RING_ITEM_COUNT = 8;
+export const RING_ITEM_COUNT = 9;
 export const RING_SECTOR_RAD = (Math.PI * 2) / RING_ITEM_COUNT;
 export const RING_DEAD_ZONE_RADIUS = 24;
 export const RING_HOVER_GATE_DISTANCE = 20;

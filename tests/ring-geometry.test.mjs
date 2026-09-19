@@ -35,8 +35,8 @@ test('angles wrap into [0, 2π)', () => {
 test('item angles place sector 0 at 12 o\'clock, 45° apart', () => {
   assert.equal(ringItemAngle(0), 0);
   assert.ok(Math.abs(ringItemAngle(1) - RING_SECTOR_RAD) < 1e-9);
-  assert.equal(RING_ITEM_COUNT, 8);
-  assert.ok(Math.abs(RING_SECTOR_RAD - Math.PI / 4) < 1e-9);
+  assert.equal(RING_ITEM_COUNT, 9);
+  assert.ok(Math.abs(RING_SECTOR_RAD - (Math.PI * 2) / 9) < 1e-9);
 });
 
 test('aim at sector centers hits the exact index', () => {
@@ -53,11 +53,11 @@ test('sector boundaries land between centers (half-sector offset)', () => {
   assert.equal(ringAim(C, pointAt(boundary + 0.01, 80)).idx, 1);
 });
 
-test('opposite positions never jitter between adjacent sectors', () => {
+test('odd count: 180 degrees sits on a sector boundary, resolve deterministically', () => {
   assert.equal(ringAim(C, pointAt(0, 80)).idx, 0);
-  assert.equal(ringAim(C, pointAt(Math.PI, 80)).idx, 4);
+  assert.equal(ringAim(C, pointAt(Math.PI, 80)).idx, 5);
   assert.equal(ringAim(C, pointAt(Math.PI / 2, 80)).idx, 2);
-  assert.equal(ringAim(C, pointAt(3 * Math.PI / 2, 80)).idx, 6);
+  assert.equal(ringAim(C, pointAt(3 * Math.PI / 2, 80)).idx, 7);
 });
 
 test('distance does not participate: inside, on, and outside the ring all hit', () => {

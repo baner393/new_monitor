@@ -2,8 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { RING_ACTIONS } from '../src/shared/ring-items.js';
 
-test('exactly 8 actions, sector 0 is the monitor panel', () => {
-  assert.equal(RING_ACTIONS.length, 8);
+test('exactly 9 actions, sector 0 is the monitor panel', () => {
+  assert.equal(RING_ACTIONS.length, 9);
   assert.equal(RING_ACTIONS[0].id, 'panel');
 });
 

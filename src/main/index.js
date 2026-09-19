@@ -702,7 +702,7 @@ function createWindow({ show = true } = {}) {
   // Listen for console messages from renderer (new API)
   browserWindow.webContents.on('console-message', (event) => {
     const message = event.message;
-    if (message.includes('[BOUNCE]') || message.includes('[Input]') || message.includes('[GameLoop]') || message.includes('[FPS]') || message.includes('[Skin]') || message.includes('[SkinSelector]') || message.includes('[Charm]') || message.includes('[Ring]')) {
+    if (message.includes('[BOUNCE]') || message.includes('[Input]') || message.includes('[GameLoop]') || message.includes('[FPS]') || message.includes('[Skin]') || message.includes('[SkinSelector]') || message.includes('[Charm]') || message.includes('[Ring]') || message.includes('[Agent]')) {
       console.log(`[RENDERER] ${message}`);
     }
   });

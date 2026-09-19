@@ -964,8 +964,25 @@ export class CodexCompanion {
     this.badge.setAttribute('aria-label', active.map((provider) => `${PROVIDERS[provider].name} ${counts[provider]?.unread || counts[provider]?.running || 0}`).join('，'));
   }
 
-  toggleTaskTray(forceOpen = false) {
-    if (this.configOpen || this.bubblesSuppressed) return;
+  /**
+   * 环形菜单「任务对话」入口（挂饰模式下点卡片/右键宠物的替代路径）：
+   * 有可见任务直接进第一个对话，否则打开任务托盘（看列表或空态）。
+   */
+  openAgentConversation() {
+    if (this.configOpen || this.bubblesSuppressed) {
+      console.log(`[Agent] openAgentConversation blocked: configOpen=${this.configOpen} bubblesSuppressed=${this.bubblesSuppressed}`);
+      return;
+    }
+    const tasks = this.snapshot?.visibleTasks || [];
+    console.log(`[Agent] openAgentConversation: tasks=${tasks.length}`);
+    if (tasks.length > 0) {
+      this.#openTask(tasks[0]);
+    } else {
+      this.toggleTaskTray(true);
+    }
+  }
+
+  toggleTaskTray(forceOpen = false) {    if (this.configOpen || this.bubblesSuppressed) return;
     this.trayOpen = forceOpen ? true : !this.trayOpen;
     if (this.trayOpen) this.bubble.hidden = true;
     else if (this.viewState.mode !== 'closed') this.#renderBubble();

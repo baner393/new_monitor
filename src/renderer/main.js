@@ -584,6 +584,10 @@ function dispatchRingAction(actionId) {
     case 'sub':
       openSubscriptionPanel();
       break;
+    case 'agent':
+      console.log('[Ring] act: agent → conversation/tray');
+      codexCompanion.openAgentConversation?.();
+      break;
     case 'mode':
       setAnchorMode(isCharmMode() ? ANCHOR_MODES.TOP : ANCHOR_MODES.CURSOR);
       break;

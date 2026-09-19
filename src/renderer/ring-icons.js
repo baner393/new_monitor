@@ -57,6 +57,10 @@ const ICON_SVG = {
   brush: `
     <path d="M3 21 L8 16 L17 7 L19 5 L15 9 L6 18 Z" fill="${ICON_COLOR}"/>
     <rect x="16" y="3" width="6" height="6" rx="1" fill="none" stroke="${ICON_COLOR}" stroke-width="2"/>`,
+  chat: `
+    <path d="M3 4 L21 4 L21 15 L11 15 L6 20 L6 15 L3 15 Z" fill="none" stroke="${ICON_COLOR}" stroke-width="2" stroke-linejoin="round"/>
+    <rect x="6" y="7" width="9" height="2" fill="${ICON_COLOR}"/>
+    <rect x="6" y="10" width="6" height="2" fill="${ICON_COLOR}"/>`,
 };
 
 const textures = new Map();
