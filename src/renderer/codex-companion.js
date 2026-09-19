@@ -447,6 +447,7 @@ export class CodexCompanion {
     this.taskTray.innerHTML = `
       <header class="codex-tray-head">
         <div><div class="codex-config-kicker">LIVE TASKS</div><strong class="codex-live-title"></strong></div>
+        <button class="codex-icon-button codex-tray-config" type="button" aria-label="agent config">⚙</button>
         <button class="codex-icon-button codex-tray-close" type="button">×</button>
       </header>
       <div class="agent-task-filters" role="tablist">
@@ -556,6 +557,8 @@ export class CodexCompanion {
       this.#renderTaskTray();
     }));
     this.taskTray.querySelector('.codex-tray-close').addEventListener('click', () => this.closeTaskTray());
+    // 挂饰模式下点击宠物的弹跳流程不可达，config 面板从这里补一个入口。
+    this.taskTray.querySelector('.codex-tray-config').addEventListener('click', () => this.openConfig());
     this.bubble.querySelector('.codex-task-back').addEventListener('click', async () => {
       await this.#closeDetail(true);
       this.trayOpen = true;
@@ -866,11 +869,12 @@ export class CodexCompanion {
     this.#place(this.taskTray, trayPosition.x, trayPosition.y, force);
   }
 
-  containsPoint(x, y) {
+  containsPoint(x, y, pad = 0) {
     return [this.configPanel, this.bubble, this.taskTray, this.badge].some((node) => {
       if (node.hidden) return false;
       const bounds = node.getBoundingClientRect();
-      return x >= bounds.left && x <= bounds.right && y >= bounds.top && y <= bounds.bottom;
+      return x >= bounds.left - pad && x <= bounds.right + pad
+        && y >= bounds.top - pad && y <= bounds.bottom + pad;
     });
   }
 

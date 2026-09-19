@@ -698,6 +698,11 @@ document.addEventListener('mousedown', (event) => {
   }
   if (!insideCodex && codexCompanion.capturesOutsideClicks) {
     codexCompanion.closeTaskTray();
+    // 挂饰模式下 config 面板从任务托盘打开，不走状态机——点外部一并关闭。
+    // 经典模式的 config 由 CODEX_CONFIG_OPEN 状态机流转（上方分支处理）。
+    if (stateMachine.getState() !== 'CODEX_CONFIG_OPEN') {
+      codexCompanion.closeConfig({ notify: false });
+    }
     document.activeElement?.blur?.();
     requestAnimationFrame(() => synchronizeMousePassthroughFromSystem(true));
   }
@@ -743,7 +748,9 @@ function synchronizeMousePassthrough(x, y, force = false) {
   // 挂饰模式下宠物贴着光标走，overSprite 恒真会把窗口切成可交互吃掉桌面
   // 点击——挂饰全程 click-through，宠物本体不参与命中测试。
   const overSprite = !isCharmMode() && isPointWithinBounds(bounds, x, y, PET_HIT_PADDING);
-  const overCodex = codexCompanion.containsPoint(x, y);
+  // 挂饰模式下 badge 跟随物理摆动的宠物，位置持续漂移——命中判定加宽容
+  // pad（经典模式 badge 稳定，无需宽容）。
+  const overCodex = codexCompanion.containsPoint(x, y, isCharmMode() ? 24 : 0);
   const overOnboarding = onboardingGuide.containsPoint(x, y);
   const ignore = resolveMousePassthrough({
     state,
@@ -1490,6 +1497,9 @@ pixiApp.ticker.add((delta) => {
     'CODEX_CONFIG_OPENING', 'CODEX_CONFIG_OPEN', 'CODEX_CONFIG_CLOSING',
   ].includes(state) || settingsPanel.isOpen || settingsPanel.isAnimating || subscriptionPanel.isOpen || skinSelector.isOpen;
   codexCompanion.setBubblesSuppressed(suppressCodexBubbles);
+  // 挂饰下 badge 必须保持锚定宠物：宠物物理滞后于光标，光标快速移向 badge
+  // 时宠物还没追上，这段滞后就是命中窗口；若锚定 1:1 跟随光标的锚点，
+  // badge 与光标相对位置恒定，将永远无法被点击。
   codexCompanion.setAnchor(codexVisualX, codexVisualY);
   codexCompanion.updateFrame();
   // The pet can move beneath a stationary physical cursor. Re-run the single
