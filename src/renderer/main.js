@@ -28,6 +28,7 @@ import { ANCHOR_MODES, DEFAULT_ROPE_LENGTHS } from '../shared/anchor-model.js';
 import { resolveMousePassthrough } from './mouse-passthrough.js';
 import { CharmAnchorSampler } from './charm-anchor.js';
 import { createCharmMountSprite, CHARM_MOUNT_ANCHOR_OFFSET } from './charm-mount.js';
+import { buildFoilAssets } from './charm-foil.js';
 import { RingMenu } from './ring-menu.js';
 import { preloadRingIconTextures } from './ring-icons.js';
 
@@ -158,6 +159,91 @@ pixiApp.stage.addChild(turtleContainer);
 // 边缘」的遮挡关系由此形成。
 const charmMountSprite = createCharmMountSprite();
 pixiApp.stage.addChild(charmMountSprite);
+
+// ── holo 箔层（暗场全息挂饰效果，随皮肤重建）────────────────────────
+// 宠物平时是原色；摆动掠过反光相位时表面泛起暗场全息（近黑镜面 + 彩虹
+// 条纹）与斜向光带，边缘套银虹彩描边。资产由 charm-foil.js 从皮肤 idle
+// 帧生成；形状裁剪由 idle 纹理 Sprite 作 mask（ foil/band 各自引用）。
+const foilFx = {
+  maskSprite: null, foil: null, band: null, edge: null,
+  phase: Math.random() * Math.PI * 2, // 初始随机相位，避免多实例同闪
+};
+const foilFoilSprite = new PIXI.Sprite(PIXI.Texture.EMPTY);
+const foilBandSprite = new PIXI.Sprite(PIXI.Texture.EMPTY);
+const foilEdgeSprite = new PIXI.Sprite(PIXI.Texture.EMPTY);
+foilFoilSprite.visible = false;
+foilBandSprite.visible = false;
+foilEdgeSprite.visible = false;
+turtleContainer.addChild(foilEdgeSprite);
+turtleContainer.addChild(foilFoilSprite);
+turtleContainer.addChild(foilBandSprite);
+
+function rebuildFoilAssets(sourceImg, grip) {
+  try {
+    const assets = buildFoilAssets(sourceImg, grip);
+    const foilTex = PIXI.Texture.from(assets.foil);
+    const bandTex = PIXI.Texture.from(assets.band);
+    const edgeTex = PIXI.Texture.from(assets.edge);
+    const displayScale = bodySprite.scale.x / 3; // 纹理 = 皮肤帧 ×3
+
+    const maskSprite = new PIXI.Sprite(idleTexture);
+    maskSprite.anchor.copyFrom(bodySprite.anchor);
+    maskSprite.scale.copyFrom(bodySprite.scale);
+    maskSprite.position.set(bodySprite.x, bodySprite.y);
+    if (foilFx.maskSprite) foilFx.maskSprite.destroy();
+    foilFx.maskSprite = maskSprite;
+    turtleContainer.addChild(maskSprite);
+    maskSprite.visible = false;
+
+    foilFoilSprite.texture = foilTex;
+    foilFoilSprite.anchor.set(assets.grip.x, assets.grip.y);
+    foilFoilSprite.scale.set(displayScale);
+    foilFoilSprite.position.set(0, 0);
+    foilFoilSprite.mask = maskSprite;
+    foilFoilSprite.visible = true;
+
+    foilBandSprite.texture = bandTex;
+    foilBandSprite.scale.set(displayScale);
+    // band 纹理宽 = 2×精灵：顶部对齐精灵顶部（容器坐标 = -grip.y × 显示高）
+    foilBandSprite.anchor.set(0, 0);
+    foilBandSprite.position.set(0, -assets.grip.y * assets.size * displayScale);
+    foilBandSprite.mask = maskSprite;
+    foilBandSprite.visible = true;
+
+    foilEdgeSprite.texture = edgeTex;
+    // edge 纹理含 pad：精灵帧位于 pad 偏移处，anchor 换算对齐 grip 点
+    const ax = (assets.pad + assets.grip.x * assets.size) / (assets.size + assets.pad * 2);
+    const ay = (assets.pad + assets.grip.y * assets.size) / (assets.size + assets.pad * 2);
+    foilEdgeSprite.anchor.set(ax, ay);
+    foilEdgeSprite.scale.set(displayScale);
+    foilEdgeSprite.position.set(bodySprite.x, bodySprite.y);
+    foilEdgeSprite.visible = true;
+    foilFx.size = assets.size;
+    console.log(`[CharmFoil] assets rebuilt (size ${assets.size})`);
+  } catch (error) {
+    console.error('[CharmFoil] asset build failed:', error);
+  }
+}
+
+function updateFoilFx(dt) {
+  if (!foilFx.maskSprite || !foilFoilSprite.visible) return;
+  // 驱动量：挂饰用乌龟速度，经典用钟摆摆速
+  const charmSpeed = Math.hypot(physics.turtle.vx, physics.turtle.vy);
+  const pendSpeed = Math.abs(physics.pendulumOmega) * Math.max(20, physics.ropeLength);
+  const motion = physics.pendulumAngle !== undefined ? Math.max(charmSpeed, pendSpeed) : charmSpeed;
+  const speedK = Math.min(1, motion / 500);
+  foilFx.phase += dt * (0.5 + speedK * 1.3);
+  const intensity = 0.35 + 0.65 * speedK;
+  const sweep = Math.max(0, Math.sin(foilFx.phase));
+
+  // 箔面：摆动相位「闪现-消失」
+  foilFoilSprite.alpha = intensity * Math.pow(sweep, 1.2);
+  // 光带：错相扫过（横移穿出 mask）
+  const bandSweep = Math.max(0, Math.sin(foilFx.phase + Math.PI / 3));
+  foilBandSprite.alpha = Math.pow(bandSweep, 1.4) * intensity;
+  const span = foilFx.size * bodySprite.scale.x / 3;
+  foilBandSprite.position.x = -((foilFx.phase * 0.4) % 1.6 - 0.3) * span;
+}
 
 // Body sprite (main texture). The container is the rope/grip joint; the
 // texture hangs below it so rotation has visible body inertia.
@@ -449,6 +535,12 @@ skinSelector.onSkinChange = async (skinId, skinConfig) => {
     const skinScale = savedTurtleSize / baseSize;
     bodySprite.scale.set(skinScale);
     console.log(`[Skin] Scale: ${skinScale.toFixed(2)} (baseSize: ${baseSize}, turtleSize: ${savedTurtleSize})`);
+
+    // holo 箔资产随皮肤重建（idle 帧为源）
+    const idleSource = idleTexture.baseTexture?.resource?.source;
+    if (idleSource instanceof HTMLImageElement || idleSource instanceof HTMLCanvasElement) {
+      rebuildFoilAssets(idleSource, currentGripPoint);
+    }
 
     // Texture dimensions can become valid after the first startup frames. Re-run
     // the transparent-window hit test now that the visible bounds are final.
@@ -1296,6 +1388,9 @@ pixiApp.ticker.add((delta) => {
     // Restore normal scale
     turtleContainer.scale.y = 1;
   }
+
+  // holo 箔效果驱动（相位/强度随运动速度；挂饰与经典模式统一）
+  updateFoilFx(dt);
 
   // State-specific behavior
   // ── Hover detection (IDLE ↔ HOVER) ── 挂饰模式全程穿透，宠物不可交互，跳过
