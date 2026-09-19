@@ -43,6 +43,11 @@ export function updateFlip(state, dt, motion, motionDirX = 0) {
   const energy = state.energy;
 
   // 运动冲量：速度越大、越往运动方向翻
+  if (![motion, motionDirX].every((v) => Number.isFinite(v))) {
+    state.velY *= Math.exp(-dt * 0.9);
+    state.spinY += state.velY * dt;
+    return { energy, cosY: Math.cos(state.spinY), sideK: 0 };
+  }
   const impulse = energy * energy * motionDirX * dt * 30;
   state.velY += impulse;
   // 静置摇摆的弹簧（能量低时把姿态拉回小幅摇摆）
@@ -56,9 +61,13 @@ export function updateFlip(state, dt, motion, motionDirX = 0) {
     state.velZ += (Math.random() - 0.5) * energy * 2.4;
   }
   state.velZ *= Math.exp(-dt * 1.7);
+  state.velZ += -state.spinZ * 1.2 * dt; // 回正弹簧：晃完不歪着停
   state.spinZ = clamp(state.spinZ + state.velZ * dt, -0.65, 0.65);
 
+  // 侧棱斥力（硬币立棱必倒）：倒向 = 当前旋转方向，避免在 ±90° 振荡捕获
   const cosY = Math.cos(state.spinY);
+  const fall = state.velY >= 0 ? 1 : -1;
+  state.velY += fall * Math.pow(1 - Math.abs(cosY), 2) * 5.5 * dt;
   const sideK = Math.max(0, 1 - Math.abs(cosY) / 0.18);
   return { energy, cosY, sideK };
 }

@@ -165,6 +165,8 @@ pixiApp.stage.addChild(charmMountSprite);
 // 宠物平时是原色；摆动掠过反光相位时表面泛起暗场全息（近黑镜面 + 彩虹
 // 条纹）与斜向光带，边缘套银虹彩描边。资产由 charm-foil.js 从皮肤 idle
 // 帧生成；形状裁剪由 idle 纹理 Sprite 作 mask（ foil/band 各自引用）。
+const flipState = createFlipState();
+let prevMotion = 0;
 const foilFx = {
   maskSprite: null, foil: null, band: null, edge: null,
   phase: Math.random() * Math.PI * 2, // 初始随机相位，避免多实例同闪
@@ -172,9 +174,12 @@ const foilFx = {
 const foilFoilSprite = new PIXI.Sprite(PIXI.Texture.EMPTY);
 const foilBandSprite = new PIXI.Sprite(PIXI.Texture.EMPTY);
 const foilEdgeSprite = new PIXI.Sprite(PIXI.Texture.EMPTY);
+const foilSideSprite = new PIXI.Sprite(PIXI.Texture.EMPTY);
 foilFoilSprite.visible = false;
 foilBandSprite.visible = false;
 foilEdgeSprite.visible = false;
+foilSideSprite.visible = false;
+turtleContainer.addChild(foilSideSprite);
 turtleContainer.addChild(foilEdgeSprite);
 turtleContainer.addChild(foilFoilSprite);
 turtleContainer.addChild(foilBandSprite);
@@ -218,6 +223,10 @@ function rebuildFoilAssets(sourceImg, grip) {
     foilEdgeSprite.anchor.set(ax, ay);
     foilEdgeSprite.scale.set(displayScale);
     foilEdgeSprite.position.set(bodySprite.x, bodySprite.y);
+
+    foilSideSprite.texture = PIXI.Texture.from(buildSideTexture(assets.size));
+    foilSideSprite.anchor.set(0.5, 0);
+    foilSideSprite.scale.set(displayScale);
     foilEdgeSprite.visible = true;
     foilFx.size = assets.size;
     console.log(`[CharmFoil] assets rebuilt (size ${assets.size})`);
