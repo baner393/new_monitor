@@ -171,3 +171,19 @@ test('甩动能量学：一次高速甩动翻过侧面（|cosY| 触底）且最�
   for (let i = 0; i < 1200; i++) updateFlip(s, DT, 0, 0);
   assert.ok(Math.abs(Math.cos(s.spinY)) > 0.9, '能量耗尽后应回正面');
 });
+
+test('静置回正：翻滚停在背面圈数上，走最短路径回正面（不绕大圈）', () => {
+  const s = createFlipState();
+  s.spinY = 2 * Math.PI + Math.PI * 0.6; // 转过一圈后停在背面 108°
+  s.velY = 0;
+  s.energy = 0;
+  let maxTravel = 0;
+  const start = s.spinY;
+  for (let i = 0; i < 600; i++) {
+    updateFlip(s, DT, 0, 0);
+    maxTravel = Math.max(maxTravel, Math.abs(s.spinY - start));
+  }
+  // home = 2π（最近正面圈）：回正走 ~1.88rad，而不是绕回 0（走 ~5.65rad）
+  assert.ok(maxTravel < Math.PI, `maxTravel=${maxTravel.toFixed(2)}rad，应走最短路径`);
+  assert.ok(Math.cos(s.spinY) > 0.95, `cosY=${Math.cos(s.spinY).toFixed(3)}，应停在正面`);
+});

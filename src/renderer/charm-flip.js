@@ -62,9 +62,11 @@ export function updateFlip(state, dt, motion, motionDirX = 0, accel = null) {
   // spinY 翻滚：速度越大、越往运动方向翻
   const impulse = energy * energy * motionDirX * dt * 30;
   state.velY += impulse;
-  // 静置摇摆的弹簧（能量低时把姿态拉回小幅摇摆）
+  // 静置回正（能量低时生效）：目标 = 最近的正面圈（2π 整数倍）+ ±8° 摇摆——
+  // 翻滚停在任意角度都走最短路径转回正面，而不是绕剩余圈数慢慢蹭回来
   const restTarget = Math.sin(state.t * 0.8) * 0.14;
-  state.velY += (restTarget - state.spinY) * (1 - energy) * 2.4 * dt;
+  const home = Math.round((state.spinY - restTarget) / (Math.PI * 2)) * Math.PI * 2 + restTarget;
+  state.velY += (home - state.spinY) * (1 - energy) * 2.4 * dt;
   state.velY *= Math.exp(-dt * 0.9);
   state.spinY += state.velY * dt;
 
