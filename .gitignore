@@ -18,3 +18,8 @@ native/**/obj/
 
 # Standalone promo video subproject, not part of the monitor build
 turtle-monitor-promo/
+
+# 本地便捷脚本（不入仓）
+build-sponsor.bat
+runfree.bat
+runsponsor.bat
