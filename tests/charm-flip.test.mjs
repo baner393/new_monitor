@@ -86,25 +86,23 @@ test('经典模式（accel=null）tilt 回正', () => {
   assert.ok(Math.abs(s.tilt) < 0.02, `tilt=${s.tilt}`);
 });
 
-test('computeSlab：正对无侧棱，侧对最厚', () => {
-  // restL=-50, restR=50（轮廓对称）, TH=6
+test('computeSlab：侧棱填满正背面之间的视差', () => {
+  // 前面固定 x=0，背面 x=thickness·sinY；侧棱在两者中央。
   const face = computeSlab(1, 0, -50, 50, 6);
   assert.equal(face.width, 0);
   const edgeOn = computeSlab(0, 1, -50, 50, 6);
   assert.ok(Math.abs(edgeOn.width - 6) < 1e-9);
-  assert.ok(edgeOn.x > 0, 'sinY>0 时侧棱在右缘');
+  assert.equal(edgeOn.x, 3, 'sinY>0 时中心在正背面中点');
   const other = computeSlab(0, -1, -50, 50, 6);
   assert.ok(Math.abs(other.width - 6) < 1e-9);
-  assert.ok(other.x < 0, 'sinY<0 时侧棱在左缘');
+  assert.equal(other.x, -3, 'sinY<0 时中心在正背面中点');
 });
 
-test('computeSlab：轮廓不对称时侧棱贴可见外缘', () => {
-  // restL=-30, restR=70（grip 偏左）
+test('computeSlab：侧棱不受精灵透明边距或轮廓偏移影响', () => {
   const sl = computeSlab(0.5, Math.sin(Math.acos(0.5)), -30, 70, 4);
-  assert.ok(Math.abs(sl.x - (35 + (4 * 0.8660254) / 2)) < 1e-6, `x=${sl.x}`);
-  // c<0（背面）卡片翻过 90°：远缘摆过挂点，最右缘 = restL·c = 15
+  assert.ok(Math.abs(sl.x - (4 * 0.8660254) / 2) < 1e-6, `x=${sl.x}`);
   const sl2 = computeSlab(-0.5, Math.sin(Math.acos(-0.5)), -30, 70, 4);
-  assert.ok(Math.abs(sl2.x - (15 + (4 * 0.8660254) / 2)) < 1e-6, `x=${sl2.x}`);
+  assert.ok(Math.abs(sl2.x - (4 * 0.8660254) / 2) < 1e-6, `x=${sl2.x}`);
 });
 
 test('computeSlab 非有限输入防御', () => {
@@ -120,9 +118,10 @@ test('侧棱倒下斥力：卡在 ±90° 会自行倒下（防卡死回归）', 
   assert.ok(Math.abs(Math.cos(s.spinY)) > 0.2, `|cosY|=${Math.abs(Math.cos(s.spinY))}，应倒离侧棱`);
 });
 
-test('applyFlip：面/描边/mask 随翻转压缩并镜像', () => {
+test('applyFlip：正背面独立镜像并以厚度产生视差', () => {
   const sprites = {
     body: mockSprite(), mask: mockSprite(), edge: mockSprite(),
+    back: mockSprite(),
     strip: mockSprite(), flash: mockSprite(), foil: mockSprite(),
     band: mockSprite(), container: mockSprite(),
   };
@@ -133,6 +132,8 @@ test('applyFlip：面/描边/mask 随翻转压缩并镜像', () => {
   applyFlip(sprites, state, o);
   assert.equal(sprites.body.scale.x, 2);
   assert.equal(sprites.edge.scale.x, 2 / 3);
+  assert.equal(sprites.body.visible, true);
+  assert.equal(sprites.back.visible, false);
 
   state.spinY = Math.PI / 2; // 侧对：面压到最窄，侧棱最厚 + 白闪可见
   state.velY = 10;
@@ -142,13 +143,66 @@ test('applyFlip：面/描边/mask 随翻转压缩并镜像', () => {
   assert.ok(Math.abs(sprites.strip.width - 6) < 1e-6, `strip.width=${sprites.strip.width}`);
   assert.ok(sprites.flash.alpha > 0.5, `flash.alpha=${sprites.flash.alpha}`);
   assert.ok(Math.abs(sprites.strip.position.x - 3) < 1e-6);
+  assert.ok(Math.abs(sprites.back.position.x - 6) < 1e-6, '背面应位于前面右侧一个完整厚度');
 
   state.spinY = Math.PI; // 背面：镜像
   state.velY = 0;
   applyFlip(sprites, state, o);
-  assert.ok(sprites.body.scale.x < 0, '背面 scale.x 为负（镜像）');
+  assert.equal(sprites.body.visible, false);
+  assert.equal(sprites.back.visible, true);
+  assert.ok(sprites.back.scale.x < 0, '背面 scale.x 为负（镜像）');
   assert.equal(sprites.strip.visible, false, '正对背面时无侧棱');
   assert.equal(sprites.flash.visible, false);
+});
+
+test('applyFlip：全息门控同时响应 tilt，光带横扫位置也纳入 tilt', () => {
+  const sprites = { foil: mockSprite(), band: mockSprite(), body: mockSprite() };
+  const state = createFlipState();
+  const o = { baseScale: 1, edgeBase: 1, restL: -25, restR: 25, stripTop: -5, stripH: 50, thickness: 4, span: 100 };
+  applyFlip(sprites, state, o);
+  assert.equal(sprites.foil.alpha, 0, '正对且垂直时不触发全息');
+  const baseBandX = sprites.band.position.x;
+  state.tilt = 0.49;
+  applyFlip(sprites, state, o);
+  assert.ok(sprites.foil.alpha > 0.4, `foil.alpha=${sprites.foil.alpha}，±28° tilt 应触发全强门控`);
+  assert.notEqual(sprites.band.position.x, baseBandX, 'tilt 应改变光带横扫位置');
+});
+
+test('applyFlip：累计翻滚不会把倾角光带扫出宠物范围', () => {
+  const sprites = { foil: mockSprite(), band: mockSprite(), body: mockSprite() };
+  const state = createFlipState();
+  const o = { baseScale: 1, edgeBase: 1, restL: -25, restR: 25, stripTop: -5, stripH: 50, thickness: 4, span: 100 };
+  state.spinY = Math.PI * 12 + 0.2; // 已翻六圈，视觉朝向仍接近正面
+  state.tilt = 0.49;
+  applyFlip(sprites, state, o);
+  assert.equal(sprites.band.visible, true);
+  assert.ok(sprites.band.alpha > 0.2, `band.alpha=${sprites.band.alpha}，倾角光带应可见`);
+  // 主亮带位于 2×span 纹理的 60%，应留在宠物的可见范围附近。
+  const brightCenter = sprites.band.position.x + o.span * 1.2;
+  assert.ok(Math.abs(brightCenter) < 80, `brightCenter=${brightCenter}，不能随累计圈数漂走或落到 mask 外`);
+});
+
+test('背面帧后仍可继续推进并恢复正面复合层可见', () => {
+  const sprites = {
+    body: mockSprite(), back: mockSprite(), foil: mockSprite(), band: mockSprite(),
+  };
+  const state = createFlipState();
+  const o = { baseScale: 1, edgeBase: 1, restL: -25, restR: 25, stripTop: -5, stripH: 50, thickness: 4, span: 100 };
+  state.spinY = Math.PI;
+  applyFlip(sprites, state, o);
+  assert.equal(sprites.foil.visible, false, '背面时正面箔层可隐藏');
+  assert.equal(sprites.back.visible, true);
+
+  // 模拟 main ticker：背面帧之后，每帧仍先推进物理，再应用最新姿态。
+  // 静置弹簧应能把它从背面带回正面，而不是被“不可见”状态卡住。
+  let sawFrontComposite = false;
+  for (let i = 0; i < 600; i++) {
+    updateFlip(state, DT, 0, 0);
+    applyFlip(sprites, state, o);
+    sawFrontComposite ||= sprites.body.visible && sprites.foil.visible && !sprites.back.visible;
+  }
+  assert.notEqual(state.spinY, Math.PI, '背面后物理状态仍持续推进');
+  assert.equal(sawFrontComposite, true, '后续帧会恢复正面复合层可见');
 });
 
 test('applyFlip：tilt 与纷飞都作用在容器 rotation（绕挂点）', () => {

@@ -12,10 +12,8 @@
  *   · spinZ（绕绳轴自转）：能量 >55% 随机激发的纷飞 + 回正弹簧。
  *
  * 渲染映射（2D 合成，薄板厚度可见——描边不再固定）：
- *   · 面（body / 银虹彩描边 / 形状 mask）统一 scaleX = cos(spinY)，
- *     负值自动镜像出背面；
- *   · 厚度侧棱 = 宽度 thickness·|sin(spinY)| 的金属条，贴在面的外缘
- *     （computeSlab）：翻转时从面缘长出、侧对时最厚、正对消失；
+ *   · 正、背面是两张独立精灵：正面显示原图，背面水平镜像；背面沿
+ *     thickness·sin(spinY) 产生横向视差，正、背面之间由侧棱带填充；
  *   · 白闪：转速快时叠加 ADD 混合白条（翻过侧棱瞬间的硬币闪光）；
  *   · tilt + spinZ 施加到容器 rotation（都绕挂点）。
  */
@@ -102,10 +100,9 @@ export function updateFlip(state, dt, motion, motionDirX = 0, accel = null) {
 }
 
 /**
- * 薄板厚度侧棱的几何（纯函数）。
- * 面绕挂点竖轴压缩（x→x·cosY），厚度沿 sinY 方向从面的外缘长出。
- * @param {number} restL 静置时可见轮廓左缘相对挂点的 x（px，负值）
- * @param {number} restR 静置时可见轮廓右缘相对挂点的 x（px）
+ * 薄板厚度侧棱的几何（纯函数）。前面固定在 x=0，背面随 sinY 横移，
+ * 侧棱恰好填满两面间距。因此它不是贴轮廓外缘的独立金属条。
+ * restL/restR 保留为兼容旧调用，当前不参与计算。
  * @returns {{x:number, width:number, side:number}} 容器坐标（挂点为原点）
  */
 export function computeSlab(c, s, restL, restR, thickness) {
@@ -113,16 +110,13 @@ export function computeSlab(c, s, restL, restR, thickness) {
     return { x: 0, width: 0, side: 1 };
   }
   const side = s >= 0 ? 1 : -1;
-  const leftEdge = restL * c;
-  const rightEdge = restR * c;
-  const faceEdge = side > 0 ? Math.max(leftEdge, rightEdge) : Math.min(leftEdge, rightEdge);
   const width = thickness * Math.abs(s);
-  return { x: faceEdge + (side * width) / 2, width, side };
+  return { x: (thickness * s) / 2, width, side };
 }
 
 /**
  * 把翻转姿态应用到渲染对象。
- * @param {object} s { body, mask, edge, strip, flash, foil, band, container }
+ * @param {object} s { body, back, mask, edge, strip, flash, foil, band, container }
  *        全部可选；mask = 形状裁剪 Sprite（与 body 同 base、同 anchor）。
  * @param {object} state
  * @param {object} o { baseScale, edgeBase, restL, restR, stripTop, stripH,
@@ -131,13 +125,25 @@ export function computeSlab(c, s, restL, restR, thickness) {
 export function applyFlip(s, state, o) {
   const cosY = Math.cos(state.spinY);
   const sinY = Math.sin(state.spinY);
-  const sgn = cosY >= 0 ? 1 : -1;
   const sx = Math.max(0.05, Math.abs(cosY));
+  const frontFacing = cosY >= 0;
 
-  // 面与描边、形状 mask 一起压缩/镜像——描边随翻转收放，不再固定
-  if (s.body) s.body.scale.x = o.baseScale * sx * sgn;
-  if (s.mask) s.mask.scale.x = o.baseScale * sx * sgn;
-  if (s.edge) s.edge.scale.x = o.edgeBase * sx * sgn;
+  // 两张独立的面：正面在原点，背面使用同原图的横向镜像并随角度视差。
+  // 侧对时两者都收窄，把可见面积交给两面间的侧棱带。
+  if (s.body) {
+    s.body.scale.x = o.baseScale * sx;
+    s.body.visible = frontFacing;
+  }
+  if (s.back) {
+    s.back.scale.x = -o.baseScale * sx;
+    s.back.position.x = o.thickness * sinY;
+    s.back.visible = !frontFacing;
+  }
+  if (s.mask) s.mask.scale.x = o.baseScale * sx;
+  if (s.edge) {
+    s.edge.scale.x = o.edgeBase * sx;
+    s.edge.visible = frontFacing;
+  }
 
   // 厚度侧棱（硬币式）+ 翻转白闪
   if (s.strip) {
@@ -162,14 +168,27 @@ export function applyFlip(s, state, o) {
     }
   }
 
-  // 暗场全息：面斜/背泛起（|sin| 峰值在侧棱两侧），运动加成
+  // 暗场全息：偏航翻转或屏幕面内倾斜都可触发；±28° 倾斜达到全强。
   const tilt = Math.abs(sinY);
+  const holoK = Math.max(tilt, clamp(Math.abs(state.tilt) / 0.49, 0, 1));
   const glow = Math.min(1, 0.45 + state.energy * 0.55 + Math.min(0.4, Math.abs(state.velY) * 0.12));
-  if (s.foil) s.foil.alpha = Math.pow(tilt, 1.05) * glow;
+  if (s.foil) {
+    s.foil.visible = frontFacing;
+    s.foil.alpha = Math.pow(holoK, 1.05) * glow;
+  }
   if (s.band) {
-    s.band.alpha = Math.pow(Math.max(0, Math.sin(state.spinY * 1.6 + 0.9)), 1.5) * tilt * glow;
-    // 光带随翻转角横向扫动
-    s.band.position.x = (state.spinY / Math.PI) * o.span * 0.8 - o.span * 0.4;
+    s.band.visible = frontFacing;
+    // spinY 会累计多圈；光带的位置只取当前一圈，否则几次翻滚就会永远
+    // 扫到宠物数百像素外，倾角反光虽然已触发却完全看不见。
+    const visualSpin = Math.atan2(sinY, cosY);
+    const sweep = 0.5 + 0.5 * Math.sin(visualSpin * 1.6 + state.tilt * 1.8 + 0.9);
+    // 倾角达到门槛时始终保留可见的光带，sweep 只调制其明暗，不能把它归零。
+    s.band.alpha = (0.25 + sweep * 0.75) * holoK * glow;
+    // 光带随当前翻转面和重力倾角共同横向扫动。
+    // band 纹理宽度为 2×span，主亮带在纹理 60% 处；-1.2×span 把它
+    // 对齐宠物中心。此前 -0.4×span 会令主亮带落到 mask 外，被完全裁掉。
+    s.band.position.x = (visualSpin / Math.PI) * o.span * 0.8
+      + (state.tilt / 0.49) * o.span * 0.25 - o.span * 1.2;
   }
 
   // 重力链接 + 纷飞自转（都绕挂点）

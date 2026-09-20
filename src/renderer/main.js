@@ -183,13 +183,7 @@ foilEdgeSprite.visible = false;
 foilSideSprite.visible = false;
 foilFlashSprite.visible = false;
 foilFlashSprite.blendMode = PIXI.BLEND_MODES.ADD;
-// 层序（底→顶）：厚度侧棱/白闪 → 卡面(body) → 描边/箔/光带。
-// side/flash 先加（垫底），rebuild 时再把 edge/foil/band 移到 body 之上。
-turtleContainer.addChild(foilSideSprite);
-turtleContainer.addChild(foilFlashSprite);
-turtleContainer.addChild(foilEdgeSprite);
-turtleContainer.addChild(foilFoilSprite);
-turtleContainer.addChild(foilBandSprite);
+// 子节点在 body/back 创建后以 back → side/flash → front → edge/foil/band 接线。
 
 function rebuildFoilAssets(sourceImg, grip) {
   try {
@@ -206,7 +200,12 @@ function rebuildFoilAssets(sourceImg, grip) {
     if (foilFx.maskSprite) foilFx.maskSprite.destroy();
     foilFx.maskSprite = maskSprite;
     turtleContainer.addChild(maskSprite);
-    maskSprite.visible = false;
+    // 隐形 mask 必须用 renderable=false 而非 visible=false：
+    // PIXI 7 的 Container.updateTransform 对 visible=false 的子节点直接
+    // 跳过变换更新（child.visible && child.updateTransform），
+    // 否则箔面/光带共用这个遮罩时，遮罩的世界坐标会冻结在创建时刻、
+    // 宠物移动/旋转后 mask 仍停在原地，把已触发的光裁掉。
+    maskSprite.renderable = false;
 
     foilFoilSprite.texture = foilTex;
     foilFoilSprite.anchor.set(assets.grip.x, assets.grip.y);
@@ -262,7 +261,11 @@ let prevTurtleVy = 0;
 const charmAccel = { x: 0, y: 0 }; // 挂饰加速度（速度差分 + 平滑，重力链接驱动量）
 
 function updateFoilFx(dt) {
-  if (!foilFx.maskSprite || !foilFoilSprite.visible) return;
+  // 背面朝向时 applyFlip 会隐藏正面箔层；它不能成为更新早退条件，
+  // 否则翻回正面前物理和可见性都会永久冻结。
+  if (!foilFx.maskSprite || !foilFx.size) return;
+  // 状态机可在本帧替换正面纹理；背面始终复用该帧，由 applyFlip 镜像显示。
+  if (backSprite.texture !== bodySprite.texture) backSprite.texture = bodySprite.texture;
   // 驱动量：挂饰用乌龟速度，经典用钟摆摆速
   const charmSpeed = Math.hypot(physics.turtle.vx, physics.turtle.vy);
   const pendSpeed = Math.abs(physics.pendulumOmega) * Math.max(20, physics.ropeLength);
@@ -290,6 +293,7 @@ function updateFoilFx(dt) {
   applyFlip(
     {
       body: bodySprite,
+      back: backSprite,
       mask: foilFx.maskSprite,
       edge: foilEdgeSprite,
       strip: foilSideSprite,
@@ -318,13 +322,24 @@ let currentGripPoint = { x: 0.5, y: 0.12 };
 const bodySprite = new PIXI.Sprite(idleTexture);
 bodySprite.anchor.set(currentGripPoint.x, currentGripPoint.y);
 bodySprite.scale.set(2.5);
+// 背面与正面使用同一帧；applyFlip 将其 scale.x 设为负值，形成原版镜像。
+const backSprite = new PIXI.Sprite(idleTexture);
+backSprite.anchor.copyFrom(bodySprite.anchor);
+backSprite.scale.copyFrom(bodySprite.scale);
+turtleContainer.addChild(backSprite);
+turtleContainer.addChild(foilSideSprite);
+turtleContainer.addChild(foilFlashSprite);
 turtleContainer.addChild(bodySprite);
+turtleContainer.addChild(foilEdgeSprite);
+turtleContainer.addChild(foilFoilSprite);
+turtleContainer.addChild(foilBandSprite);
 
 if (import.meta.env.DEV) {
   window.__charmFlipDiagnostics = {
     flipState,
     charmAccel,
-    sprites: { side: foilSideSprite, flash: foilFlashSprite, edge: foilEdgeSprite, foil: foilFoilSprite, band: foilBandSprite, body: bodySprite },
+    foilFx,
+    sprites: { back: backSprite, side: foilSideSprite, flash: foilFlashSprite, edge: foilEdgeSprite, foil: foilFoilSprite, band: foilBandSprite, body: bodySprite },
   };
 }
 
@@ -594,6 +609,7 @@ skinSelector.onSkinChange = async (skinId, skinConfig) => {
     [idleTexture, hoverTexture, pullTexture, happyTexture, painTexture, blinkTexture] = textures;
     // Apply idle texture immediately
     bodySprite.texture = idleTexture;
+    backSprite.texture = idleTexture;
 
     // Apply skin-specific scale (normalize to target display size)
     // Respect saved turtleSize setting instead of hardcoded value
@@ -605,10 +621,12 @@ skinSelector.onSkinChange = async (skinId, skinConfig) => {
       y: Math.min(0.45, Math.max(0, Number(grip.y) || 0.12)),
     };
     bodySprite.anchor.set(currentGripPoint.x, currentGripPoint.y);
+    backSprite.anchor.copyFrom(bodySprite.anchor);
     // Get saved turtleSize from settings panel or use default
     const savedTurtleSize = settingsPanel._values?.turtleSize || 64;
     const skinScale = savedTurtleSize / baseSize;
     bodySprite.scale.set(skinScale);
+    backSprite.scale.set(skinScale);
     console.log(`[Skin] Scale: ${skinScale.toFixed(2)} (baseSize: ${baseSize}, turtleSize: ${savedTurtleSize})`);
 
     // holo 箔资产随皮肤重建（idle 帧为源）
@@ -830,6 +848,7 @@ function applySettings(settings, { isInitialLoad = false } = {}) {
   if (settings.turtleSize !== undefined) {
     const scale = settings.turtleSize / currentSkinBaseSize;
     bodySprite.scale.set(scale);
+    backSprite.scale.set(scale);
     console.log(`[Settings] Turtle size: ${settings.turtleSize}, scale: ${scale.toFixed(2)} (baseSize: ${currentSkinBaseSize})`);
   }
   
