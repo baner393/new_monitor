@@ -13,7 +13,11 @@
  *
  * 渲染映射（2D 合成，薄板厚度可见——描边不再固定）：
  *   · 正、背面是两张独立精灵：正面显示原图，背面水平镜像；背面沿
- *     thickness·sin(spinY) 产生横向视差，正、背面之间由侧棱带填充；
+ *     thickness·sin(spinY) 产生横向视差；
+ *   · 侧壁 = 切片堆叠挤出（sprite stacking / godotshaders 2D sprite
+ *     fake-3D 的公开做法）：深度 λ 处的切片投影到 x = −thickness·sinY·λ，
+ *     N 层金属剪影扫过两面间距——任意角度的侧壁都贴着宠物轮廓，
+ *     而不是一条独立竖条；
  *   · 白闪：转速快时叠加 ADD 混合白条（翻过侧棱瞬间的硬币闪光）；
  *   · tilt + spinZ 施加到容器 rotation（都绕挂点）。
  */
@@ -100,27 +104,26 @@ export function updateFlip(state, dt, motion, motionDirX = 0, accel = null) {
 }
 
 /**
- * 薄板厚度侧棱的几何（纯函数）。前面固定在 x=0，背面随 sinY 横移，
- * 侧棱恰好填满两面间距。因此它不是贴轮廓外缘的独立金属条。
- * restL/restR 保留为兼容旧调用，当前不参与计算。
- * @returns {{x:number, width:number, side:number}} 容器坐标（挂点为原点）
+ * 切片堆叠挤出的每层横向偏移（纯函数）。
+ * 前面固定在 x=0，背面 x = thickness·sinY；第 i 层切片在
+ * gap·i/(count+1)（不含两端——两端是正背面本身）。
+ * @returns {number[]} 容器坐标 x 偏移数组
  */
-export function computeSlab(c, s, restL, restR, thickness) {
-  if (![c, s, restL, restR, thickness].every(Number.isFinite)) {
-    return { x: 0, width: 0, side: 1 };
-  }
-  const side = s >= 0 ? 1 : -1;
-  const width = thickness * Math.abs(s);
-  return { x: (thickness * s) / 2, width, side };
+export function sliceOffsets(s, thickness, count) {
+  if (![s, thickness, count].every(Number.isFinite) || count < 1) return [];
+  const gap = thickness * s;
+  const out = [];
+  for (let i = 1; i <= count; i++) out.push((gap * i) / (count + 1));
+  return out;
 }
 
 /**
  * 把翻转姿态应用到渲染对象。
- * @param {object} s { body, back, mask, edge, strip, flash, foil, band, container }
- *        全部可选；mask = 形状裁剪 Sprite（与 body 同 base、同 anchor）。
+ * @param {object} s { body, back, mask, edge, slices, flash, foil, band, container }
+ *        全部可选；mask = 形状裁剪 Sprite（与 body 同 base、同 anchor）；
+ *        slices = 金属剪影切片精灵数组（与面同 anchor）。
  * @param {object} state
- * @param {object} o { baseScale, edgeBase, restL, restR, stripTop, stripH,
- *                     thickness, span }
+ * @param {object} o { baseScale, edgeBase, stripTop, stripH, thickness, span }
  */
 export function applyFlip(s, state, o) {
   const cosY = Math.cos(state.spinY);
@@ -145,26 +148,34 @@ export function applyFlip(s, state, o) {
     s.edge.visible = frontFacing;
   }
 
-  // 厚度侧棱（硬币式）+ 翻转白闪
-  if (s.strip) {
-    const sl = computeSlab(cosY, sinY, o.restL, o.restR, o.thickness);
-    s.strip.visible = sl.width > 0.4;
-    if (s.strip.visible) {
-      s.strip.width = Math.max(1.2, sl.width);
-      s.strip.height = o.stripH;
-      s.strip.position.set(sl.x, o.stripTop);
-      s.strip.alpha = Math.min(1, 0.55 + Math.abs(sinY) * 0.45);
-      if (s.flash) {
-        s.flash.visible = true;
-        s.flash.width = s.strip.width;
-        s.flash.height = o.stripH;
-        s.flash.position.set(sl.x, o.stripTop);
-        // 转速越快，翻过侧棱的硬币闪光越亮
-        const speedGlow = Math.min(0.95, Math.abs(state.velY) * 0.3);
-        s.flash.alpha = speedGlow * Math.min(1, Math.abs(sinY) * 1.8);
+  // 真厚度侧壁：切片堆叠挤出（sprite stacking）。每层 = 金属剪影
+  // （与面同形状），沿两面间距均匀分布——任意角度侧壁都贴着宠物轮廓。
+  const gap = o.thickness * sinY;
+  const gapW = Math.abs(gap);
+  if (s.slices) {
+    const offsets = sliceOffsets(sinY, o.thickness, s.slices.length);
+    const on = gapW > 0.5;
+    for (let i = 0; i < s.slices.length; i++) {
+      const sl = s.slices[i];
+      sl.visible = on;
+      if (on) {
+        // 与面同横压；不透明填充，镜像无意义（scale 保持正）
+        sl.scale.x = o.edgeBase * sx;
+        sl.position.x = offsets[i];
       }
-    } else if (s.flash) {
-      s.flash.visible = false;
+    }
+  }
+  // 翻转白闪（ADD 白条，盖在整个侧壁区域上）
+  if (s.flash) {
+    const on = gapW > 0.5;
+    s.flash.visible = on;
+    if (on) {
+      s.flash.width = Math.max(1.2, gapW);
+      s.flash.height = o.stripH;
+      s.flash.position.set(gap / 2, o.stripTop);
+      // 转速越快，翻过侧棱的硬币闪光越亮
+      const speedGlow = Math.min(0.95, Math.abs(state.velY) * 0.3);
+      s.flash.alpha = speedGlow * Math.min(1, (gapW / Math.max(1, o.thickness)) * 1.8);
     }
   }
 

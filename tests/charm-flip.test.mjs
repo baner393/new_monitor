@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   createFlipState,
   updateFlip,
-  computeSlab,
+  sliceOffsets,
   applyFlip,
   HANG_GRAVITY,
   TILT_MAX,
@@ -86,28 +86,27 @@ test('经典模式（accel=null）tilt 回正', () => {
   assert.ok(Math.abs(s.tilt) < 0.02, `tilt=${s.tilt}`);
 });
 
-test('computeSlab：侧棱填满正背面之间的视差', () => {
-  // 前面固定 x=0，背面 x=thickness·sinY；侧棱在两者中央。
-  const face = computeSlab(1, 0, -50, 50, 6);
-  assert.equal(face.width, 0);
-  const edgeOn = computeSlab(0, 1, -50, 50, 6);
-  assert.ok(Math.abs(edgeOn.width - 6) < 1e-9);
-  assert.equal(edgeOn.x, 3, 'sinY>0 时中心在正背面中点');
-  const other = computeSlab(0, -1, -50, 50, 6);
-  assert.ok(Math.abs(other.width - 6) < 1e-9);
-  assert.equal(other.x, -3, 'sinY<0 时中心在正背面中点');
+test('sliceOffsets：切片均匀分布在正背面间距内', () => {
+  const off = sliceOffsets(1, 6, 4);
+  assert.equal(off.length, 4);
+  // 不含两端（0 和 6 是正背面本身）：1.2, 2.4, 3.6, 4.8
+  for (let i = 0; i < 4; i++) {
+    assert.ok(Math.abs(off[i] - 6 * (i + 1) / 5) < 1e-9, `off[${i}]=${off[i]}`);
+  }
+  assert.ok(off[0] > 0 && off[3] < 6, '切片不含端点');
 });
 
-test('computeSlab：侧棱不受精灵透明边距或轮廓偏移影响', () => {
-  const sl = computeSlab(0.5, Math.sin(Math.acos(0.5)), -30, 70, 4);
-  assert.ok(Math.abs(sl.x - (4 * 0.8660254) / 2) < 1e-6, `x=${sl.x}`);
-  const sl2 = computeSlab(-0.5, Math.sin(Math.acos(-0.5)), -30, 70, 4);
-  assert.ok(Math.abs(sl2.x - (4 * 0.8660254) / 2) < 1e-6, `x=${sl2.x}`);
+test('sliceOffsets：sinY 反向时偏移反向，正对为空区间两端', () => {
+  const pos = sliceOffsets(1, 6, 3);
+  const neg = sliceOffsets(-1, 6, 3);
+  assert.deepEqual(neg, pos.map((v) => -v), '翻转方向相反 → 偏移相反');
+  const zero = sliceOffsets(0, 6, 3);
+  assert.ok(zero.every((v) => v === 0), '正对时所有切片重合在原点');
 });
 
-test('computeSlab 非有限输入防御', () => {
-  const sl = computeSlab(NaN, 1, -50, 50, 6);
-  assert.equal(sl.width, 0);
+test('sliceOffsets 非有限输入防御', () => {
+  assert.deepEqual(sliceOffsets(NaN, 6, 3), []);
+  assert.deepEqual(sliceOffsets(1, 6, 0), []);
 });
 
 test('侧棱倒下斥力：卡在 ±90° 会自行倒下（防卡死回归）', () => {
@@ -122,27 +121,33 @@ test('applyFlip：正背面独立镜像并以厚度产生视差', () => {
   const sprites = {
     body: mockSprite(), mask: mockSprite(), edge: mockSprite(),
     back: mockSprite(),
-    strip: mockSprite(), flash: mockSprite(), foil: mockSprite(),
+    slices: [mockSprite(), mockSprite(), mockSprite()],
+    flash: mockSprite(), foil: mockSprite(),
     band: mockSprite(), container: mockSprite(),
   };
   const state = createFlipState();
-  const o = { baseScale: 2, edgeBase: 2 / 3, restL: -50, restR: 50, stripTop: -6, stripH: 100, thickness: 6, span: 100 };
+  const o = { baseScale: 2, edgeBase: 2 / 3, stripTop: -6, stripH: 100, thickness: 6, span: 100 };
 
-  state.spinY = 0; // 正面
+  state.spinY = 0; // 正面：无侧壁
   applyFlip(sprites, state, o);
   assert.equal(sprites.body.scale.x, 2);
   assert.equal(sprites.edge.scale.x, 2 / 3);
   assert.equal(sprites.body.visible, true);
   assert.equal(sprites.back.visible, false);
+  assert.ok(sprites.slices.every((sl) => !sl.visible), '正对时切片全部隐藏');
 
-  state.spinY = Math.PI / 2; // 侧对：面压到最窄，侧棱最厚 + 白闪可见
+  state.spinY = Math.PI / 2; // 侧对：面压到最窄，侧壁最厚 + 白闪可见
   state.velY = 10;
   applyFlip(sprites, state, o);
   assert.ok(Math.abs(sprites.body.scale.x) <= 2 * 0.05 + 1e-9);
-  assert.ok(sprites.strip.visible);
-  assert.ok(Math.abs(sprites.strip.width - 6) < 1e-6, `strip.width=${sprites.strip.width}`);
+  assert.ok(sprites.slices.every((sl) => sl.visible), '侧对时切片全部显示');
+  // 3 层切片均匀填在 gap=6 内：1.5 / 3 / 4.5
+  [1.5, 3, 4.5].forEach((want, i) => {
+    assert.ok(Math.abs(sprites.slices[i].position.x - want) < 1e-6, `slice[${i}].x=${sprites.slices[i].position.x}`);
+    assert.ok(Math.abs(sprites.slices[i].scale.x - (2 / 3) * 0.05) < 1e-6, '切片与面同横压');
+  });
   assert.ok(sprites.flash.alpha > 0.5, `flash.alpha=${sprites.flash.alpha}`);
-  assert.ok(Math.abs(sprites.strip.position.x - 3) < 1e-6);
+  assert.ok(Math.abs(sprites.flash.position.x - 3) < 1e-6, '白闪位于侧壁中央');
   assert.ok(Math.abs(sprites.back.position.x - 6) < 1e-6, '背面应位于前面右侧一个完整厚度');
 
   state.spinY = Math.PI; // 背面：镜像
@@ -151,7 +156,7 @@ test('applyFlip：正背面独立镜像并以厚度产生视差', () => {
   assert.equal(sprites.body.visible, false);
   assert.equal(sprites.back.visible, true);
   assert.ok(sprites.back.scale.x < 0, '背面 scale.x 为负（镜像）');
-  assert.equal(sprites.strip.visible, false, '正对背面时无侧棱');
+  assert.ok(sprites.slices.every((sl) => !sl.visible), '正对背面时无侧壁');
   assert.equal(sprites.flash.visible, false);
 });
 

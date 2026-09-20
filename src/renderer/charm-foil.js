@@ -170,6 +170,41 @@ export function buildFoilAssets(skinFrame, grip = { x: 0.5, y: 0.12 }) {
 }
 
 /**
+ * 薄板侧壁纹理（切片堆叠挤出的每一层）：可见轮廓内填满金属渐变——
+ * 沿高度的银渐变 + 沿轮廓的虹彩微移，alpha 保留宠物形状。
+ * 借鉴 sprite stacking / godotshaders 的 2D sprite fake-3D 挤出做法：
+ * 把剪影沿投影深度轴扫掠 N 层，任意角度的侧壁都贴着轮廓。
+ */
+export function buildSlabTexture(skinFrame) {
+  const W = skinFrame.width, H = skinFrame.height;
+  const S = W * FOIL_SCALE, SH = H * FOIL_SCALE;
+  const src = makeCanvas(S, SH);
+  const sctx = src.getContext('2d');
+  sctx.imageSmoothingEnabled = false;
+  sctx.drawImage(skinFrame, 0, 0, S, SH);
+  const srcData = sctx.getImageData(0, 0, S, SH);
+
+  const c = makeCanvas(S, SH);
+  const ctx = c.getContext('2d');
+  const img = ctx.createImageData(S, SH);
+  for (let y = 0; y < SH; y++) {
+    for (let x = 0; x < S; x++) {
+      const i = y * S + x, di = i << 2;
+      const a = srcData.data[di + 3] / 255;
+      if (a <= 0.1) { img.data[di + 3] = 0; continue; }
+      const t = y / SH;
+      let col = mix([238, 242, 247], [108, 118, 134], t); // 上亮下暗银渐变
+      const [hr, hg, hb] = hsl((((x / S) * 1.4 + t * 0.6) % 1 + 1) % 1, 0.4, 0.7);
+      col = mix(col, [hr, hg, hb], 0.3); // 虹彩微移
+      img.data[di] = clamp255(col[0]); img.data[di + 1] = clamp255(col[1]); img.data[di + 2] = clamp255(col[2]);
+      img.data[di + 3] = Math.round(a * 255);
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  return c;
+}
+
+/**
  * 侧棱白闪纹理：中央亮白、两侧渐隐的竖条（ADD 混合叠加在厚度侧棱上，
  * 翻转经过侧棱瞬间的「硬币闪光」）。
  * @param {number} h 高度（与箔面同高）
@@ -184,30 +219,5 @@ export function buildEdgeFlashTexture(h) {
   g.addColorStop(1, 'rgba(255,255,255,0)');
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, w, h);
-  return c;
-}
-
-/**
- * 侧棱纹理（硬币厚度式）：竖向银虹彩条，翻转经过时显示。
- * @param {number} h 高度（与箔面同高）
- */
-export function buildSideTexture(h) {
-  const w = 12;
-  const c = makeCanvas(w, h);
-  const ctx = c.getContext('2d');
-  const img = ctx.createImageData(w, h);
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      const di = (y * w + x) << 2;
-      // 水平向银渐变（中间亮、两侧暗 = 圆管截面）+ 沿高度虹彩偏移
-      const t = Math.abs(x / w - 0.5) * 2;
-      let base = mix([250, 252, 255], [120, 130, 146], t);
-      const [hr, hg, hb] = hsl((((y / h) * 1.6 + 0.1) % 1 + 1) % 1, 0.4, 0.7);
-      base = mix(base, [hr, hg, hb], 0.28);
-      img.data[di] = base[0]; img.data[di + 1] = base[1]; img.data[di + 2] = base[2];
-      img.data[di + 3] = 255;
-    }
-  }
-  ctx.putImageData(img, 0, 0);
   return c;
 }

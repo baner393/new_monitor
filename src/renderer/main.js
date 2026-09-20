@@ -28,7 +28,7 @@ import { ANCHOR_MODES, DEFAULT_ROPE_LENGTHS } from '../shared/anchor-model.js';
 import { resolveMousePassthrough } from './mouse-passthrough.js';
 import { CharmAnchorSampler } from './charm-anchor.js';
 import { createCharmMountSprite, CHARM_MOUNT_ANCHOR_OFFSET } from './charm-mount.js';
-import { buildFoilAssets, buildSideTexture, buildEdgeFlashTexture } from './charm-foil.js';
+import { buildFoilAssets, buildSlabTexture, buildEdgeFlashTexture } from './charm-foil.js';
 import { createFlipState, updateFlip, applyFlip } from './charm-flip.js';
 import { RingMenu } from './ring-menu.js';
 import { preloadRingIconTextures } from './ring-icons.js';
@@ -169,21 +169,22 @@ const flipState = createFlipState();
 let prevMotion = 0;
 const foilFx = {
   maskSprite: null, foil: null, band: null, edge: null,
+  slices: [], // 金属剪影切片（真厚度侧壁，随皮肤重建）
   frameH: 0, // 皮肤帧高（厚度侧棱/显示高度换算用）
   phase: Math.random() * Math.PI * 2, // 初始随机相位，避免多实例同闪
 };
 const foilFoilSprite = new PIXI.Sprite(PIXI.Texture.EMPTY);
 const foilBandSprite = new PIXI.Sprite(PIXI.Texture.EMPTY);
 const foilEdgeSprite = new PIXI.Sprite(PIXI.Texture.EMPTY);
-const foilSideSprite = new PIXI.Sprite(PIXI.Texture.EMPTY);
 const foilFlashSprite = new PIXI.Sprite(PIXI.Texture.EMPTY);
 foilFoilSprite.visible = false;
 foilBandSprite.visible = false;
 foilEdgeSprite.visible = false;
-foilSideSprite.visible = false;
 foilFlashSprite.visible = false;
 foilFlashSprite.blendMode = PIXI.BLEND_MODES.ADD;
-// 子节点在 body/back 创建后以 back → side/flash → front → edge/foil/band 接线。
+// 子节点在 body/back 创建后以 back → slices/flash → front → edge/foil/band 接线。
+
+const SLAB_SLICE_COUNT = 14; // 切片堆叠层数（真厚度侧壁）
 
 function rebuildFoilAssets(sourceImg, grip) {
   try {
@@ -230,9 +231,21 @@ function rebuildFoilAssets(sourceImg, grip) {
     foilEdgeSprite.scale.set(displayScale);
     foilEdgeSprite.position.set(bodySprite.x, bodySprite.y);
 
-    foilSideSprite.texture = PIXI.Texture.from(buildSideTexture(assets.size));
-    foilSideSprite.anchor.set(0.5, 0);
-    foilSideSprite.scale.set(displayScale);
+    // 真厚度侧壁：N 层金属剪影切片（sprite stacking 挤出），层间明暗递进
+    for (const old of foilFx.slices) old.destroy();
+    foilFx.slices = [];
+    const slabTex = PIXI.Texture.from(buildSlabTexture(sourceImg));
+    for (let i = 0; i < SLAB_SLICE_COUNT; i++) {
+      const slice = new PIXI.Sprite(slabTex);
+      slice.anchor.set(assets.grip.x, assets.grip.y);
+      slice.scale.set(displayScale);
+      slice.position.set(0, 0);
+      const shade = 1 - (i / Math.max(1, SLAB_SLICE_COUNT - 1)) * 0.38;
+      slice.tint = PIXI.utils.rgb2hex([shade, shade, shade]); // 越深越暗（纵深暗示）
+      slice.visible = false;
+      foilFx.slices.push(slice);
+    }
+
     foilFlashSprite.texture = PIXI.Texture.from(buildEdgeFlashTexture(assets.size));
     foilFlashSprite.anchor.set(0.5, 0);
     foilEdgeSprite.visible = true;
@@ -245,8 +258,12 @@ function rebuildFoilAssets(sourceImg, grip) {
       uL: tight.lx / assets.frameW, uR: tight.rx / assets.frameW,
       v0: tight.ty / assets.frameH, v1: tight.by / assets.frameH,
     };
-    // 层序修正（addChild 对已有子节点 = 移到顶层）：
-    // 描边/箔/光带盖到卡面之上，厚度侧棱/白闪保持在卡面之后
+    // 层序修正（addChild 对已有子节点 = 移到顶层），底→顶：
+    // 背面 → 厚度切片 → 白闪 → 正面卡面 → 描边/箔/光带
+    turtleContainer.addChild(backSprite);
+    for (const slice of foilFx.slices) turtleContainer.addChild(slice);
+    turtleContainer.addChild(foilFlashSprite);
+    turtleContainer.addChild(bodySprite);
     turtleContainer.addChild(foilEdgeSprite);
     turtleContainer.addChild(foilFoilSprite);
     turtleContainer.addChild(foilBandSprite);
@@ -296,7 +313,7 @@ function updateFoilFx(dt) {
       back: backSprite,
       mask: foilFx.maskSprite,
       edge: foilEdgeSprite,
-      strip: foilSideSprite,
+      slices: foilFx.slices,
       flash: foilFlashSprite,
       foil: foilFoilSprite,
       band: foilBandSprite,
@@ -306,8 +323,6 @@ function updateFoilFx(dt) {
     {
       baseScale: scale,
       edgeBase: scale / 3, // 纹理 = 皮肤帧 ×3
-      restL: (frac.uL - currentGripPoint.x) * displayW,
-      restR: (frac.uR - currentGripPoint.x) * displayW,
       stripTop: (frac.v0 - currentGripPoint.y) * displayH,
       stripH: (frac.v1 - frac.v0) * displayH,
       thickness: Math.max(2, Math.min(9, displayW * 0.07)),
@@ -327,7 +342,6 @@ const backSprite = new PIXI.Sprite(idleTexture);
 backSprite.anchor.copyFrom(bodySprite.anchor);
 backSprite.scale.copyFrom(bodySprite.scale);
 turtleContainer.addChild(backSprite);
-turtleContainer.addChild(foilSideSprite);
 turtleContainer.addChild(foilFlashSprite);
 turtleContainer.addChild(bodySprite);
 turtleContainer.addChild(foilEdgeSprite);
@@ -339,7 +353,7 @@ if (import.meta.env.DEV) {
     flipState,
     charmAccel,
     foilFx,
-    sprites: { back: backSprite, side: foilSideSprite, flash: foilFlashSprite, edge: foilEdgeSprite, foil: foilFoilSprite, band: foilBandSprite, body: bodySprite },
+    sprites: { back: backSprite, flash: foilFlashSprite, edge: foilEdgeSprite, foil: foilFoilSprite, band: foilBandSprite, body: bodySprite },
   };
 }
 
