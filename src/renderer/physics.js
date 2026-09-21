@@ -279,16 +279,27 @@ class PhysicsEngine {
         this.turtle.vy -= totalForce * ny * dt
 
         // 施加水平分量到滑轮（正方向，但滑轮质量大所以力小）
-        this.pulley.vx += totalForce * nx * dt * 0.3
+        // 挂饰模式下滑轮由光标硬绑定（无惯性、无摩擦），反作用不累积，
+        // 否则残留的 pulley.vx 会进入 relVx 造成持续单向阻尼偏置。
+        if (!this.charmMode) {
+          this.pulley.vx += totalForce * nx * dt * 0.3
+        }
 
         // 如果绳子松弛（stretch < 0），施加微弱拉力保持绳长
       } else if (stretch < -5) {
-        // 绳子松弛过多，施加微弱收缩力
         const nx = dx / dist
         const ny = dy / dist
         const slackForce = this.ropeStiffness * 0.1 * stretch
-        this.turtle.vx -= slackForce * nx * dt
-        this.turtle.vy -= slackForce * ny * dt
+        if (this.charmMode) {
+          // 挂饰：slackForce 为负（stretch<0），+= 让力指向 −n（锚点方向）——
+          // 只回收、绝不能推离，否则大幅运动后产生持续单向推力
+          this.turtle.vx += slackForce * nx * dt
+          this.turtle.vy += slackForce * ny * dt
+        } else {
+          // 经典：保持原版「维持绳长」的微弱外推，不动原版动力学
+          this.turtle.vx -= slackForce * nx * dt
+          this.turtle.vy -= slackForce * ny * dt
+        }
       }
     }
 
@@ -353,6 +364,8 @@ class PhysicsEngine {
     if (!clamped) return false
     this.pulley.x = clamped.x
     this.pulley.y = clamped.y
+    // 硬绑定锚点无速度概念；清零残留，避免污染绳弹簧的相对速度阻尼
+    this.pulley.vx = 0
     return true
   }
 

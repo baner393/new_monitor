@@ -17,8 +17,7 @@
  *   · 侧壁 = 切片堆叠挤出（sprite stacking / godotshaders 2D sprite
  *     fake-3D 的公开做法）：深度 λ 处的切片投影到 x = −thickness·sinY·λ，
  *     N 层金属剪影扫过两面间距——任意角度的侧壁都贴着宠物轮廓，
- *     而不是一条独立竖条；
- *   · 白闪：转速快时叠加 ADD 混合白条（翻过侧棱瞬间的硬币闪光）；
+ *     而不是一条独立竖条；金属反光由切片银虹彩渐变与箔面/光带承担；
  *   · tilt + spinZ 施加到容器 rotation（都绕挂点）。
  */
 
@@ -118,12 +117,33 @@ export function sliceOffsets(s, thickness, count) {
 }
 
 /**
+ * 闪卡各层随宠物基准缩放同步（皮肤加载与 turtleSize 改变时都要调用）。
+ * body/back/mask 用宠物基准 scale；foil/band/edge/slices 的纹理是皮肤帧 ×3
+ * 预渲染，对应 scale/3。翻转每帧只接管 scale.x（cos(spinY) 压缩），
+ * 本函数负责把 scale.y（和未翻转时的基准 scale.x）同步到新尺寸——
+ * 纯尺寸变化绝不重建纹理。
+ */
+export function syncLayerScales(layers, baseScale) {
+  const faceScale = baseScale;
+  const texScale = baseScale / 3;
+  for (const key of ['body', 'back', 'mask']) {
+    if (layers[key]) layers[key].scale.set(faceScale, faceScale);
+  }
+  for (const key of ['foil', 'band', 'edge']) {
+    if (layers[key]) layers[key].scale.set(texScale, texScale);
+  }
+  if (layers.slices) {
+    for (const slice of layers.slices) slice.scale.set(texScale, texScale);
+  }
+}
+
+/**
  * 把翻转姿态应用到渲染对象。
- * @param {object} s { body, back, mask, edge, slices, flash, foil, band, container }
+ * @param {object} s { body, back, mask, edge, slices, foil, band, container }
  *        全部可选；mask = 形状裁剪 Sprite（与 body 同 base、同 anchor）；
  *        slices = 金属剪影切片精灵数组（与面同 anchor）。
  * @param {object} state
- * @param {object} o { baseScale, edgeBase, stripTop, stripH, thickness, span }
+ * @param {object} o { baseScale, edgeBase, thickness, span }
  */
 export function applyFlip(s, state, o) {
   const cosY = Math.cos(state.spinY);
@@ -150,6 +170,7 @@ export function applyFlip(s, state, o) {
 
   // 真厚度侧壁：切片堆叠挤出（sprite stacking）。每层 = 金属剪影
   // （与面同形状），沿两面间距均匀分布——任意角度侧壁都贴着宠物轮廓。
+  // 金属反光由切片的银虹彩渐变 + 箔面/光带承担；不再存在全高白闪层。
   const gap = o.thickness * sinY;
   const gapW = Math.abs(gap);
   if (s.slices) {
@@ -163,19 +184,6 @@ export function applyFlip(s, state, o) {
         sl.scale.x = o.edgeBase * sx;
         sl.position.x = offsets[i];
       }
-    }
-  }
-  // 翻转白闪（ADD 白条，盖在整个侧壁区域上）
-  if (s.flash) {
-    const on = gapW > 0.5;
-    s.flash.visible = on;
-    if (on) {
-      s.flash.width = Math.max(1.2, gapW);
-      s.flash.height = o.stripH;
-      s.flash.position.set(gap / 2, o.stripTop);
-      // 转速越快，翻过侧棱的硬币闪光越亮
-      const speedGlow = Math.min(0.95, Math.abs(state.velY) * 0.3);
-      s.flash.alpha = speedGlow * Math.min(1, (gapW / Math.max(1, o.thickness)) * 1.8);
     }
   }
 

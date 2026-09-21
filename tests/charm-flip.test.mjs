@@ -5,6 +5,7 @@ import {
   updateFlip,
   sliceOffsets,
   applyFlip,
+  syncLayerScales,
   HANG_GRAVITY,
   TILT_MAX,
 } from '../src/renderer/charm-flip.js';
@@ -19,7 +20,7 @@ function runSteps(state, steps, fn) {
 
 function mockSprite() {
   return {
-    scale: { x: 1, y: 1 },
+    scale: { x: 1, y: 1, set(x, y) { this.x = x; this.y = y === undefined ? x : y; } },
     position: { x: 0, y: 0, set(x, y) { this.x = x; this.y = y; } },
     alpha: 1, visible: true, rotation: 0, width: 10, height: 10,
   };
@@ -122,11 +123,11 @@ test('applyFlip：正背面独立镜像并以厚度产生视差', () => {
     body: mockSprite(), mask: mockSprite(), edge: mockSprite(),
     back: mockSprite(),
     slices: [mockSprite(), mockSprite(), mockSprite()],
-    flash: mockSprite(), foil: mockSprite(),
+    foil: mockSprite(),
     band: mockSprite(), container: mockSprite(),
   };
   const state = createFlipState();
-  const o = { baseScale: 2, edgeBase: 2 / 3, stripTop: -6, stripH: 100, thickness: 6, span: 100 };
+  const o = { baseScale: 2, edgeBase: 2 / 3, thickness: 6, span: 100 };
 
   state.spinY = 0; // 正面：无侧壁
   applyFlip(sprites, state, o);
@@ -136,7 +137,7 @@ test('applyFlip：正背面独立镜像并以厚度产生视差', () => {
   assert.equal(sprites.back.visible, false);
   assert.ok(sprites.slices.every((sl) => !sl.visible), '正对时切片全部隐藏');
 
-  state.spinY = Math.PI / 2; // 侧对：面压到最窄，侧壁最厚 + 白闪可见
+  state.spinY = Math.PI / 2; // 侧对：面压到最窄，侧壁最厚
   state.velY = 10;
   applyFlip(sprites, state, o);
   assert.ok(Math.abs(sprites.body.scale.x) <= 2 * 0.05 + 1e-9);
@@ -146,8 +147,6 @@ test('applyFlip：正背面独立镜像并以厚度产生视差', () => {
     assert.ok(Math.abs(sprites.slices[i].position.x - want) < 1e-6, `slice[${i}].x=${sprites.slices[i].position.x}`);
     assert.ok(Math.abs(sprites.slices[i].scale.x - (2 / 3) * 0.05) < 1e-6, '切片与面同横压');
   });
-  assert.ok(sprites.flash.alpha > 0.5, `flash.alpha=${sprites.flash.alpha}`);
-  assert.ok(Math.abs(sprites.flash.position.x - 3) < 1e-6, '白闪位于侧壁中央');
   assert.ok(Math.abs(sprites.back.position.x - 6) < 1e-6, '背面应位于前面右侧一个完整厚度');
 
   state.spinY = Math.PI; // 背面：镜像
@@ -157,7 +156,6 @@ test('applyFlip：正背面独立镜像并以厚度产生视差', () => {
   assert.equal(sprites.back.visible, true);
   assert.ok(sprites.back.scale.x < 0, '背面 scale.x 为负（镜像）');
   assert.ok(sprites.slices.every((sl) => !sl.visible), '正对背面时无侧壁');
-  assert.equal(sprites.flash.visible, false);
 });
 
 test('applyFlip：全息门控同时响应 tilt，光带横扫位置也纳入 tilt', () => {
@@ -245,4 +243,66 @@ test('静置回正：翻滚停在背面圈数上，走最短路径回正面（�
   // home = 2π（最近正面圈）：回正走 ~1.88rad，而不是绕回 0（走 ~5.65rad）
   assert.ok(maxTravel < Math.PI, `maxTravel=${maxTravel.toFixed(2)}rad，应走最短路径`);
   assert.ok(Math.cos(s.spinY) > 0.95, `cosY=${Math.cos(s.spinY).toFixed(3)}，应停在正面`);
+});
+
+// ── 回归：闪卡层随 turtleSize 同步缩放（2026-09-21 修复）──
+
+test('syncLayerScales：body/back/mask 用基准 scale，foil/band/edge/slices 用 scale/3', () => {
+  const layers = {
+    body: mockSprite(), back: mockSprite(), mask: mockSprite(),
+    foil: mockSprite(), band: mockSprite(), edge: mockSprite(),
+    slices: [mockSprite(), mockSprite(), mockSprite()],
+  };
+  syncLayerScales(layers, 1);
+  assert.equal(layers.body.scale.y, 1);
+  assert.equal(layers.back.scale.y, 1);
+  assert.equal(layers.mask.scale.y, 1);
+  assert.equal(layers.foil.scale.y, 1 / 3);
+  assert.equal(layers.band.scale.y, 1 / 3);
+  assert.equal(layers.edge.scale.y, 1 / 3);
+  assert.ok(layers.slices.every((s) => Math.abs(s.scale.y - 1 / 3) < 1e-9));
+
+  // 尺寸 scale=1 → 4：所有层的 y 缩放必须更新，不残留旧值
+  syncLayerScales(layers, 4);
+  assert.equal(layers.body.scale.y, 4);
+  assert.equal(layers.back.scale.y, 4);
+  assert.equal(layers.mask.scale.y, 4);
+  assert.equal(layers.foil.scale.y, 4 / 3);
+  assert.equal(layers.band.scale.y, 4 / 3);
+  assert.equal(layers.edge.scale.y, 4 / 3);
+  assert.ok(layers.slices.every((s) => Math.abs(s.scale.y - 4 / 3) < 1e-9), '切片层不得保留旧 y 缩放');
+});
+
+test('缩放同步后翻转压缩不破坏新缩放：scale.y 保持，scale.x 由翻转接管', () => {
+  const layers = {
+    body: mockSprite(), back: mockSprite(), mask: mockSprite(),
+    edge: mockSprite(), slices: [mockSprite()],
+    foil: mockSprite(), band: mockSprite(), container: mockSprite(),
+  };
+  syncLayerScales(layers, 4);
+  const state = createFlipState();
+  state.spinY = Math.PI / 3;
+  applyFlip(layers, state, { baseScale: 4, edgeBase: 4 / 3, stripTop: -6, stripH: 100, thickness: 6, span: 100 });
+  assert.equal(layers.body.scale.y, 4, '翻转不改 y 缩放');
+  assert.ok(Math.abs(layers.body.scale.x - 4 * Math.cos(Math.PI / 3)) < 1e-9);
+  assert.equal(layers.edge.scale.y, 4 / 3);
+  assert.equal(layers.slices[0].scale.y, 4 / 3, '切片 y 缩放不被翻转残留');
+});
+
+test('侧对翻转不存在全高白闪层（flash 已删除，不得复活）', () => {
+  // 传入 flash 精灵时 applyFlip 也不得驱动它——旧的中央全高 ADD 白条已删除
+  const flash = mockSprite();
+  flash.visible = false;
+  const sprites = {
+    body: mockSprite(), back: mockSprite(), mask: mockSprite(), edge: mockSprite(),
+    slices: [mockSprite(), mockSprite()], foil: mockSprite(), band: mockSprite(),
+    container: mockSprite(), flash,
+  };
+  const state = createFlipState();
+  state.spinY = Math.PI / 2;
+  state.velY = 12;
+  applyFlip(sprites, state, { baseScale: 1, edgeBase: 1 / 3, stripTop: -6, stripH: 50, thickness: 6, span: 100 });
+  assert.equal(flash.visible, false, 'applyFlip 不得驱动任何 flash 层');
+  assert.equal(flash.alpha, 1, 'flash 的 alpha 不得被触碰');
+  assert.ok(sprites.slices.every((s) => s.visible), '侧壁切片仍在承担厚度表现');
 });

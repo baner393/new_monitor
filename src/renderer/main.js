@@ -28,8 +28,8 @@ import { ANCHOR_MODES, DEFAULT_ROPE_LENGTHS } from '../shared/anchor-model.js';
 import { resolveMousePassthrough } from './mouse-passthrough.js';
 import { CharmAnchorSampler } from './charm-anchor.js';
 import { createCharmMountSprite, CHARM_MOUNT_ANCHOR_OFFSET } from './charm-mount.js';
-import { buildFoilAssets, buildSlabTexture, buildEdgeFlashTexture } from './charm-foil.js';
-import { createFlipState, updateFlip, applyFlip } from './charm-flip.js';
+import { buildFoilAssets, buildSlabTexture } from './charm-foil.js';
+import { createFlipState, updateFlip, applyFlip, syncLayerScales } from './charm-flip.js';
 import { RingMenu } from './ring-menu.js';
 import { preloadRingIconTextures } from './ring-icons.js';
 
@@ -176,12 +176,9 @@ const foilFx = {
 const foilFoilSprite = new PIXI.Sprite(PIXI.Texture.EMPTY);
 const foilBandSprite = new PIXI.Sprite(PIXI.Texture.EMPTY);
 const foilEdgeSprite = new PIXI.Sprite(PIXI.Texture.EMPTY);
-const foilFlashSprite = new PIXI.Sprite(PIXI.Texture.EMPTY);
 foilFoilSprite.visible = false;
 foilBandSprite.visible = false;
 foilEdgeSprite.visible = false;
-foilFlashSprite.visible = false;
-foilFlashSprite.blendMode = PIXI.BLEND_MODES.ADD;
 // 子节点在 body/back 创建后以 back → slices/flash → front → edge/foil/band 接线。
 
 const SLAB_SLICE_COUNT = 14; // 切片堆叠层数（真厚度侧壁）
@@ -192,7 +189,8 @@ function rebuildFoilAssets(sourceImg, grip) {
     const foilTex = PIXI.Texture.from(assets.foil);
     const bandTex = PIXI.Texture.from(assets.band);
     const edgeTex = PIXI.Texture.from(assets.edge);
-    const displayScale = bodySprite.scale.x / 3; // 纹理 = 皮肤帧 ×3
+    // 纹理 = 皮肤帧 ×3；用 scale.y——applyFlip 每帧接管 scale.x（翻转压缩），重建时可能正处压缩态
+    const displayScale = bodySprite.scale.y / 3;
 
     const maskSprite = new PIXI.Sprite(idleTexture);
     maskSprite.anchor.copyFrom(bodySprite.anchor);
@@ -246,27 +244,19 @@ function rebuildFoilAssets(sourceImg, grip) {
       foilFx.slices.push(slice);
     }
 
-    foilFlashSprite.texture = PIXI.Texture.from(buildEdgeFlashTexture(assets.size));
-    foilFlashSprite.anchor.set(0.5, 0);
     foilEdgeSprite.visible = true;
     foilFx.size = assets.size;
     foilFx.frameW = assets.frameW || assets.size;
     foilFx.frameH = assets.frameH || assets.size;
-    // 可见轮廓占比（厚度侧棱贴可见身体而非帧缘）
-    const tight = assets.tight || { lx: 0, rx: assets.frameW, ty: 0, by: assets.frameH };
-    foilFx.frac = {
-      uL: tight.lx / assets.frameW, uR: tight.rx / assets.frameW,
-      v0: tight.ty / assets.frameH, v1: tight.by / assets.frameH,
-    };
     // 层序修正（addChild 对已有子节点 = 移到顶层），底→顶：
-    // 背面 → 厚度切片 → 白闪 → 正面卡面 → 描边/箔/光带
+    // 背面 → 厚度切片 → 正面卡面 → 描边/箔/光带
     turtleContainer.addChild(backSprite);
     for (const slice of foilFx.slices) turtleContainer.addChild(slice);
-    turtleContainer.addChild(foilFlashSprite);
     turtleContainer.addChild(bodySprite);
     turtleContainer.addChild(foilEdgeSprite);
     turtleContainer.addChild(foilFoilSprite);
     turtleContainer.addChild(foilBandSprite);
+    syncLayerScales(foilLayers(), bodySprite.scale.y);
     console.log(`[CharmFoil] assets rebuilt (size ${assets.size})`);
   } catch (error) {
     console.error('[CharmFoil] asset build failed:', error);
@@ -276,6 +266,15 @@ function rebuildFoilAssets(sourceImg, grip) {
 let prevTurtleVx = 0;
 let prevTurtleVy = 0;
 const charmAccel = { x: 0, y: 0 }; // 挂饰加速度（速度差分 + 平滑，重力链接驱动量）
+
+// 闪卡全部层的统一视图（缩放同步用）
+function foilLayers() {
+  return {
+    body: bodySprite, back: backSprite, mask: foilFx.maskSprite,
+    foil: foilFoilSprite, band: foilBandSprite, edge: foilEdgeSprite,
+    slices: foilFx.slices,
+  };
+}
 
 function updateFoilFx(dt) {
   // 背面朝向时 applyFlip 会隐藏正面箔层；它不能成为更新早退条件，
@@ -305,8 +304,6 @@ function updateFoilFx(dt) {
 
   const scale = bodySprite.scale.y; // 基准 scale（翻转只改 x）
   const displayW = (foilFx.frameW || currentSkinBaseSize) * scale;
-  const displayH = (foilFx.frameH || currentSkinBaseSize) * scale;
-  const frac = foilFx.frac || { uL: 0, uR: 1, v0: 0, v1: 1 };
   applyFlip(
     {
       body: bodySprite,
@@ -314,7 +311,6 @@ function updateFoilFx(dt) {
       mask: foilFx.maskSprite,
       edge: foilEdgeSprite,
       slices: foilFx.slices,
-      flash: foilFlashSprite,
       foil: foilFoilSprite,
       band: foilBandSprite,
       container: turtleContainer,
@@ -323,8 +319,6 @@ function updateFoilFx(dt) {
     {
       baseScale: scale,
       edgeBase: scale / 3, // 纹理 = 皮肤帧 ×3
-      stripTop: (frac.v0 - currentGripPoint.y) * displayH,
-      stripH: (frac.v1 - frac.v0) * displayH,
       thickness: Math.max(2, Math.min(9, displayW * 0.07)),
       span: displayW, // 光带扫动范围 = 精灵显示宽
     },
@@ -342,7 +336,6 @@ const backSprite = new PIXI.Sprite(idleTexture);
 backSprite.anchor.copyFrom(bodySprite.anchor);
 backSprite.scale.copyFrom(bodySprite.scale);
 turtleContainer.addChild(backSprite);
-turtleContainer.addChild(foilFlashSprite);
 turtleContainer.addChild(bodySprite);
 turtleContainer.addChild(foilEdgeSprite);
 turtleContainer.addChild(foilFoilSprite);
@@ -353,7 +346,7 @@ if (import.meta.env.DEV) {
     flipState,
     charmAccel,
     foilFx,
-    sprites: { back: backSprite, flash: foilFlashSprite, edge: foilEdgeSprite, foil: foilFoilSprite, band: foilBandSprite, body: bodySprite },
+    sprites: { back: backSprite, edge: foilEdgeSprite, foil: foilFoilSprite, band: foilBandSprite, body: bodySprite },
   };
 }
 
@@ -685,7 +678,9 @@ async function loadAndApplySettings() {
 // ── Anchor mode（经典顶边悬挂 / 挂饰跟随鼠标）─────────────────────────
 // ropeLength 是「当前模式的绳长」：切换模式时渲染端记住各自的值并持久化，
 // 避免经典 150 串进挂饰（挂饰默认 80）。
-const charmAnchorSampler = new CharmAnchorSampler();
+const charmAnchorSampler = new CharmAnchorSampler({
+  getCursorPosition: () => window.electronAPI.getCursorPosition(),
+});
 // 挂饰指引第 1 课（移动鼠标）的累计位移
 let charmGuideTravel = 0;
 let charmGuideLastCursor = null;
@@ -861,8 +856,9 @@ function applySettings(settings, { isInitialLoad = false } = {}) {
   // Handle turtleSize - update sprite scale (respect current skin's baseSize)
   if (settings.turtleSize !== undefined) {
     const scale = settings.turtleSize / currentSkinBaseSize;
-    bodySprite.scale.set(scale);
-    backSprite.scale.set(scale);
+    // 纯尺寸变化不重建纹理：body/back/mask 用基准 scale，
+    // foil/band/edge/slices 用 scale/3（纹理 ×3 预渲染）
+    syncLayerScales(foilLayers(), scale);
     console.log(`[Settings] Turtle size: ${settings.turtleSize}, scale: ${scale.toFixed(2)} (baseSize: ${currentSkinBaseSize})`);
   }
   
@@ -1104,8 +1100,11 @@ if (window.electronAPI?.onSoftRefresh) {
   });
 }
 
+let latestSystemData = null;
 window.electronAPI.onSystemData((data) => {
-  panel.update(data);
+  latestSystemData = data;
+  // 隐藏的面板不重建 PIXI 图形；下一次打开会立即使用这份缓存。
+  if (panel.isOpen || panel.isAnimating) panel.update(data);
 });
 window.electronAPI.requestSystemData();
 
@@ -1261,6 +1260,7 @@ function onStateChange() {
     // Position panel below the sprite（挂饰锚点=光标滑轮；经典=顶边）
     const anchorX = isCharmMode() ? physics.pulley.x : physics.screenAnchorX * window.innerWidth;
     panel.setPosition(anchorX, sprite.y + 80);
+    if (latestSystemData) panel.update(latestSystemData);
     panel.expand(() => {
       console.log('[Panel] Fully open → PANEL_OPEN');
       stateMachine.transition('PANEL_FULLY_OPEN');
@@ -1375,7 +1375,7 @@ pixiApp.ticker.add((delta) => {
   fpsCount++;
   fpsTime += dt;
   if (fpsTime >= 1.0) {
-    console.log(`[FPS] ${Math.round(fpsCount / fpsTime)}`);
+    if (import.meta.env.DEV) console.log(`[FPS] ${Math.round(fpsCount / fpsTime)}`);
     fpsCount = 0;
     fpsTime = 0;
   }
@@ -1854,7 +1854,7 @@ pixiApp.ticker.add((delta) => {
   }
 
   // Log every 60 frames
-  if (frameCount % 60 === 0) {
+  if (import.meta.env.DEV && frameCount % 60 === 0) {
     console.log(`[GameLoop] State: ${state}, Window: ${window.innerWidth}x${window.innerHeight}, Turtle: (${sprite.x.toFixed(0)}, ${sprite.y.toFixed(0)})`);
   }
 });

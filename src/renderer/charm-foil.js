@@ -203,21 +203,3 @@ export function buildSlabTexture(skinFrame) {
   ctx.putImageData(img, 0, 0);
   return c;
 }
-
-/**
- * 侧棱白闪纹理：中央亮白、两侧渐隐的竖条（ADD 混合叠加在厚度侧棱上，
- * 翻转经过侧棱瞬间的「硬币闪光」）。
- * @param {number} h 高度（与箔面同高）
- */
-export function buildEdgeFlashTexture(h) {
-  const w = 16;
-  const c = makeCanvas(w, h);
-  const ctx = c.getContext('2d');
-  const g = ctx.createLinearGradient(0, 0, w, 0);
-  g.addColorStop(0, 'rgba(255,255,255,0)');
-  g.addColorStop(0.5, 'rgba(255,255,255,0.95)');
-  g.addColorStop(1, 'rgba(255,255,255,0)');
-  ctx.fillStyle = g;
-  ctx.fillRect(0, 0, w, h);
-  return c;
-}
