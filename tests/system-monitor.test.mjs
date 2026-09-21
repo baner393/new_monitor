@@ -9,6 +9,7 @@ import {
   mergeWindowsSnapshots,
   parseWindowsSystemOutput,
   resolveMonitorCadence,
+  SystemMonitor,
 } from '../src/main/system-monitor.js';
 
 test('calculates total and per-core CPU deltas', () => {
@@ -150,16 +151,39 @@ test('matches hardware readings to the correct GPU without guessing between mult
   assert.equal(matchHardwareGpu('Unknown virtual adapter', hardware), null);
 });
 
-test('monitor cadence keeps panel data fast while reducing hidden and battery polling', () => {
+test('monitor cadence keeps panel data fast while using the low-power hidden cadence', () => {
   assert.deepEqual(resolveMonitorCadence({ panelOpen: true, onBattery: true, idleSeconds: 600 }), {
     portable: 1000, windows: 2000, nvidia: 2000, hardware: 2000,
   });
   assert.deepEqual(resolveMonitorCadence({ panelOpen: false, onBattery: false, idleSeconds: 0 }), {
-    portable: 2000, windows: 5000, nvidia: 5000, hardware: 5000,
+    portable: 5000, windows: 10000, nvidia: 10000, hardware: 10000,
   });
   assert.deepEqual(resolveMonitorCadence({ panelOpen: false, onBattery: true, idleSeconds: 0 }), {
     portable: 5000, windows: 10000, nvidia: 10000, hardware: 10000,
   });
+  assert.deepEqual(resolveMonitorCadence({ panelOpen: false, onBattery: false, idleSeconds: 600 }), {
+    portable: 5000, windows: 10000, nvidia: 10000, hardware: 10000,
+  });
+});
+
+test('monitor activity switches cadence immediately on panel open and defers work on close', () => {
+  let now = 10_000;
+  const monitor = new SystemMonitor(null, 2000, { now: () => now });
+  const scheduled = [];
+  monitor._schedule = (delay, force = false) => scheduled.push({ delay, force });
+  monitor.activityState = { panelOpen: true, onBattery: false, suspended: false };
+  monitor.nextDue = { portable: now + 1, windows: now + 1, nvidia: now + 1, hardware: now + 1 };
+
+  monitor.setActivityState({ panelOpen: false });
+  assert.deepEqual(monitor.nextDue, {
+    portable: 15_000, windows: 20_000, nvidia: 20_000, hardware: 20_000,
+  });
+  assert.deepEqual(scheduled.pop(), { delay: 5000, force: false });
+
+  now += 100;
+  monitor.setActivityState({ panelOpen: true });
+  assert.deepEqual(monitor.nextDue, { portable: 0, windows: 0, nvidia: 0, hardware: 0 });
+  assert.deepEqual(scheduled.pop(), { delay: 0, force: true });
 });
 
 test('persistent Windows monitor script accepts repeated snapshot commands', () => {

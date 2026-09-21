@@ -10,25 +10,31 @@
 import { freshestCursorSample, isFiniteCoordinate } from '../shared/anchor-model.js';
 
 export class CharmAnchorSampler {
-  constructor() {
+  constructor({ getCursorPosition = null, now = () => performance.now(), domFreshMs = 120, fallbackIntervalMs = 80 } = {}) {
+    this._getCursorPosition = getCursorPosition;
+    this._now = now;
+    this._domFreshMs = domFreshMs;
+    this._fallbackIntervalMs = fallbackIntervalMs;
     this._windowCursor = null;
     this._windowAt = 0;
     this._screenCursor = null;
     this._screenAt = 0;
+    this._inFlight = false;
+    this._lastFallbackAt = -Infinity;
   }
 
   /** DOM mousemove 源：窗内每像素更新。 */
   noteWindowCursor(x, y) {
     if (!isFiniteCoordinate(x) || !isFiniteCoordinate(y)) return;
     this._windowCursor = { x, y };
-    this._windowAt = performance.now();
+    this._windowAt = this._now();
   }
 
   /** IPC screen.getCursorScreenPoint 源：光标在哪都能取到，慢 1-3 帧。 */
   noteScreenCursor(x, y) {
     if (!isFiniteCoordinate(x) || !isFiniteCoordinate(y)) return;
     this._screenCursor = { x, y };
-    this._screenAt = performance.now();
+    this._screenAt = this._now();
   }
 
   /** 当帧的最新光标；无任何有效源时返回 null（调用方保持上一帧锚点）。 */
@@ -48,19 +54,25 @@ export class CharmAnchorSampler {
    * 80ms 降到单次 IPC 往返（约 2-4ms）。
    */
   pollOnce() {
-    if (this._inFlight || !this._getCursorPosition) return;
+    const now = this._now();
+    // 透明全屏窗口正常会转发 DOM mousemove；该零延迟来源新鲜时无需再
+    // 穿越主进程查询系统光标。仅把 IPC 留给转发偶发失效的兜底路径。
+    if (now - this._windowAt <= this._domFreshMs) return false;
+    if (this._inFlight || !this._getCursorPosition || now - this._lastFallbackAt < this._fallbackIntervalMs) return false;
     this._inFlight = true;
+    this._lastFallbackAt = now;
     Promise.resolve()
       .then(() => this._getCursorPosition())
       .then((pos) => {
         this._inFlight = false;
         if (pos && Number.isFinite(pos.x) && Number.isFinite(pos.y)) {
           this._screenCursor = { x: pos.x, y: pos.y };
-          this._screenAt = performance.now();
+          this._screenAt = this._now();
         }
       })
       .catch(() => {
         this._inFlight = false;
       });
+    return true;
   }
 }

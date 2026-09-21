@@ -1420,10 +1420,13 @@ export function resolveMonitorCadence({ panelOpen = false, onBattery = false, id
   if (panelOpen) {
     return { portable: 1000, windows: 2000, nvidia: 2000, hardware: 2000 };
   }
-  if (onBattery || idleSeconds >= 60) {
-    return { portable: 5000, windows: 10000, nvidia: 10000, hardware: 10000 };
-  }
-  return { portable: 2000, windows: 5000, nvidia: 5000, hardware: 5000 };
+  // The desktop companion keeps its animation ticker running independently of
+  // this monitor.  When the dashboard is not visible, collecting a fresh
+  // snapshot every couple of seconds just wakes up PowerShell and the sensor
+  // host without changing anything the user can see.  Keep a compact cached
+  // snapshot instead and restore the interactive cadence immediately when the
+  // panel opens.
+  return { portable: 5000, windows: 10000, nvidia: 10000, hardware: 10000 };
 }
 
 export class SystemMonitor {
@@ -1499,6 +1502,7 @@ export class SystemMonitor {
     }
     const resumed = previous.suspended && !this.activityState.suspended;
     const becameInteractive = (!previous.panelOpen && this.activityState.panelOpen) || resumed;
+    const becameBackground = previous.panelOpen && !this.activityState.panelOpen;
     if (resumed) {
       this.nvidiaClient?.resetCapabilities();
       this.nvidiaAvailable = null;
@@ -1510,7 +1514,17 @@ export class SystemMonitor {
     if (becameInteractive) {
       this.nextDue = { portable: 0, windows: 0, nvidia: 0, hardware: 0 };
     }
-    this._schedule(0, becameInteractive);
+    if (becameBackground) {
+      const now = this.now();
+      const cadence = resolveMonitorCadence({ ...this.activityState, idleSeconds: 0 });
+      this.nextDue = {
+        portable: now + cadence.portable,
+        windows: now + cadence.windows,
+        nvidia: now + cadence.nvidia,
+        hardware: now + cadence.hardware,
+      };
+    }
+    this._schedule(becameBackground ? resolveMonitorCadence(this.activityState).portable : 0, becameInteractive);
   }
 
   async requestHardwareElevation() {
@@ -1568,7 +1582,13 @@ export class SystemMonitor {
     }
 
     const nextAt = Math.min(...Object.values(this.nextDue).filter((value) => value > now));
-    const delay = Number.isFinite(nextAt) ? Math.min(2000, Math.max(250, nextAt - now)) : 2000;
+    // Do not wake the main process every two seconds merely to discover that
+    // every hidden-panel source is still several seconds away.  Activity
+    // changes and explicit refreshes cancel this timer and schedule instantly.
+    const maxTickDelay = cadence.portable;
+    const delay = Number.isFinite(nextAt)
+      ? Math.min(maxTickDelay, Math.max(250, nextAt - now))
+      : maxTickDelay;
     this._schedule(delay);
   }
 

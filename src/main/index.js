@@ -563,6 +563,31 @@ function toggleCharmVisibility() {
   charmTray?.rebuild();
 }
 
+let backgroundMonitoringStarted = false;
+
+// Monitoring can involve PowerShell, NVML and disk scans.  Constructing the
+// window is intentionally kept ahead of that work so the desktop companion
+// reaches its first interactive frame promptly.  Any user-driven demand
+// (opening the panel or pressing refresh) calls this same function and is not
+// made to wait for the normal renderer-ready path.
+function startBackgroundMonitoring(window = mainWindow) {
+  if (!window || window.isDestroyed()) return;
+  const firstStart = !backgroundMonitoringStarted;
+  backgroundMonitoringStarted = true;
+  if (systemMonitor) {
+    systemMonitor.win = window;
+    if (firstStart) systemMonitor.start();
+  }
+  if (codexMonitor) {
+    codexMonitor.setWindow(window);
+    codexMonitor.start();
+  }
+  if (claudeMonitor) {
+    claudeMonitor.setWindow(window);
+    claudeMonitor.start();
+  }
+}
+
 function dispatchCharmTrayAction(id) {
   switch (id) {
     case 'toggle-visibility':
@@ -717,6 +742,7 @@ function createWindow({ show = true } = {}) {
         systemMonitor.stop();
         systemMonitor = null;
       }
+      backgroundMonitoringStarted = false;
       mainWindow = null;
     }
   });
@@ -729,22 +755,12 @@ function createWindow({ show = true } = {}) {
   });
   if (systemMonitor) {
     systemMonitor.win = browserWindow;
-    systemMonitor.requestSnapshot();
   } else {
     systemMonitor = new SystemMonitor(browserWindow, 2000, {
       sensorHostPath,
       getSystemIdleTime: () => powerMonitor.getSystemIdleTime(),
     });
     systemMonitor.setActivityState({ onBattery: powerMonitor.isOnBatteryPower() });
-    systemMonitor.start();
-  }
-  if (codexMonitor) {
-    codexMonitor.setWindow(browserWindow);
-    codexMonitor.scan(true);
-  }
-  if (claudeMonitor) {
-    claudeMonitor.setWindow(browserWindow);
-    claudeMonitor.scan(true);
   }
   return browserWindow;
 }
@@ -795,8 +811,6 @@ app.whenReady().then(() => {
       saveSettings();
     },
   });
-  codexMonitor.start();
-  claudeMonitor.start();
   createWindow();
 
   // 托盘 + 低级键盘钩子：挂饰模式全程 click-through 后的非点击保底入口。
@@ -859,7 +873,10 @@ ipcMain.handle('renderer-input-generation-get', (event) => {
 ipcMain.on('renderer-input-ready', (event, ignore, generation) => {  if (mainWindow && event.sender === mainWindow.webContents) {
     const accepted = mainWindowInputGuard?.markRendererReady(ignore, generation);
     console.log(`[Window] Renderer input generation ${mainWindowInputGuard?.generation} ready; passthrough=${Boolean(ignore)} accepted=${Boolean(accepted)}`);
-    if (accepted) completeWindowRecovery(mainWindow);
+    if (accepted) {
+      completeWindowRecovery(mainWindow);
+      startBackgroundMonitoring(mainWindow);
+    }
   }
 });
 
@@ -882,15 +899,22 @@ ipcMain.handle('cursor-position-get', (event) => {
 
 // IPC: renderer can manually request a fresh system snapshot.
 ipcMain.on('request-system-data', () => {
+  // The renderer emits an initial cache request during module setup.  Delay
+  // expensive process discovery until its first interactive frame; requests
+  // after that frame retain the existing immediate-refresh behavior.
+  if (backgroundMonitoringStarted) startBackgroundMonitoring(mainWindow);
   if (systemMonitor) {
-    systemMonitor.requestSnapshot();
+    if (backgroundMonitoringStarted) systemMonitor.requestSnapshot();
   }
-  codexMonitor?.scan(true);
-  claudeMonitor?.scan(true);
+  if (backgroundMonitoringStarted) {
+    codexMonitor?.scan(true);
+    claudeMonitor?.scan(true);
+  }
 });
 
 ipcMain.on('monitor-activity-set', (event, state = {}) => {
   if (!mainWindow || event.sender !== mainWindow.webContents) return;
+  if (state.panelOpen) startBackgroundMonitoring(mainWindow);
   systemMonitor?.setActivityState({ panelOpen: Boolean(state.panelOpen) });
 });
 
