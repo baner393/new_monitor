@@ -1,6 +1,7 @@
 import { PhysicsEngine } from './physics.js';
 import {
   PET_SETTING_FIELDS,
+  PET_SETTING_GROUPS,
   PET_SETTING_SECTIONS,
   PET_SETTINGS_DEFAULTS,
   PET_SETTINGS_PRESETS,
@@ -14,6 +15,7 @@ import {
   normalizePetSettings,
   scalePreviewRopeLength,
 } from '../shared/pet-settings-model.js';
+import { comboFromKeyboardEvent } from '../shared/charm-keymap.js';
 
 export { ROPE_ELASTICITY_STEPS };
 
@@ -243,18 +245,72 @@ export class SettingsPanel {
 
   _renderPreciseControls(sectionId) {
     const fields = Object.entries(PET_SETTING_FIELDS).filter(([, field]) => field.section === sectionId);
-    const list = element('section', 'pet-settings-block pet-settings-field-list');
-    for (const [key, field] of fields) {
-      if (field.type === 'boolean') list.append(this._createSwitchControl(key, field));
-      else list.append(this._createRangeControl({
-        key,
-        ...field,
-        value: this._values[key],
-        formatter: (value) => formatValue(value, field),
-        onInput: (value) => this._applyValues({ ...this._values, [key]: value }, false),
-      }));
+    // 按 group 分小区块（经典模式 = 左键/右键；挂饰 = 手感/视觉/快捷键）
+    const groups = PET_SETTING_GROUPS[sectionId];
+    const grouped = new Map();
+    for (const entry of fields) {
+      const g = entry[1].group || '_';
+      if (!grouped.has(g)) grouped.set(g, []);
+      grouped.get(g).push(entry);
     }
-    this.workspace.append(list);
+    for (const [groupId, groupFields] of grouped) {
+      if (groups?.[groupId]) {
+        const blockLabel = element('div', 'pet-settings-block-label', groups[groupId]);
+        this.workspace.append(blockLabel);
+      }
+      const list = element('section', 'pet-settings-block pet-settings-field-list');
+      for (const [key, field] of groupFields) {
+        if (field.type === 'boolean') list.append(this._createSwitchControl(key, field));
+        else if (field.type === 'hotkey') list.append(this._createHotkeyControl(key, field));
+        else list.append(this._createRangeControl({
+          key,
+          ...field,
+          value: this._values[key],
+          formatter: (value) => formatValue(value, field),
+          onInput: (value) => this._applyValues({ ...this._values, [key]: value }, false),
+        }));
+      }
+      this.workspace.append(list);
+    }
+  }
+
+  _createHotkeyControl(key, field) {
+    const row = element('div', 'pet-settings-range pet-settings-hotkey');
+    row.dataset.control = key;
+    const copy = element('div', 'pet-settings-control-copy');
+    copy.append(element('strong', '', field.label));
+    copy.append(element('small', '', field.hint));
+    row.append(copy);
+
+    const button = element('button', 'pet-settings-hotkey-button', String(this._values[key] || ''));
+    button.type = 'button';
+    button.setAttribute('aria-label', `${field.label}，点击后按下新组合`);
+    const stopRecording = () => {
+      button.dataset.recording = 'false';
+      button.textContent = String(this._values[key] || '');
+      // 录制结束，恢复全局快捷键钩子
+      window.electronAPI?.charmHotkeyRecording?.(false);
+    };
+    button.addEventListener('click', () => {
+      button.dataset.recording = 'true';
+      button.textContent = '按下新组合…（Esc 取消）';
+      button.focus();
+      // 录制期间屏蔽全局钩子：否则按下旧组合会误开环形菜单
+      window.electronAPI?.charmHotkeyRecording?.(true);
+    });
+    button.addEventListener('blur', stopRecording);
+    button.addEventListener('keydown', (event) => {
+      if (button.dataset.recording !== 'true') return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.key === 'Escape') { stopRecording(); return; }
+      const combo = comboFromKeyboardEvent(event);
+      if (!combo) return; // 纯修饰键或无修饰键：继续等
+      this._applyValues({ ...this._values, [key]: combo });
+      stopRecording();
+    });
+    row.append(button);
+    return row;
   }
 
   _createRangeControl(options) {

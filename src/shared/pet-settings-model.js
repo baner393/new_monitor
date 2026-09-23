@@ -1,3 +1,5 @@
+import { normalizeHotkeyCombo } from './charm-keymap.js';
+
 const clamp = (value, min, max) => Math.min(max, Math.max(min, Number(value)));
 
 export const ROPE_ELASTICITY_STEPS = [
@@ -18,29 +20,55 @@ export const PET_SETTINGS_DEFAULTS = Object.freeze({
   ropeElasticity: 5,
   ambientSwingEnabled: true,
   panelMoveStable: true,
+  // ── 挂饰模式 ──
+  charmFlipEnergy: 50,      // 翻转灵敏度（0-100）
+  charmFlipSpin: 50,        // 翻滚时长（0-100）
+  charmIdleSway: 50,        // 静置摇摆幅度（0-100）
+  charmGravityLink: 50,     // 重力链接感（0-100）
+  charmThickness: 50,       // 卡牌厚度（0-100）
+  charmFlipEnabled: true,   // 翻转效果开关
+  charmHoloEnabled: true,   // 全息闪卡开关
+  charmHotkeyEnabled: true, // 挂饰快捷键开关
+  charmHotkey: 'Ctrl+Alt+A',
 });
 
 export const PET_SETTING_SECTIONS = Object.freeze([
   { id: 'quick', label: '快速调校', shortLabel: '快速', description: '用手感控制和预设快速得到想要的效果。' },
   { id: 'appearance', label: '外观与悬挂', shortLabel: '外观', description: '控制桌宠尺寸与静止悬挂高度。' },
-  { id: 'left', label: '左键摆动', shortLabel: '左键', description: '调整拉拽后的摆动速度、延续时间和绳感。' },
-  { id: 'right', label: '右键甩动', shortLabel: '右键', description: '调整甩动、碰撞和弹簧回拉的物理反馈。' },
+  { id: 'classic', label: '经典模式', shortLabel: '经典', description: '顶边悬挂形态的物理手感，左键摆动与右键甩动分开调整。' },
+  { id: 'charm', label: '挂饰模式', shortLabel: '挂饰', description: '鼠标挂饰的翻转手感、视觉效果与快捷键。' },
   { id: 'panel', label: '面板行为', shortLabel: '面板', description: '控制监控面板展开时的移动方式。' },
 ]);
+
+// 分组内的小区块标题（字段用 group 归属）
+export const PET_SETTING_GROUPS = Object.freeze({
+  classic: { left: '左键摆动', right: '右键甩动' },
+  charm: { feel: '翻转手感', visual: '视觉效果', hotkey: '快捷键' },
+});
 
 export const PET_SETTING_FIELDS = Object.freeze({
   turtleSize: { section: 'appearance', label: '桌宠大小', hint: '桌面上桌宠的显示尺寸', min: 24, max: 192, step: 2, unit: 'px' },
   ropeLength: { section: 'appearance', label: '悬挂高度', hint: '桌宠静止时绳子的默认长度', min: 30, max: 400, step: 5, unit: 'px' },
   ambientSwingEnabled: { section: 'appearance', label: '待机自摆动', hint: '空闲和悬停时保持轻微自然摆动；不影响拖拽和 Codex 主动状态动作', type: 'boolean' },
-  gravity: { section: 'left', label: '重力', hint: '数值越大，下落和摆动越有重量感', min: 200, max: 2000, step: 50, unit: 'px/s²' },
-  damping: { section: 'left', label: '摆动延续', hint: '越接近 1，摆动持续得越久', min: 0.9, max: 1, step: 0.005, unit: '' },
-  ropeElasticity: { section: 'left', label: '绳子弹性', hint: '1 最松软，12 最紧绷', min: 1, max: 12, step: 1, unit: '档' },
-  pulleyFriction: { section: 'right', label: '滑轮惯性', hint: '越大越容易保留水平移动速度', min: 0.8, max: 1, step: 0.01, unit: '' },
-  ropeStiffness: { section: 'right', label: '回拉力度', hint: '绳子被拉长后的回弹力量', min: 100, max: 1000, step: 50, unit: '' },
-  ropeDamping: { section: 'right', label: '回拉收敛', hint: '抑制弹簧往复振动的强度', min: 5, max: 30, step: 1, unit: '' },
-  bounceRestitution: { section: 'right', label: '碰撞弹力', hint: '桌宠碰到屏幕边缘后的反弹幅度', min: 0.1, max: 1, step: 0.1, unit: '' },
-  airDamping: { section: 'right', label: '空气阻力', hint: '越小阻力越大，甩动停止得越快', min: 0.9, max: 1, step: 0.01, unit: '' },
+  gravity: { section: 'classic', group: 'left', label: '重力', hint: '数值越大，下落和摆动越有重量感', min: 200, max: 2000, step: 50, unit: 'px/s²' },
+  damping: { section: 'classic', group: 'left', label: '摆动延续', hint: '越接近 1，摆动持续得越久', min: 0.9, max: 1, step: 0.005, unit: '' },
+  ropeElasticity: { section: 'classic', group: 'left', label: '绳子弹性', hint: '1 最松软，12 最紧绷', min: 1, max: 12, step: 1, unit: '档' },
+  pulleyFriction: { section: 'classic', group: 'right', label: '滑轮惯性', hint: '越大越容易保留水平移动速度', min: 0.8, max: 1, step: 0.01, unit: '' },
+  ropeStiffness: { section: 'classic', group: 'right', label: '回拉力度', hint: '绳子被拉长后的回弹力量', min: 100, max: 1000, step: 50, unit: '' },
+  ropeDamping: { section: 'classic', group: 'right', label: '回拉收敛', hint: '抑制弹簧往复振动的强度', min: 5, max: 30, step: 1, unit: '' },
+  bounceRestitution: { section: 'classic', group: 'right', label: '碰撞弹力', hint: '桌宠碰到屏幕边缘后的反弹幅度', min: 0.1, max: 1, step: 0.1, unit: '' },
+  airDamping: { section: 'classic', group: 'right', label: '空气阻力', hint: '越小阻力越大，甩动停止得越快', min: 0.9, max: 1, step: 0.01, unit: '' },
   panelMoveStable: { section: 'panel', label: '面板移动稳定', hint: '打开跟随宠物的面板时固定位置并暂停待机自摆动；拖动时使用稳定参数', type: 'boolean' },
+  // ── 挂饰模式 ──
+  charmFlipEnergy: { section: 'charm', group: 'feel', label: '翻转灵敏度', hint: '鼠标一动就翻 / 要用力甩才翻', min: 0, max: 100, step: 5, unit: '%' },
+  charmFlipSpin: { section: 'charm', group: 'feel', label: '翻滚时长', hint: '翻转后翻滚持续的时间', min: 0, max: 100, step: 5, unit: '%' },
+  charmIdleSway: { section: 'charm', group: 'feel', label: '静置摇摆', hint: '静止时挂牌轻轻摇晃的幅度', min: 0, max: 100, step: 5, unit: '%' },
+  charmGravityLink: { section: 'charm', group: 'feel', label: '重力链接感', hint: '加速/甩动时挂牌随惯性倾斜的强度', min: 0, max: 100, step: 5, unit: '%' },
+  charmThickness: { section: 'charm', group: 'visual', label: '卡牌厚度', hint: '翻转时露出的金属侧壁厚度', min: 0, max: 100, step: 5, unit: '%' },
+  charmFlipEnabled: { section: 'charm', group: 'visual', label: '翻转效果', hint: '关闭后挂饰保持正面朝外，不翻滚', type: 'boolean' },
+  charmHoloEnabled: { section: 'charm', group: 'visual', label: '全息闪卡', hint: '关闭后表面不泛起全息反光与光带', type: 'boolean' },
+  charmHotkeyEnabled: { section: 'charm', group: 'hotkey', label: '挂饰快捷键', hint: '按住组合键呼出环形菜单', type: 'boolean' },
+  charmHotkey: { section: 'charm', group: 'hotkey', label: '快捷键组合', hint: '点击右侧按键框，按下新的组合即可更换', type: 'hotkey' },
 });
 
 export const PET_SETTINGS_PRESETS = Object.freeze({
@@ -89,9 +117,14 @@ export function normalizePetSettings(value = {}) {
   const normalized = { ...PET_SETTINGS_DEFAULTS };
   for (const [key, field] of Object.entries(PET_SETTING_FIELDS)) {
     if (value[key] === undefined) continue;
-    normalized[key] = field.type === 'boolean'
-      ? Boolean(value[key])
-      : snap(value[key], field);
+    if (field.type === 'boolean') {
+      normalized[key] = Boolean(value[key]);
+    } else if (field.type === 'hotkey') {
+      const combo = normalizeHotkeyCombo(value[key]);
+      if (combo) normalized[key] = combo;
+    } else {
+      normalized[key] = snap(value[key], field);
+    }
   }
   normalized.ropeElasticity = nearestElasticityStep(value.ropeElasticity ?? normalized.ropeElasticity);
   return normalized;

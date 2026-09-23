@@ -1200,3 +1200,27 @@ button:disabled, input:disabled, textarea:disabled, select:disabled { opacity: 0
 @media (prefers-reduced-motion: reduce) {
   .subscription-root, .subscription-panel { transition: none; }
 }
+
+/* 挂饰快捷键录制按钮 */
+.pet-settings-hotkey-button {
+  min-width: 140px;
+  padding: 8px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  text-align: center;
+}
+.pet-settings-hotkey-button:hover { background: rgba(255, 255, 255, 0.12); }
+.pet-settings-hotkey-button[data-recording='true'] {
+  border-color: #6cc8ff;
+  color: #6cc8ff;
+  animation: pet-settings-hotkey-pulse 1.2s ease-in-out infinite;
+}
+@keyframes pet-settings-hotkey-pulse {
+  50% { background: rgba(108, 200, 255, 0.18); }
+}

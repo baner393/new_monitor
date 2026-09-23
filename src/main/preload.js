@@ -253,6 +253,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 
   /**
+   * Charm hotkey recording — while the settings panel captures a new combo,
+   * the global low-level hook must ignore all key events (otherwise pressing
+   * the old combo mid-recording would open the ring menu).
+   */
+  charmHotkeyRecording: (active) => {
+    ipcRenderer.send('charm-hotkey-recording', Boolean(active));
+  },
+
+  /**
    * Skin persistence API — save/load selected skin across sessions.
    */
   skin: {

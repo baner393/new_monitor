@@ -6,6 +6,7 @@ import {
   sliceOffsets,
   applyFlip,
   syncLayerScales,
+  knobsToFlipConfig,
   HANG_GRAVITY,
   TILT_MAX,
 } from '../src/renderer/charm-flip.js';
@@ -305,4 +306,48 @@ test('侧对翻转不存在全高白闪层（flash 已删除，不得复活）',
   assert.equal(flash.visible, false, 'applyFlip 不得驱动任何 flash 层');
   assert.equal(flash.alpha, 1, 'flash 的 alpha 不得被触碰');
   assert.ok(sprites.slices.every((s) => s.visible), '侧壁切片仍在承担厚度表现');
+});
+
+// ── 手感旋钮 → 底层参数映射（设置面板挂饰分组）──
+
+test('knobsToFlipConfig：默认 50% 映射到定稿参数', () => {
+  const cfg = knobsToFlipConfig({});
+  assert.ok(Math.abs(cfg.impulse - 30) < 1e-9);
+  assert.ok(Math.abs(cfg.spinDamping - 0.95) < 1e-9);
+  assert.ok(Math.abs(cfg.idleSwayAmp - 0.14) < 1e-9);
+  assert.ok(Math.abs(cfg.energySpeed - 510) < 1e-9);
+  assert.ok(Math.abs(cfg.thicknessRatio - 0.07) < 1e-9);
+  assert.equal(cfg.flipEnabled, true);
+});
+
+test('knobsToFlipConfig：极端值有界且单调', () => {
+  const lo = knobsToFlipConfig({ charmFlipEnergy: 0, charmFlipSpin: 0, charmGravityLink: 0, charmThickness: 0 });
+  const hi = knobsToFlipConfig({ charmFlipEnergy: 100, charmFlipSpin: 100, charmGravityLink: 100, charmThickness: 100 });
+  assert.ok(hi.impulse > lo.impulse, '灵敏度↑ → 冲量↑');
+  assert.ok(hi.energySpeed < lo.energySpeed, '灵敏度↑ → 满能量所需速度↓');
+  assert.ok(hi.spinDamping < lo.spinDamping, '时长↑ → 阻尼↓');
+  assert.ok(hi.tiltStiffness > lo.tiltStiffness, '链接感↑ → 弹簧↑');
+  assert.ok(hi.thicknessRatio > lo.thicknessRatio);
+  for (const cfg of [lo, hi]) {
+    assert.ok(cfg.impulse >= 12 && cfg.impulse <= 48);
+    assert.ok(cfg.spinDamping >= 0.39 && cfg.spinDamping <= 1.51); // 浮点边界（1.5-1.1≈0.3999）
+    assert.ok(cfg.tiltStiffness >= 18 && cfg.tiltStiffness <= 70);
+    assert.ok(cfg.thicknessRatio >= 0.03 && cfg.thicknessRatio <= 0.11);
+  }
+});
+
+test('knobsToFlipConfig：非法输入回退中位', () => {
+  const cfg = knobsToFlipConfig({ charmFlipEnergy: NaN, charmFlipSpin: 'x' });
+  assert.ok(Math.abs(cfg.impulse - 30) < 1e-9);
+});
+
+test('翻转开关：关闭后无冲量且快速回正', () => {
+  const s = createFlipState();
+  s.spinY = 2.0;
+  s.velY = 5;
+  const off = knobsToFlipConfig({ charmFlipEnabled: false });
+  assert.equal(off.flipEnabled, false);
+  for (let i = 0; i < 240; i++) updateFlip(s, DT, 1500, 1, null, off);
+  assert.ok(Math.abs(Math.cos(s.spinY)) > 0.95, `cosY=${Math.cos(s.spinY).toFixed(3)}，关闭翻转后应回正面`);
+  assert.ok(Math.abs(s.spinZ) < 0.01, '纷飞也回正');
 });

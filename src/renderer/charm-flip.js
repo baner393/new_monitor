@@ -24,6 +24,42 @@
 export const HANG_GRAVITY = 800;   // 与 physics.js GRAVITY 一致（px/s²）
 export const TILT_MAX = 1.15;      // 重力链接的极限张角（≈66°）
 
+/** 翻转物理的默认配置（硬编码定稿值，参数含义见 knobsToFlipConfig）。 */
+export const FLIP_DEFAULTS = Object.freeze({
+  impulse: 30,          // 甩动冲量系数
+  spinDamping: 0.9,     // 翻滚阻尼（/s，exp 衰减率）
+  idleSwayAmp: 0.14,    // 静置摇摆幅度（rad，±8°）
+  energySpeed: 550,     // 能量满格所需运动速度（px/s）
+  tiltStiffness: 42,    // 重力链接弹簧刚度（ω²）
+  tiltDamping: 11,      // 重力链接阻尼（2ζω）
+  thicknessRatio: 0.07, // 厚度 = 显示宽 × ratio（clamp 2~9px）
+  flipEnabled: true,
+});
+
+/**
+ * 设置面板手感旋钮（0-100）→ 底层物理参数（纯函数）。
+ * 映射故意温和：任一极端值都不会产生鬼畜或失效。
+ */
+export function knobsToFlipConfig(values = {}) {
+  const pct = (v) => clamp(finiteOr(Number(v), 50), 0, 100) / 100;
+  const energy = pct(values.charmFlipEnergy);   // 越灵敏：冲量大、满能量所需速度低
+  const spin = pct(values.charmFlipSpin);       // 越长：阻尼小
+  const sway = pct(values.charmIdleSway);
+  const link = pct(values.charmGravityLink);
+  const thick = pct(values.charmThickness);
+  const tiltStiffness = 18 + link * 52;         // 18..70
+  return {
+    impulse: 12 + energy * 36,                  // 12..48
+    spinDamping: 1.5 - spin * 1.1,              // 1.5..0.4（越长越慢衰减）
+    idleSwayAmp: 0.02 + sway * 0.24,            // ±1°..±15°
+    energySpeed: 720 - energy * 420,            // 720..300 px/s
+    tiltStiffness,
+    tiltDamping: 2 * Math.sqrt(tiltStiffness) * 0.85,
+    thicknessRatio: 0.03 + thick * 0.08,        // 3%..11% 显示宽
+    flipEnabled: values.charmFlipEnabled !== false,
+  };
+}
+
 export function createFlipState() {
   return {
     spinY: 0,      // 绕竖轴角（rad；0 = 正面，±π = 背面）
@@ -48,34 +84,41 @@ const finiteOr = (v, fb) => (Number.isFinite(v) ? v : fb);
  * @param {number} motionDirX 运动水平方向（-1~1，冲量的方向感）
  * @param {{x:number,y:number}|null} accel 挂饰加速度（px/s²，速度差分；
  *        null = 无重力链接（经典模式），tilt 回正）
+ * @param {object} [cfg]      knobsToFlipConfig 输出（缺省 = FLIP_DEFAULTS）
  * @returns {{energy:number, cosY:number, sinY:number, tilt:number, sideK:number}}
  */
-export function updateFlip(state, dt, motion, motionDirX = 0, accel = null) {
+export function updateFlip(state, dt, motion, motionDirX = 0, accel = null, cfg = FLIP_DEFAULTS) {
   state.t += dt;
   if (!Number.isFinite(dt) || dt <= 0) dt = 1 / 60;
   motion = finiteOr(motion, 0);
   motionDirX = finiteOr(motionDirX, 0);
-  const energyTarget = Math.min(1, motion / 550);
+  const energyTarget = Math.min(1, motion / cfg.energySpeed);
   // 能量平滑上升快、衰减慢（甩一下能纷飞一阵）
   state.energy += (energyTarget - state.energy) * Math.min(1, dt * (energyTarget > state.energy ? 8 : 1.4));
   const energy = state.energy;
 
-  // spinY 翻滚：速度越大、越往运动方向翻
-  const impulse = energy * energy * motionDirX * dt * 30;
-  state.velY += impulse;
-  // 静置回正（能量低时生效）：目标 = 最近的正面圈（2π 整数倍）+ ±8° 摇摆——
-  // 翻滚停在任意角度都走最短路径转回正面，而不是绕剩余圈数慢慢蹭回来
-  const restTarget = Math.sin(state.t * 0.8) * 0.14;
+  if (cfg.flipEnabled !== false) {
+    // spinY 翻滚：速度越大、越往运动方向翻
+    const impulse = energy * energy * motionDirX * dt * cfg.impulse;
+    state.velY += impulse;
+  }
+  // 静置回正（能量低时生效）：目标 = 最近的正面圈（2π 整数倍）+ 小幅摇摆——
+  // 翻滚停在任意角度都走最短路径转回正面，而不是绕剩余圈数慢慢蹭回来。
+  // 翻转关闭时回正始终全强（直接把姿态拉回正面）。
+  const restTarget = Math.sin(state.t * 0.8) * cfg.idleSwayAmp;
   const home = Math.round((state.spinY - restTarget) / (Math.PI * 2)) * Math.PI * 2 + restTarget;
-  state.velY += (home - state.spinY) * (1 - energy) * 2.4 * dt;
-  state.velY *= Math.exp(-dt * 0.9);
+  const homeStrength = cfg.flipEnabled !== false ? (1 - energy) * 2.4 : 8;
+  state.velY += (home - state.spinY) * homeStrength * dt;
+  // 关闭翻转时强制更强阻尼：中途停用也能 1~2 秒内直回正面
+  const spinDamping = cfg.flipEnabled !== false ? cfg.spinDamping : Math.max(cfg.spinDamping, 1.6);
+  state.velY *= Math.exp(-dt * spinDamping);
   state.spinY += state.velY * dt;
 
-  // spinZ 纷飞：能量高时受随机扰动激发
-  if (energy > 0.55 && Math.random() < dt * 2.2) {
+  // spinZ 纷飞：能量高时受随机扰动激发（翻转关闭时不激发且快速回正）
+  if (cfg.flipEnabled !== false && energy > 0.55 && Math.random() < dt * 2.2) {
     state.velZ += (Math.random() - 0.5) * energy * 2.4;
   }
-  state.velZ *= Math.exp(-dt * 1.7);
+  state.velZ *= Math.exp(-dt * (cfg.flipEnabled !== false ? 1.7 : 8));
   state.velZ += -state.spinZ * 1.2 * dt; // 回正弹簧：晃完不歪着停
   state.spinZ = clamp(state.spinZ + state.velZ * dt, -0.65, 0.65);
 
@@ -85,7 +128,7 @@ export function updateFlip(state, dt, motion, motionDirX = 0, accel = null) {
   state.velY += fall * Math.pow(1 - Math.abs(cosY), 2) * 5.5 * dt;
   const sideK = Math.max(0, 1 - Math.abs(cosY) / 0.18);
 
-  // tilt 重力链接：加速系里的等效重力方向 + 弹簧阻尼（ω≈6.5，ζ≈0.85）
+  // tilt 重力链接：加速系里的等效重力方向 + 弹簧阻尼
   let target = 0;
   if (accel && Number.isFinite(accel.x) && Number.isFinite(accel.y)) {
     const ax = clamp(finiteOr(accel.x, 0), -6000, 6000);
@@ -96,7 +139,7 @@ export function updateFlip(state, dt, motion, motionDirX = 0, accel = null) {
       target = clamp(Math.atan2(gx, gy), -TILT_MAX, TILT_MAX);
     }
   }
-  state.velTilt += ((target - state.tilt) * 42 - state.velTilt * 11) * dt;
+  state.velTilt += ((target - state.tilt) * cfg.tiltStiffness - state.velTilt * cfg.tiltDamping) * dt;
   state.tilt += state.velTilt * dt;
 
   return { energy, cosY, sinY: Math.sin(state.spinY), tilt: state.tilt, sideK };

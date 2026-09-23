@@ -9,11 +9,27 @@
  * 快捷键是增强入口而非唯一入口。
  */
 import { uIOhook } from 'uiohook-napi';
-import { createCharmHotkeyState, feedCharmHotkeyState } from '../shared/charm-hotkey.js';
+import { createCharmHotkeyState, setCharmHotkeyCombo, feedCharmHotkeyState } from '../shared/charm-hotkey.js';
 
-export function startCharmHook({ onPhase } = {}) {
-  const state = createCharmHotkeyState();
+/**
+ * 组合与开关通过可变 config 对象外部热更新（设置面板实时生效，钩子不重启）：
+ *   config.combo     组合字符串（如 'Ctrl+Alt+A'）
+ *   config.enabled   false = 钩子仍运行但不产生任何相位（清空按住集合）
+ *   config.recording true = 设置面板正在录制新组合，忽略一切事件
+ */
+export function startCharmHook({ onPhase, config = {} } = {}) {
+  const state = createCharmHotkeyState(config.combo);
+  let activeCombo = config.combo || 'Ctrl+Alt+A';
   const feed = (type) => (event) => {
+    if (config.recording) return;
+    if (config.enabled === false) {
+      state.down.clear();
+      state.fired = false;
+      return;
+    }
+    if (config.combo && config.combo !== activeCombo) {
+      if (setCharmHotkeyCombo(state, config.combo)) activeCombo = config.combo;
+    }
     const { phase } = feedCharmHotkeyState(state, {
       type,
       keycode: event.keycode,

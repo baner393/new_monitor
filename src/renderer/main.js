@@ -29,7 +29,7 @@ import { resolveMousePassthrough } from './mouse-passthrough.js';
 import { CharmAnchorSampler } from './charm-anchor.js';
 import { createCharmMountSprite, CHARM_MOUNT_ANCHOR_OFFSET } from './charm-mount.js';
 import { buildFoilAssets, buildSlabTexture } from './charm-foil.js';
-import { createFlipState, updateFlip, applyFlip, syncLayerScales } from './charm-flip.js';
+import { createFlipState, updateFlip, applyFlip, syncLayerScales, knobsToFlipConfig, FLIP_DEFAULTS } from './charm-flip.js';
 import { RingMenu } from './ring-menu.js';
 import { preloadRingIconTextures } from './ring-icons.js';
 
@@ -166,6 +166,9 @@ pixiApp.stage.addChild(charmMountSprite);
 // 条纹）与斜向光带，边缘套银虹彩描边。资产由 charm-foil.js 从皮肤 idle
 // 帧生成；形状裁剪由 idle 纹理 Sprite 作 mask（ foil/band 各自引用）。
 const flipState = createFlipState();
+// 挂饰翻转配置（设置面板手感旋钮 → 底层参数；settings 广播时重建）
+let flipConfig = { ...FLIP_DEFAULTS };
+let charmHoloEnabled = true;
 let prevMotion = 0;
 const foilFx = {
   maskSprite: null, foil: null, band: null, edge: null,
@@ -299,7 +302,7 @@ function updateFoilFx(dt) {
   prevTurtleVx = physics.turtle.vx;
   prevTurtleVy = physics.turtle.vy;
 
-  const flip = updateFlip(flipState, dt, motion, dirX, isCharmMode() ? charmAccel : null);
+  const flip = updateFlip(flipState, dt, motion, dirX, isCharmMode() ? charmAccel : null, flipConfig);
   prevMotion = motion;
 
   const scale = bodySprite.scale.y; // 基准 scale（翻转只改 x）
@@ -311,15 +314,16 @@ function updateFoilFx(dt) {
       mask: foilFx.maskSprite,
       edge: foilEdgeSprite,
       slices: foilFx.slices,
-      foil: foilFoilSprite,
-      band: foilBandSprite,
+      // 全息闪卡开关：关闭时不参与渲染映射（保留翻转与侧壁）
+      foil: charmHoloEnabled ? foilFoilSprite : null,
+      band: charmHoloEnabled ? foilBandSprite : null,
       container: turtleContainer,
     },
     flipState,
     {
       baseScale: scale,
       edgeBase: scale / 3, // 纹理 = 皮肤帧 ×3
-      thickness: Math.max(2, Math.min(9, displayW * 0.07)),
+      thickness: Math.max(2, Math.min(9, displayW * flipConfig.thicknessRatio)),
       span: displayW, // 光带扫动范围 = 精灵显示宽
     },
   );
@@ -346,6 +350,7 @@ if (import.meta.env.DEV) {
     flipState,
     charmAccel,
     foilFx,
+    get flipConfig() { return flipConfig; },
     sprites: { back: backSprite, edge: foilEdgeSprite, foil: foilFoilSprite, band: foilBandSprite, body: bodySprite },
   };
 }
@@ -843,6 +848,15 @@ function applySettings(settings, { isInitialLoad = false } = {}) {
   if (settings.panelMoveStable !== undefined) {
     petBehaviorSettings.panelMoveStable = settings.panelMoveStable !== false;
     codexCompanion.setReadingStability(petBehaviorSettings.panelMoveStable);
+  }
+  // 挂饰模式：手感旋钮 → 翻转物理配置；全息开关独立
+  flipConfig = knobsToFlipConfig(settings);
+  if (settings.charmHoloEnabled !== undefined) {
+    charmHoloEnabled = settings.charmHoloEnabled !== false;
+    if (!charmHoloEnabled) {
+      foilFoilSprite.alpha = 0;
+      foilBandSprite.alpha = 0;
+    }
   }
   if (settings.ropeElasticity !== undefined) {
     // 新版：档位(1~12) → 浮点值；旧版：直接是浮点值

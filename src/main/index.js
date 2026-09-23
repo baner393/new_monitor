@@ -147,6 +147,15 @@ const DEFAULT_SETTINGS = {
   selectedSkin:     'turtle',
   ambientSwingEnabled: true,
   panelMoveStable:  true,
+  charmFlipEnergy:   50,
+  charmFlipSpin:     50,
+  charmIdleSway:     50,
+  charmGravityLink:  50,
+  charmThickness:    50,
+  charmFlipEnabled:  true,
+  charmHoloEnabled:  true,
+  charmHotkeyEnabled: true,
+  charmHotkey:       'Ctrl+Alt+A',
   onboarding: {
     version: 1,
     completedSteps: [],
@@ -160,6 +169,20 @@ const DEFAULT_SETTINGS = {
 
 let currentSettings = { ...DEFAULT_SETTINGS };
 
+// 挂饰快捷键的运行时配置（charm-hook 按事件读取，改设置即时生效）
+const charmHookConfig = {
+  combo: 'Ctrl+Alt+A',
+  enabled: true,
+  recording: false,
+};
+
+function syncCharmHookConfig() {
+  charmHookConfig.combo = typeof currentSettings.charmHotkey === 'string'
+    ? currentSettings.charmHotkey
+    : 'Ctrl+Alt+A';
+  charmHookConfig.enabled = currentSettings.charmHotkeyEnabled !== false;
+}
+
 function loadSettings() {
   try {
     if (fs.existsSync(SETTINGS_PATH)) {
@@ -171,7 +194,8 @@ function loadSettings() {
       currentSettings.monitorVisibility = toLegacyMonitorVisibility(currentSettings.monitorPanel);
       currentSettings.codexIntegration = normalizeCodexIntegrationConfig(data.codexIntegration);
       currentSettings.claudeIntegration = normalizeClaudeIntegrationConfig(data.claudeIntegration);
-      console.log('[Settings] Loaded from', SETTINGS_PATH);
+      syncCharmHookConfig();
+    console.log('[Settings] Loaded from', SETTINGS_PATH);
     }
   } catch (err) {
     console.warn('[Settings] Failed to load:', err.message);
@@ -185,6 +209,7 @@ function saveSettings() {
       fs.mkdirSync(dir, { recursive: true });
     }
     fs.writeFileSync(SETTINGS_PATH, JSON.stringify(currentSettings, null, 2), 'utf-8');
+    syncCharmHookConfig();
     console.log('[Settings] Saved to', SETTINGS_PATH);
     // Notify renderer of new settings
     if (mainWindow && !mainWindow.isDestroyed()) {
@@ -439,6 +464,10 @@ ipcMain.on('settings-set', (event, key, value) => {
 });
 
 // IPC: settings.save — persist to file
+ipcMain.on('charm-hotkey-recording', (_event, active) => {
+  charmHookConfig.recording = Boolean(active);
+});
+
 ipcMain.on('settings-save', () => {
   saveSettings();
 });
@@ -822,6 +851,7 @@ app.whenReady().then(() => {
     getAnchorMode: () => currentSettings.anchorMode,
   });
   stopCharmHook = startCharmHook({
+    config: charmHookConfig,
     onPhase: (phase) => {
       // 窗口隐藏（托盘/环菜单 hide）后的第一次按压 = 恢复显示，不开环——
       // 否则环画在不可见窗口里，用户将没有任何键盘途径找回宠物。
