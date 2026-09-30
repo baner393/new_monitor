@@ -1,0 +1,38 @@
+{
+  "name": "turtle-monitor",
+  "productName": "Turtle Monitor",
+  "version": "1.0.0",
+  "description": "Turtle Monitor - Electron + PixiJS",
+  "main": ".vite/build/index.js",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "npm run start:free",
+    "start:free": "cross-env VITE_EDITION=free electron-forge start",
+    "start:sponsor": "cross-env VITE_EDITION=sponsor electron-forge start",
+    "build": "node scripts/build.mjs",
+    "build:sensor-host": "node scripts/build-sensor-host.mjs",
+    "build:free": "cross-env VITE_EDITION=free node scripts/build.mjs",
+    "build:sponsor": "cross-env VITE_EDITION=sponsor node scripts/build.mjs",
+    "dist": "node scripts/build-all.mjs",
+    "dist:free": "node scripts/package.mjs free",
+    "dist:sponsor": "node scripts/package.mjs sponsor",
+    "clean": "node scripts/clean.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "verify": "node scripts/verify-project.mjs",
+    "verify:artifacts": "node scripts/verify-artifacts.mjs"
+  },
+  "author": "Turtle Monitor",
+  "license": "MIT",
+  "devDependencies": {
+    "@electron/asar": "3.4.1",
+    "@electron-forge/cli": "7.11.2",
+    "@electron-forge/plugin-vite": "7.11.2",
+    "cross-env": "10.1.0",
+    "electron": "43.2.0",
+    "electron-builder": "26.15.3",
+    "pixi.js": "7.4.3",
+    "vite": "6.4.3"
+  }
+}

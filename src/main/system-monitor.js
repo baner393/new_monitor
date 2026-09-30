@@ -1,0 +1,1676 @@
+import { execFileSync, spawn } from 'child_process';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+
+import { NvidiaQueryClient, selectPrimaryGpu } from './gpu-monitor.js';
+import { HardwareSensorClient } from './hardware-sensor-monitor.js';
+import { buildMonitorMetricInventory } from './monitor-metrics.js';
+
+export const WINDOWS_SNAPSHOT_SCRIPT = String.raw`
+$ErrorActionPreference = 'SilentlyContinue'
+$ProgressPreference = 'SilentlyContinue'
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+
+function As-Double($value) {
+  if ($null -eq $value) { return $null }
+  try { return [double]$value } catch { return $null }
+}
+
+$sources = [System.Collections.Generic.List[string]]::new()
+$probeErrors = [System.Collections.Generic.List[object]]::new()
+function Record-ProbeError([string]$probe, $failure) {
+  $message = ''
+  try { $message = [string]$failure.Exception.Message } catch { $message = [string]$failure }
+  $fullyQualifiedId = [string]$failure.FullyQualifiedErrorId
+  $statusCode = $null
+  $errorCode = $null
+  try { $statusCode = [int]$failure.Exception.StatusCode } catch {}
+  try { $errorCode = [uint32]$failure.Exception.ErrorData.Error_Code } catch {}
+  if ($null -eq $statusCode) { try { $statusCode = [int]$failure.Exception.InnerException.StatusCode } catch {} }
+  if ($null -eq $errorCode) { try { $errorCode = [uint32]$failure.Exception.InnerException.ErrorData.Error_Code } catch {} }
+  $permissionDenied = $statusCode -eq 2 -or $errorCode -eq 2147749891 -or $fullyQualifiedId -match '0x80041003|Unauthorized|PermissionDenied' -or $message -match 'Access.+denied|Unauthorized|privilege'
+  $code = $(if ($permissionDenied) { 'permission_required' } else { 'query_failed' })
+  $probeErrors.Add([pscustomobject]@{ probe = $probe; code = $code; message = $message })
+}
+$requestedCounterGroups = @($env:TURTLE_MONITOR_COUNTER_GROUPS -split ',' | Where-Object { $_ })
+$fastOnly = $env:TURTLE_MONITOR_FAST_ONLY -eq '1'
+function Wants-CounterGroup([string]$name) {
+  return -not $requestedCounterGroups.Count -or $requestedCounterGroups -contains 'ALL' -or $requestedCounterGroups -contains $name
+}
+
+# Performance counter names are localized by Windows. Translate the stable
+# English names through their numeric Perflib indexes instead of hard-coding a
+# language-specific path.
+$englishCounters = @{}
+$localCounters = @{}
+try {
+  $englishValues = @((Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Perflib\009' -ErrorAction Stop).Counter)
+  $localValues = @((Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Perflib\CurrentLanguage' -ErrorAction Stop).Counter)
+  for ($index = 0; $index -lt $englishValues.Count - 1; $index += 2) {
+    $englishCounters[[string]$englishValues[$index + 1]] = [string]$englishValues[$index]
+  }
+  for ($index = 0; $index -lt $localValues.Count - 1; $index += 2) {
+    $localCounters[[string]$localValues[$index]] = [string]$localValues[$index + 1]
+  }
+} catch { Record-ProbeError 'perflib-localization' $_ }
+
+function Local-CounterName([string]$englishName) {
+  $counterIndex = $englishCounters[$englishName]
+  if ($counterIndex -and $localCounters[$counterIndex]) { return $localCounters[$counterIndex] }
+  return $englishName
+}
+
+function Counter-Path([string]$objectName, [string]$counterName, [string]$instanceName = '') {
+  $localObject = Local-CounterName $objectName
+  $localCounter = Local-CounterName $counterName
+  if ($instanceName) { return "\$localObject($instanceName)\$localCounter" }
+  return "\$localObject\$localCounter"
+}
+
+function Counter-Value($samples, [string]$counterName) {
+  $localCounter = Local-CounterName $counterName
+  $sample = @($samples | Where-Object { $_.Path -like "*\$localCounter" } | Select-Object -First 1)
+  if ($sample.Count) { return As-Double $sample[0].CookedValue }
+  return $null
+}
+
+$processors = @()
+if (-not $fastOnly) {
+  try {
+    $processors = @(Get-CimInstance -ClassName Win32_Processor -ErrorAction Stop)
+    if ($processors.Count) { $sources.Add('Win32_Processor') }
+  } catch { Record-ProbeError 'cpu-cim' $_ }
+}
+
+$operatingSystem = $null
+if (-not $fastOnly) {
+  try {
+    $operatingSystem = Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction Stop | Select-Object -First 1
+    if ($operatingSystem) { $sources.Add('Win32_OperatingSystem') }
+  } catch { Record-ProbeError 'operating-system-cim' $_ }
+}
+
+$computerSystem = $null
+if (-not $fastOnly) {
+  try { $computerSystem = Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction Stop | Select-Object -First 1 } catch { Record-ProbeError 'computer-system-cim' $_ }
+}
+
+$pageFileTotalBytes = $null
+$pageFileAvailableBytes = $null
+if (-not $fastOnly) {
+  try {
+    $pageFiles = @(Get-CimInstance -ClassName Win32_PageFileUsage -ErrorAction Stop)
+    if ($pageFiles.Count) {
+      $pageFileTotalBytes = (As-Double (($pageFiles | Measure-Object -Property AllocatedBaseSize -Sum).Sum)) * 1MB
+      $pageFileUsedBytes = (As-Double (($pageFiles | Measure-Object -Property CurrentUsage -Sum).Sum)) * 1MB
+      $pageFileAvailableBytes = [Math]::Max(0, $pageFileTotalBytes - $pageFileUsedBytes)
+      $sources.Add('Win32_PageFileUsage')
+    }
+  } catch { Record-ProbeError 'page-file-cim' $_ }
+}
+
+$coreLoads = @()
+$systemProcessCount = $null
+$systemThreadCount = $null
+$cpuQueueLength = $null
+if (Wants-CounterGroup 'CPU') { try {
+  $cpuSamples = @(Get-Counter -Counter @(
+    (Counter-Path 'Processor' '% Processor Time' '_Total'),
+    (Counter-Path 'Processor' '% Processor Time' '*')
+  ) -MaxSamples 1 -ErrorAction Stop).CounterSamples
+  $coreLoads = @($cpuSamples |
+    Where-Object { $_.InstanceName -ne '_Total' } |
+    Sort-Object { try { [int]$_.InstanceName } catch { 9999 } } |
+    ForEach-Object { As-Double $_.CookedValue })
+  if ($cpuSamples.Count) { $sources.Add('Get-Counter:CPU') }
+} catch {
+  $primaryCpuCounterError = $_
+  try {
+    $cpuSamples = @(Get-Counter -Counter @(
+      (Counter-Path 'Processor Information' '% Processor Utility' '_Total'),
+      (Counter-Path 'Processor Information' '% Processor Utility' '*')
+    ) -MaxSamples 1 -ErrorAction Stop).CounterSamples
+    $coreLoads = @($cpuSamples |
+      Where-Object { $_.InstanceName -notmatch '_Total' } |
+      Sort-Object { try { [int](($_.InstanceName -split ',')[-1]) } catch { 9999 } } |
+      ForEach-Object { As-Double $_.CookedValue })
+    if ($cpuSamples.Count) { $sources.Add('Get-Counter:CPU') }
+  } catch {
+    Record-ProbeError 'cpu-counter' $primaryCpuCounterError
+    Record-ProbeError 'cpu-counter-fallback' $_
+  }
+} }
+
+if (Wants-CounterGroup 'System') { try {
+  $systemSamples = @(Get-Counter -Counter @(
+    (Counter-Path 'System' 'Processes'),
+    (Counter-Path 'System' 'Threads'),
+    (Counter-Path 'System' 'Processor Queue Length')
+  ) -MaxSamples 1 -ErrorAction Stop).CounterSamples
+  $systemProcessCount = Counter-Value $systemSamples 'Processes'
+  $systemThreadCount = Counter-Value $systemSamples 'Threads'
+  $cpuQueueLength = Counter-Value $systemSamples 'Processor Queue Length'
+  if ($systemSamples.Count) { $sources.Add('Get-Counter:System') }
+} catch { Record-ProbeError 'system-counter' $_ } }
+
+if ($null -eq $systemProcessCount -or $null -eq $systemThreadCount) {
+  try {
+    $runningProcesses = @(Get-Process -ErrorAction Stop)
+    if ($null -eq $systemProcessCount) { $systemProcessCount = $runningProcesses.Count }
+    if ($null -eq $systemThreadCount) {
+      $systemThreadCount = As-Double (($runningProcesses | ForEach-Object { $_.Threads.Count } | Measure-Object -Sum).Sum)
+    }
+    $sources.Add('Get-Process')
+  } catch { Record-ProbeError 'process-list' $_ }
+}
+
+$logicalDisks = @()
+if (-not $fastOnly) { try {
+  $logicalDisks = @(Get-CimInstance -ClassName Win32_LogicalDisk -Filter 'DriveType=3' -ErrorAction Stop |
+    ForEach-Object {
+      [pscustomobject]@{
+        name = [string]$_.DeviceID
+        volumeName = [string]$_.VolumeName
+        fileSystem = [string]$_.FileSystem
+        sizeBytes = As-Double $_.Size
+        freeBytes = As-Double $_.FreeSpace
+      }
+    })
+  if ($logicalDisks.Count) { $sources.Add('Win32_LogicalDisk') }
+} catch {
+  $logicalDiskError = $_
+  try {
+    $logicalDisks = @(Get-PSDrive -PSProvider FileSystem -ErrorAction Stop |
+      Where-Object { $_.Used -ne $null -and $_.Free -ne $null } |
+      ForEach-Object {
+        [pscustomobject]@{
+          name = "$($_.Name):"
+          volumeName = ''
+          fileSystem = ''
+          sizeBytes = As-Double ($_.Used + $_.Free)
+          freeBytes = As-Double $_.Free
+        }
+      })
+    if ($logicalDisks.Count) { $sources.Add('Get-PSDrive') }
+  } catch { Record-ProbeError 'logical-disk-fallback' $_ }
+  Record-ProbeError 'logical-disk-cim' $logicalDiskError
+} }
+
+$diskIo = $null
+$physicalDisks = @()
+if (-not $fastOnly) { try {
+  $physicalDisks = @(Get-PhysicalDisk -ErrorAction Stop | ForEach-Object {
+    $disk = $_
+    $reliability = $null
+    try { $reliability = $disk | Get-StorageReliabilityCounter -ErrorAction Stop } catch { Record-ProbeError 'storage-reliability' $_ }
+    [pscustomobject]@{
+      name = [string]$disk.FriendlyName
+      mediaType = [string]$disk.MediaType
+      busType = [string]$disk.BusType
+      healthStatus = [string]$disk.HealthStatus
+      operationalStatus = [string]($disk.OperationalStatus -join ', ')
+      sizeBytes = As-Double $disk.Size
+      temperatureC = $(if ($reliability) { As-Double $reliability.Temperature } else { $null })
+      temperatureMaxC = $(if ($reliability) { As-Double $reliability.TemperatureMax } else { $null })
+      readErrorsTotal = $(if ($reliability) { As-Double $reliability.ReadErrorsTotal } else { $null })
+      writeErrorsTotal = $(if ($reliability) { As-Double $reliability.WriteErrorsTotal } else { $null })
+      wearPercent = $(if ($reliability) { As-Double $reliability.Wear } else { $null })
+      powerOnHours = $(if ($reliability) { As-Double $reliability.PowerOnHours } else { $null })
+    }
+  })
+  if ($physicalDisks.Count) { $sources.Add('Get-PhysicalDisk') }
+} catch { Record-ProbeError 'physical-disk' $_ } }
+
+if (Wants-CounterGroup 'Disk') { try {
+  $diskSamples = @(Get-Counter -Counter @(
+    (Counter-Path 'PhysicalDisk' '% Disk Time' '_Total'),
+    (Counter-Path 'PhysicalDisk' 'Disk Read Bytes/sec' '_Total'),
+    (Counter-Path 'PhysicalDisk' 'Disk Write Bytes/sec' '_Total'),
+    (Counter-Path 'PhysicalDisk' 'Disk Transfers/sec' '_Total'),
+    (Counter-Path 'PhysicalDisk' 'Current Disk Queue Length' '_Total')
+  ) -MaxSamples 1 -ErrorAction Stop).CounterSamples
+  if ($diskSamples.Count) {
+    $diskIo = [pscustomobject]@{
+      mode = 'rate'
+      usage = Counter-Value $diskSamples '% Disk Time'
+      readBytesPerSec = Counter-Value $diskSamples 'Disk Read Bytes/sec'
+      writeBytesPerSec = Counter-Value $diskSamples 'Disk Write Bytes/sec'
+      transfersPerSec = Counter-Value $diskSamples 'Disk Transfers/sec'
+      queueLength = Counter-Value $diskSamples 'Current Disk Queue Length'
+    }
+    $sources.Add('Get-Counter:Disk')
+  }
+} catch { Record-ProbeError 'disk-counter' $_ } }
+
+if (-not $diskIo) {
+  try {
+    $processIo = @(Get-CimInstance -ClassName Win32_Process -ErrorAction Stop)
+    if ($processIo.Count) {
+      $diskIo = [pscustomobject]@{
+        mode = 'cumulative'
+        usage = $null
+        readBytesPerSec = As-Double (($processIo | Measure-Object -Property ReadTransferCount -Sum).Sum)
+        writeBytesPerSec = As-Double (($processIo | Measure-Object -Property WriteTransferCount -Sum).Sum)
+        transfersPerSec = As-Double ((($processIo | Measure-Object -Property ReadOperationCount -Sum).Sum) + (($processIo | Measure-Object -Property WriteOperationCount -Sum).Sum))
+        queueLength = $null
+      }
+      $sources.Add('Win32_Process:IO')
+    }
+  } catch { Record-ProbeError 'disk-process-io-fallback' $_ }
+}
+
+$networkInterfaces = @()
+if (Wants-CounterGroup 'Network') { try {
+  $networkCounterNames = @(
+    'Bytes Received/sec', 'Bytes Sent/sec', 'Bytes Total/sec',
+    'Current Bandwidth', 'Packets Received/sec', 'Packets Sent/sec'
+  )
+  $networkPaths = @($networkCounterNames | ForEach-Object { Counter-Path 'Network Interface' $_ '*' })
+  $networkSamples = @(Get-Counter -Counter $networkPaths -MaxSamples 1 -ErrorAction Stop).CounterSamples
+  $networkGroups = @($networkSamples | Where-Object { $_.InstanceName -and $_.InstanceName -notmatch 'Loopback|isatap|Teredo' } | Group-Object InstanceName)
+  $networkInterfaces = @($networkGroups | ForEach-Object {
+    $samples = @($_.Group)
+    [pscustomobject]@{
+      name = [string]$_.Name
+      mode = 'rate'
+      provider = 'performance-counter'
+      download = Counter-Value $samples 'Bytes Received/sec'
+      upload = Counter-Value $samples 'Bytes Sent/sec'
+      total = Counter-Value $samples 'Bytes Total/sec'
+      linkSpeedBits = Counter-Value $samples 'Current Bandwidth'
+      packetsReceivedPerSec = Counter-Value $samples 'Packets Received/sec'
+      packetsSentPerSec = Counter-Value $samples 'Packets Sent/sec'
+    }
+  })
+  if ($networkInterfaces.Count) { $sources.Add('Get-Counter:Network') }
+} catch { Record-ProbeError 'network-counter' $_ } }
+
+if (-not $networkInterfaces.Count) {
+  try {
+    $adapterStats = @(Get-NetAdapterStatistics -ErrorAction Stop)
+    $adapterInfo = @{}
+    @(Get-NetAdapter -ErrorAction SilentlyContinue) | ForEach-Object { $adapterInfo[$_.Name] = $_ }
+    $networkInterfaces = @($adapterStats | ForEach-Object {
+      $adapter = $adapterInfo[$_.Name]
+      [pscustomobject]@{
+        name = [string]$_.Name
+        mode = 'cumulative'
+        provider = 'network-adapter-statistics'
+        download = As-Double $_.ReceivedBytes
+        upload = As-Double $_.SentBytes
+        total = $null
+        linkSpeedBits = $(if ($adapter) { As-Double $adapter.ReceiveLinkSpeed } else { $null })
+        packetsReceivedPerSec = $null
+        packetsSentPerSec = $null
+      }
+    })
+    if ($networkInterfaces.Count) { $sources.Add('Get-NetAdapterStatistics') }
+  } catch { Record-ProbeError 'network-adapter-fallback' $_ }
+}
+
+if (-not $networkInterfaces.Count) {
+  try {
+    $netstatOutput = @(& "$env:SystemRoot\System32\netstat.exe" -e 2>$null)
+    $byteLine = $netstatOutput | Where-Object { $_ -match '^\s*\D+\s+(\d+)\s+(\d+)\s*$' } | Select-Object -First 1
+    if ($byteLine -and $byteLine -match '^\s*\D+\s+(\d+)\s+(\d+)\s*$') {
+      $networkInterfaces = @([pscustomobject]@{
+        name = 'All active interfaces'
+        mode = 'cumulative'
+        provider = 'netstat-e'
+        download = As-Double $Matches[1]
+        upload = As-Double $Matches[2]
+        total = $null
+        linkSpeedBits = $null
+        packetsReceivedPerSec = $null
+        packetsSentPerSec = $null
+      })
+      $sources.Add('netstat-e')
+    }
+  } catch { Record-ProbeError 'network-netstat-fallback' $_ }
+}
+
+$videoControllers = @()
+if (-not $fastOnly) { try {
+  $allControllers = @(Get-CimInstance -ClassName Win32_VideoController -ErrorAction Stop)
+  $videoControllers = @($allControllers | ForEach-Object {
+    [pscustomobject]@{
+      name = [string]$_.Name
+      driverVersion = [string]$_.DriverVersion
+      adapterRamBytes = As-Double $_.AdapterRAM
+    }
+  })
+  if ($videoControllers.Count) { $sources.Add('Win32_VideoController') }
+} catch { Record-ProbeError 'video-controller-cim' $_ } }
+
+$gpuUsage = $null
+$gpuMemoryUsed = $null
+if (Wants-CounterGroup 'GPU') { try {
+  $gpuSamples = @(Get-Counter -Counter @(
+    (Counter-Path 'GPU Engine' 'Utilization Percentage' '*engtype_3D'),
+    (Counter-Path 'GPU Adapter Memory' 'Dedicated Usage' '*')
+  ) -MaxSamples 1 -ErrorAction Stop).CounterSamples
+  $gpuUtilName = Local-CounterName 'Utilization Percentage'
+  $gpuMemoryName = Local-CounterName 'Dedicated Usage'
+  $gpuUtilSamples = @($gpuSamples | Where-Object { $_.Path -like "*\$gpuUtilName" })
+  $gpuMemorySamples = @($gpuSamples | Where-Object { $_.Path -like "*\$gpuMemoryName" })
+  if ($gpuUtilSamples.Count) { $gpuUsage = As-Double (($gpuUtilSamples | Measure-Object -Property CookedValue -Maximum).Maximum) }
+  if ($gpuMemorySamples.Count) { $gpuMemoryUsed = As-Double (($gpuMemorySamples | Measure-Object -Property CookedValue -Sum).Sum) }
+  if ($gpuSamples.Count) { $sources.Add('Get-Counter:GPU') }
+} catch { Record-ProbeError 'gpu-counter' $_ } }
+
+$registryGpuMemory = $null
+if (-not $fastOnly) { try {
+  $memoryCandidates = @()
+  Get-ChildItem 'HKLM:\SYSTEM\CurrentControlSet\Control\Video' -ErrorAction Stop | ForEach-Object {
+    $adapterKey = Join-Path $_.PSPath '0000'
+    $properties = Get-ItemProperty $adapterKey -ErrorAction SilentlyContinue
+    if ($properties) {
+      $value = $properties.'HardwareInformation.qwMemorySize'
+      if ($value -is [byte[]] -and $value.Length -ge 8) {
+        $memoryCandidates += [BitConverter]::ToUInt64($value, 0)
+      } elseif ($null -ne $value) {
+        $memoryCandidates += [double]$value
+      }
+      $legacyValue = $properties.'HardwareInformation.MemorySize'
+      if ($null -ne $legacyValue) { $memoryCandidates += [double]([uint32]$legacyValue) }
+    }
+  }
+  if ($memoryCandidates.Count) { $registryGpuMemory = As-Double (($memoryCandidates | Measure-Object -Maximum).Maximum) }
+} catch { Record-ProbeError 'gpu-memory-registry' $_ } }
+
+$thermalZones = @()
+if (-not $fastOnly) { try {
+  $thermalZones = @(Get-CimInstance -Namespace 'root/wmi' -ClassName MSAcpi_ThermalZoneTemperature -ErrorAction Stop |
+    ForEach-Object {
+      $celsius = ((As-Double $_.CurrentTemperature) / 10) - 273.15
+      if ($celsius -gt -20 -and $celsius -lt 150) {
+        [pscustomobject]@{ name = [string]$_.InstanceName; temperatureC = $celsius }
+      }
+    } | Where-Object { $_ })
+  if ($thermalZones.Count) { $sources.Add('MSAcpi_ThermalZoneTemperature') }
+} catch { Record-ProbeError 'thermal-zone-cim' $_ } }
+
+$battery = $null
+if (-not $fastOnly) { try {
+  $batteryDevice = Get-CimInstance -ClassName Win32_Battery -ErrorAction Stop | Select-Object -First 1
+  if ($batteryDevice) {
+    $batteryStatus = Get-CimInstance -Namespace 'root/wmi' -ClassName BatteryStatus -ErrorAction SilentlyContinue | Select-Object -First 1
+    $batteryStatic = Get-CimInstance -Namespace 'root/wmi' -ClassName BatteryStaticData -ErrorAction SilentlyContinue | Select-Object -First 1
+    $batteryFull = Get-CimInstance -Namespace 'root/wmi' -ClassName BatteryFullChargedCapacity -ErrorAction SilentlyContinue | Select-Object -First 1
+    $batteryCycles = Get-CimInstance -Namespace 'root/wmi' -ClassName BatteryCycleCount -ErrorAction SilentlyContinue | Select-Object -First 1
+    $battery = [pscustomobject]@{
+      percent = As-Double $batteryDevice.EstimatedChargeRemaining
+      statusCode = As-Double $batteryDevice.BatteryStatus
+      estimatedMinutes = As-Double $batteryDevice.EstimatedRunTime
+      designCapacityMWh = $(if ($batteryStatic) { As-Double $batteryStatic.DesignedCapacity } else { $null })
+      fullChargeCapacityMWh = $(if ($batteryFull) { As-Double $batteryFull.FullChargedCapacity } else { $null })
+      remainingCapacityMWh = $(if ($batteryStatus) { As-Double $batteryStatus.RemainingCapacity } else { $null })
+      voltageMv = $(if ($batteryStatus) { As-Double $batteryStatus.Voltage } else { $null })
+      chargeRateMw = $(if ($batteryStatus) { As-Double $batteryStatus.ChargeRate } else { $null })
+      dischargeRateMw = $(if ($batteryStatus) { As-Double $batteryStatus.DischargeRate } else { $null })
+      cycleCount = $(if ($batteryCycles) { As-Double $batteryCycles.CycleCount } else { $null })
+    }
+    $sources.Add('Win32_Battery')
+  }
+} catch { Record-ProbeError 'battery-cim' $_ } }
+
+$cpuUsage = $null
+if ($coreLoads.Count) { $cpuUsage = As-Double (($coreLoads | Measure-Object -Average).Average) }
+if ($processors.Count) {
+  $validCpuLoads = @($processors | Where-Object { $null -ne $_.LoadPercentage })
+  if ($null -eq $cpuUsage -and $validCpuLoads.Count) { $cpuUsage = As-Double (($validCpuLoads | Measure-Object -Property LoadPercentage -Average).Average) }
+}
+
+$gpuMemoryTotal = $registryGpuMemory
+if ($null -eq $gpuMemoryTotal -and $videoControllers.Count) {
+  $gpuMemoryTotal = As-Double (($videoControllers | Measure-Object -Property adapterRamBytes -Maximum).Maximum)
+}
+
+$result = [pscustomobject]@{
+  provider = 'windows-cim'
+  sources = @($sources)
+  probeErrors = @($probeErrors)
+  system = [pscustomobject]@{
+    osName = $(if ($operatingSystem) { [string]$operatingSystem.Caption } else { $null })
+    osVersion = $(if ($operatingSystem) { [string]$operatingSystem.Version } else { $null })
+    manufacturer = $(if ($computerSystem) { [string]$computerSystem.Manufacturer } else { $null })
+    model = $(if ($computerSystem) { [string]$computerSystem.Model } else { $null })
+    processCount = $(if ($null -ne $systemProcessCount) { As-Double $systemProcessCount } elseif ($operatingSystem) { As-Double $operatingSystem.NumberOfProcesses } else { $null })
+    threadCount = As-Double $systemThreadCount
+    cpuQueueLength = As-Double $cpuQueueLength
+  }
+  cpu = [pscustomobject]@{
+    model = $(if ($processors.Count) { [string]$processors[0].Name } else { $null })
+    usage = $cpuUsage
+    physicalCores = $(if ($processors.Count) { As-Double (($processors | Measure-Object -Property NumberOfCores -Sum).Sum) } else { $null })
+    logicalCores = $(if ($processors.Count) { As-Double (($processors | Measure-Object -Property NumberOfLogicalProcessors -Sum).Sum) } else { $null })
+    currentClockMHz = $(if ($processors.Count) { As-Double (($processors | Measure-Object -Property CurrentClockSpeed -Average).Average) } else { $null })
+    maxClockMHz = $(if ($processors.Count) { As-Double (($processors | Measure-Object -Property MaxClockSpeed -Maximum).Maximum) } else { $null })
+    perCoreUsage = @($coreLoads)
+  }
+  memory = [pscustomobject]@{
+    totalBytes = $(if ($operatingSystem) { (As-Double $operatingSystem.TotalVisibleMemorySize) * 1KB } else { $null })
+    availableBytes = $(if ($operatingSystem) { (As-Double $operatingSystem.FreePhysicalMemory) * 1KB } else { $null })
+    pageFileTotalBytes = $pageFileTotalBytes
+    pageFileAvailableBytes = $pageFileAvailableBytes
+  }
+  disks = @($logicalDisks)
+  physicalDisks = @($physicalDisks)
+  diskIo = $diskIo
+  networkInterfaces = @($networkInterfaces)
+  gpu = [pscustomobject]@{
+    adapters = @($videoControllers)
+    usage = $gpuUsage
+    memoryUsedBytes = $gpuMemoryUsed
+    memoryTotalBytes = $gpuMemoryTotal
+    temperatureC = $null
+    powerWatts = $null
+    provider = 'windows-cim'
+  }
+  thermalZones = @($thermalZones)
+  battery = $battery
+}
+
+$result | ConvertTo-Json -Depth 7 -Compress
+`;
+
+function finiteOrNull(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function clampPercent(value) {
+  const number = finiteOrNull(value);
+  return number === null ? null : Math.max(0, Math.min(100, number));
+}
+
+function asArray(value) {
+  if (value === null || value === undefined) return [];
+  return Array.isArray(value) ? value : [value];
+}
+
+function calculateUsage(used, total) {
+  return Number.isFinite(used) && Number.isFinite(total) && total > 0
+    ? clampPercent(100 * used / total)
+    : null;
+}
+
+export function readCpuTimes(cpus = os.cpus()) {
+  const perCore = cpus.map((cpu) => {
+    const times = cpu.times || {};
+    const idle = finiteOrNull(times.idle) ?? 0;
+    const total = Object.values(times).reduce((sum, value) => sum + (finiteOrNull(value) ?? 0), 0);
+    return { idle, total };
+  });
+  return {
+    perCore,
+    idle: perCore.reduce((sum, item) => sum + item.idle, 0),
+    total: perCore.reduce((sum, item) => sum + item.total, 0),
+  };
+}
+
+export function calculateCpuUsage(previous, current) {
+  if (!previous || !current) return { usage: null, perCoreUsage: [] };
+
+  const totalDelta = current.total - previous.total;
+  const idleDelta = current.idle - previous.idle;
+  const usage = totalDelta > 0 ? clampPercent(100 * (totalDelta - idleDelta) / totalDelta) : null;
+  const perCoreUsage = current.perCore.map((sample, index) => {
+    const old = previous.perCore[index];
+    if (!old) return null;
+    const coreTotalDelta = sample.total - old.total;
+    const coreIdleDelta = sample.idle - old.idle;
+    return coreTotalDelta > 0
+      ? clampPercent(100 * (coreTotalDelta - coreIdleDelta) / coreTotalDelta)
+      : null;
+  });
+  return { usage, perCoreUsage };
+}
+
+const portableDiskCache = {
+  roots: null,
+  rootsRefreshAt: 0,
+  disks: [],
+  disksRefreshAt: 0,
+};
+
+function getPortableDisk(now = Date.now()) {
+  let roots = portableDiskCache.roots;
+  if (!roots || now >= portableDiskCache.rootsRefreshAt) {
+    roots = [process.platform === 'win32' ? path.parse(process.cwd()).root : '/'];
+  }
+  if (process.platform === 'win32' && (!portableDiskCache.roots || now >= portableDiskCache.rootsRefreshAt)) {
+    try {
+      const systemRoot = process.env.SystemRoot || process.env.WINDIR || 'C:\\Windows';
+      const output = execFileSync(path.join(systemRoot, 'System32', 'fsutil.exe'), ['fsinfo', 'drives'], {
+        encoding: 'utf8', windowsHide: true, timeout: 2500,
+      });
+      const discovered = String(output).match(/[A-Za-z]:\\/g);
+      if (discovered?.length) roots = [...new Set(discovered.map((root) => root.toUpperCase()))];
+    } catch {
+      // The current working drive remains a reliable fallback.
+    }
+  }
+  if (!portableDiskCache.roots || now >= portableDiskCache.rootsRefreshAt) {
+    portableDiskCache.roots = roots;
+    portableDiskCache.rootsRefreshAt = now + 300000;
+  }
+  if (portableDiskCache.disks.length && now < portableDiskCache.disksRefreshAt) {
+    return portableDiskCache.disks.map((disk) => ({ ...disk }));
+  }
+  const disks = roots.flatMap((root) => {
+    try {
+      const stats = fs.statfsSync(root, { bigint: true });
+      const sizeBytes = Number(stats.bsize * stats.blocks);
+      const freeBytes = Number(stats.bsize * stats.bavail);
+      return [{
+        name: root.replace(/[\\/]$/, '') || root,
+        volumeName: '',
+        fileSystem: '',
+        sizeBytes,
+        freeBytes,
+        usedBytes: sizeBytes - freeBytes,
+        usage: calculateUsage(sizeBytes - freeBytes, sizeBytes),
+        provider: 'node-statfs',
+      }];
+    } catch {
+      return [];
+    }
+  });
+  portableDiskCache.disks = disks;
+  portableDiskCache.disksRefreshAt = now + 30000;
+  return disks.map((disk) => ({ ...disk }));
+}
+
+export function collectPortableSnapshot({ previousCpuTimes = null, cpus = os.cpus() } = {}) {
+  const currentCpuTimes = readCpuTimes(cpus);
+  const cpuUsage = calculateCpuUsage(previousCpuTimes, currentCpuTimes);
+  const totalBytes = os.totalmem();
+  const availableBytes = os.freemem();
+  const usedBytes = totalBytes - availableBytes;
+  const speeds = cpus.map((cpu) => finiteOrNull(cpu.speed)).filter(Number.isFinite);
+
+  return {
+    cpuTimes: currentCpuTimes,
+    snapshot: {
+      timestamp: Date.now(),
+      providers: ['node-os'],
+      system: {
+        hostname: os.hostname(),
+        platform: os.platform(),
+        release: os.release(),
+        arch: os.arch(),
+        uptimeSec: os.uptime(),
+        osName: null,
+        osVersion: null,
+        manufacturer: null,
+        model: null,
+        processCount: null,
+        threadCount: null,
+        cpuQueueLength: null,
+      },
+      cpu: {
+        model: cpus[0]?.model?.trim() || null,
+        usage: cpuUsage.usage,
+        physicalCores: null,
+        logicalCores: cpus.length || null,
+        currentClockMHz: speeds.length ? speeds.reduce((sum, speed) => sum + speed, 0) / speeds.length : null,
+        maxClockMHz: speeds.length ? Math.max(...speeds) : null,
+        perCoreUsage: cpuUsage.perCoreUsage,
+      },
+      memory: {
+        totalBytes,
+        availableBytes,
+        usedBytes,
+        usage: calculateUsage(usedBytes, totalBytes),
+        pageFileTotalBytes: null,
+        pageFileAvailableBytes: null,
+      },
+      disks: getPortableDisk(),
+      physicalDisks: [],
+      diskIo: {
+        usage: null,
+        readBytesPerSec: null,
+        writeBytesPerSec: null,
+        transfersPerSec: null,
+        queueLength: null,
+      },
+      network: {
+        downloadBytesPerSec: null,
+        uploadBytesPerSec: null,
+        totalBytesPerSec: null,
+        interfaces: Object.entries(os.networkInterfaces()).flatMap(([name, addresses]) => {
+          const active = (addresses || []).some((address) => !address.internal);
+          return active ? [{ name, downloadBytesPerSec: null, uploadBytesPerSec: null }] : [];
+        }),
+      },
+      gpu: null,
+      thermalZones: [],
+      battery: null,
+      diagnostics: { windowsError: null, nvidiaError: null },
+    },
+  };
+}
+
+function extractJson(stdout) {
+  const text = String(stdout || '').replace(/^\uFEFF/, '').trim();
+  const first = text.indexOf('{');
+  const last = text.lastIndexOf('}');
+  if (first < 0 || last < first) throw new Error('PowerShell returned no JSON object');
+  return text.slice(first, last + 1);
+}
+
+export function parseWindowsSystemOutput(stdout, {
+  previousNetwork = new Map(),
+  previousDisk = null,
+  elapsedSec = null,
+} = {}) {
+  const raw = JSON.parse(extractJson(stdout));
+  const nextNetwork = new Map();
+
+  const interfaces = asArray(raw.networkInterfaces).map((item) => {
+    const name = String(item?.name || 'Network');
+    const mode = item?.mode === 'cumulative' ? 'cumulative' : 'rate';
+    let downloadBytesPerSec = finiteOrNull(item?.download);
+    let uploadBytesPerSec = finiteOrNull(item?.upload);
+
+    if (mode === 'cumulative') {
+      const current = { download: downloadBytesPerSec, upload: uploadBytesPerSec };
+      const previous = previousNetwork.get(name);
+      nextNetwork.set(name, current);
+      if (previous && elapsedSec > 0) {
+        downloadBytesPerSec = current.download >= previous.download
+          ? (current.download - previous.download) / elapsedSec
+          : null;
+        uploadBytesPerSec = current.upload >= previous.upload
+          ? (current.upload - previous.upload) / elapsedSec
+          : null;
+      } else {
+        downloadBytesPerSec = null;
+        uploadBytesPerSec = null;
+      }
+    }
+
+    return {
+      name,
+      mode,
+      provider: String(item?.provider || 'windows-cim'),
+      downloadBytesPerSec,
+      uploadBytesPerSec,
+      totalBytesPerSec: finiteOrNull(item?.total) ?? (
+        Number.isFinite(downloadBytesPerSec) && Number.isFinite(uploadBytesPerSec)
+          ? downloadBytesPerSec + uploadBytesPerSec
+          : null
+      ),
+      linkSpeedBits: finiteOrNull(item?.linkSpeedBits),
+      packetsReceivedPerSec: finiteOrNull(item?.packetsReceivedPerSec),
+      packetsSentPerSec: finiteOrNull(item?.packetsSentPerSec),
+    };
+  });
+
+  const disks = asArray(raw.disks).map((disk) => {
+    const sizeBytes = finiteOrNull(disk?.sizeBytes);
+    const freeBytes = finiteOrNull(disk?.freeBytes);
+    const usedBytes = sizeBytes !== null && freeBytes !== null ? Math.max(0, sizeBytes - freeBytes) : null;
+    return {
+      name: String(disk?.name || '?'),
+      volumeName: String(disk?.volumeName || ''),
+      fileSystem: String(disk?.fileSystem || ''),
+      sizeBytes,
+      freeBytes,
+      usedBytes,
+      usage: calculateUsage(usedBytes, sizeBytes),
+      provider: raw.provider || 'windows-cim',
+    };
+  }).filter((disk) => disk.sizeBytes !== null);
+
+  const physicalDisks = asArray(raw.physicalDisks).map((disk) => ({
+    name: String(disk?.name || 'Physical disk'),
+    mediaType: String(disk?.mediaType || ''),
+    busType: String(disk?.busType || ''),
+    healthStatus: String(disk?.healthStatus || ''),
+    operationalStatus: String(disk?.operationalStatus || ''),
+    sizeBytes: finiteOrNull(disk?.sizeBytes),
+    temperatureC: finiteOrNull(disk?.temperatureC),
+    temperatureMaxC: finiteOrNull(disk?.temperatureMaxC),
+    readErrorsTotal: finiteOrNull(disk?.readErrorsTotal),
+    writeErrorsTotal: finiteOrNull(disk?.writeErrorsTotal),
+    wearPercent: clampPercent(disk?.wearPercent),
+    powerOnHours: finiteOrNull(disk?.powerOnHours),
+    provider: 'windows-storage',
+  }));
+
+  const memoryTotal = finiteOrNull(raw.memory?.totalBytes);
+  const memoryAvailable = finiteOrNull(raw.memory?.availableBytes);
+  const memoryUsed = memoryTotal !== null && memoryAvailable !== null
+    ? Math.max(0, memoryTotal - memoryAvailable)
+    : null;
+
+  const allAdapters = asArray(raw.gpu?.adapters).map((adapter) => ({
+    name: String(adapter?.name || 'Display adapter'),
+    driverVersion: adapter?.driverVersion ? String(adapter.driverVersion) : null,
+    memoryTotalBytes: finiteOrNull(adapter?.adapterRamBytes),
+    usage: null,
+    memoryUsedBytes: null,
+    memoryUsage: null,
+    temperatureC: null,
+    powerWatts: null,
+    provider: 'windows-cim',
+  }));
+  const hardwareAdapters = allAdapters.filter((adapter) => (
+    !/virtual|remote|oray|todesk|idd|basic display/i.test(adapter.name || '')
+  ));
+  const adapters = hardwareAdapters.length ? hardwareAdapters : allAdapters;
+  const primary = selectPrimaryGpu(adapters);
+  const gpuMemoryUsed = finiteOrNull(raw.gpu?.memoryUsedBytes);
+  const gpuMemoryTotal = finiteOrNull(raw.gpu?.memoryTotalBytes) ?? primary?.memoryTotalBytes ?? null;
+  const gpuUsage = clampPercent(raw.gpu?.usage);
+  const hasDynamicGpu = gpuUsage !== null || gpuMemoryUsed !== null;
+  const gpu = primary || hasDynamicGpu ? {
+    ...(primary || {
+      name: null,
+      driverVersion: null,
+      memoryTotalBytes: null,
+      provider: raw.gpu?.provider || 'windows-cim',
+    }),
+    usage: gpuUsage,
+    memoryUsedBytes: gpuMemoryUsed,
+    memoryTotalBytes: gpuMemoryTotal,
+    memoryUsage: calculateUsage(gpuMemoryUsed, gpuMemoryTotal),
+    temperatureC: finiteOrNull(raw.gpu?.temperatureC),
+    powerWatts: finiteOrNull(raw.gpu?.powerWatts),
+    adapters,
+    provider: raw.gpu?.provider || 'windows-cim',
+  } : null;
+
+  const downloadBytesPerSec = interfaces.reduce((sum, item) => sum + (item.downloadBytesPerSec ?? 0), 0);
+  const uploadBytesPerSec = interfaces.reduce((sum, item) => sum + (item.uploadBytesPerSec ?? 0), 0);
+  const hasNetworkRates = interfaces.some((item) => Number.isFinite(item.downloadBytesPerSec) || Number.isFinite(item.uploadBytesPerSec));
+  const diskMode = raw.diskIo?.mode === 'cumulative' ? 'cumulative' : 'rate';
+  const currentDiskCounters = raw.diskIo ? {
+    read: finiteOrNull(raw.diskIo.readBytesPerSec),
+    write: finiteOrNull(raw.diskIo.writeBytesPerSec),
+    transfers: finiteOrNull(raw.diskIo.transfersPerSec),
+  } : null;
+  let diskReadRate = currentDiskCounters?.read ?? null;
+  let diskWriteRate = currentDiskCounters?.write ?? null;
+  let diskTransferRate = currentDiskCounters?.transfers ?? null;
+  if (diskMode === 'cumulative') {
+    if (previousDisk && elapsedSec > 0) {
+      diskReadRate = Number.isFinite(currentDiskCounters.read) && Number.isFinite(previousDisk.read) && currentDiskCounters.read >= previousDisk.read
+        ? (currentDiskCounters.read - previousDisk.read) / elapsedSec
+        : null;
+      diskWriteRate = Number.isFinite(currentDiskCounters.write) && Number.isFinite(previousDisk.write) && currentDiskCounters.write >= previousDisk.write
+        ? (currentDiskCounters.write - previousDisk.write) / elapsedSec
+        : null;
+      diskTransferRate = Number.isFinite(currentDiskCounters.transfers) && Number.isFinite(previousDisk.transfers) && currentDiskCounters.transfers >= previousDisk.transfers
+        ? (currentDiskCounters.transfers - previousDisk.transfers) / elapsedSec
+        : null;
+    } else {
+      diskReadRate = null;
+      diskWriteRate = null;
+      diskTransferRate = null;
+    }
+  }
+
+  return {
+    nextNetwork,
+    nextDisk: diskMode === 'cumulative' ? currentDiskCounters : null,
+    snapshot: {
+      timestamp: Date.now(),
+      providers: [raw.provider || 'windows-cim', ...asArray(raw.sources).map(String)],
+      probeErrors: asArray(raw.probeErrors).map((issue) => ({
+        probe: String(issue?.probe || 'windows-query'),
+        code: String(issue?.code || 'query_failed'),
+        message: String(issue?.message || 'Windows query failed'),
+      })),
+      system: {
+        osName: raw.system?.osName || null,
+        osVersion: raw.system?.osVersion || null,
+        manufacturer: raw.system?.manufacturer || null,
+        model: raw.system?.model || null,
+        processCount: finiteOrNull(raw.system?.processCount),
+        threadCount: finiteOrNull(raw.system?.threadCount),
+        cpuQueueLength: finiteOrNull(raw.system?.cpuQueueLength),
+      },
+      cpu: {
+        model: raw.cpu?.model || null,
+        usage: clampPercent(raw.cpu?.usage),
+        physicalCores: finiteOrNull(raw.cpu?.physicalCores),
+        logicalCores: finiteOrNull(raw.cpu?.logicalCores),
+        currentClockMHz: finiteOrNull(raw.cpu?.currentClockMHz),
+        maxClockMHz: finiteOrNull(raw.cpu?.maxClockMHz),
+        perCoreUsage: asArray(raw.cpu?.perCoreUsage).map(clampPercent),
+      },
+      memory: {
+        totalBytes: memoryTotal,
+        availableBytes: memoryAvailable,
+        usedBytes: memoryUsed,
+        usage: calculateUsage(memoryUsed, memoryTotal),
+        pageFileTotalBytes: finiteOrNull(raw.memory?.pageFileTotalBytes),
+        pageFileAvailableBytes: finiteOrNull(raw.memory?.pageFileAvailableBytes),
+      },
+      disks,
+      physicalDisks,
+      diskIo: {
+        usage: clampPercent(raw.diskIo?.usage),
+        readBytesPerSec: diskReadRate,
+        writeBytesPerSec: diskWriteRate,
+        transfersPerSec: diskTransferRate,
+        queueLength: finiteOrNull(raw.diskIo?.queueLength),
+        provider: diskMode === 'cumulative' ? 'process-io-delta' : 'performance-counter',
+      },
+      network: {
+        downloadBytesPerSec: hasNetworkRates ? downloadBytesPerSec : null,
+        uploadBytesPerSec: hasNetworkRates ? uploadBytesPerSec : null,
+        totalBytesPerSec: hasNetworkRates ? downloadBytesPerSec + uploadBytesPerSec : null,
+        interfaces,
+        fieldSources: {
+          downloadBytesPerSec: interfaces.find((item) => Number.isFinite(item.downloadBytesPerSec))?.provider || 'windows-cim',
+          uploadBytesPerSec: interfaces.find((item) => Number.isFinite(item.uploadBytesPerSec))?.provider || 'windows-cim',
+        },
+      },
+      gpu,
+      thermalZones: asArray(raw.thermalZones).map((zone) => ({
+        name: String(zone?.name || 'Thermal zone'),
+        temperatureC: finiteOrNull(zone?.temperatureC),
+      })).filter((zone) => zone.temperatureC !== null),
+      battery: raw.battery ? {
+        percent: clampPercent(raw.battery.percent),
+        statusCode: finiteOrNull(raw.battery.statusCode),
+        estimatedMinutes: finiteOrNull(raw.battery.estimatedMinutes),
+        designCapacityMWh: finiteOrNull(raw.battery.designCapacityMWh),
+        fullChargeCapacityMWh: finiteOrNull(raw.battery.fullChargeCapacityMWh),
+        remainingCapacityMWh: finiteOrNull(raw.battery.remainingCapacityMWh),
+        voltageMv: finiteOrNull(raw.battery.voltageMv),
+        chargeRateMw: finiteOrNull(raw.battery.chargeRateMw),
+        dischargeRateMw: finiteOrNull(raw.battery.dischargeRateMw),
+        cycleCount: finiteOrNull(raw.battery.cycleCount),
+      } : null,
+    },
+  };
+}
+
+function mergeObject(portable, enriched) {
+  const result = { ...(portable || {}) };
+  for (const [key, value] of Object.entries(enriched || {})) {
+    if (value !== null && value !== undefined && value !== '' && (!Array.isArray(value) || value.length)) {
+      result[key] = value;
+    }
+  }
+  return result;
+}
+
+function mergeProbeErrors(previous = [], current = []) {
+  const issues = [...previous, ...current];
+  return [...new Map(issues.map((issue) => [
+    `${issue?.probe || ''}:${issue?.code || ''}:${issue?.message || ''}`,
+    issue,
+  ])).values()];
+}
+
+/**
+ * Fast Windows samples intentionally omit stable CIM/storage fields. Keep the
+ * most recent full sample while replacing live counters, so low-frequency
+ * hardware discovery never makes a visible card briefly lose its details.
+ */
+export function mergeWindowsSnapshots(previous, current, { full = false } = {}) {
+  if (!previous || full) return current;
+  if (!current) return previous;
+
+  const gpu = current.gpu
+    ? {
+      ...mergeObject(previous.gpu, current.gpu),
+      adapters: current.gpu.adapters?.length
+        ? current.gpu.adapters
+        : (previous.gpu?.adapters || []),
+    }
+    : previous.gpu;
+
+  return {
+    ...previous,
+    ...current,
+    providers: [...new Set([...(previous.providers || []), ...(current.providers || [])])],
+    probeErrors: mergeProbeErrors(previous.probeErrors, current.probeErrors),
+    system: mergeObject(previous.system, current.system),
+    cpu: mergeObject(previous.cpu, current.cpu),
+    memory: mergeObject(previous.memory, current.memory),
+    disks: previous.disks || [],
+    physicalDisks: previous.physicalDisks || [],
+    diskIo: mergeObject(previous.diskIo, current.diskIo),
+    network: current.network?.interfaces?.length
+      ? mergeObject(previous.network, current.network)
+      : previous.network,
+    gpu,
+    thermalZones: previous.thermalZones || [],
+    battery: previous.battery ?? null,
+  };
+}
+
+function gpuNameTokens(value) {
+  return String(value || '').toLowerCase()
+    .replace(/nvidia|geforce|amd|radeon|intel|graphics|display|adapter|gpu|\(r\)|\(tm\)/g, ' ')
+    .replace(/([a-z])(\d)/g, '$1 $2')
+    .replace(/(\d)([a-z])/g, '$1 $2')
+    .split(/[^a-z0-9]+/)
+    .filter((token) => token.length > 1);
+}
+
+export function matchHardwareGpu(name, hardwareGpus = []) {
+  const candidates = Array.isArray(hardwareGpus) ? hardwareGpus.filter(Boolean) : [];
+  if (candidates.length === 1 && (!name || !candidates[0].name)) return candidates[0];
+  const wanted = new Set(gpuNameTokens(name));
+  if (!wanted.size) return null;
+  const ranked = candidates.map((gpu) => {
+    const tokens = gpuNameTokens(gpu.name);
+    const score = tokens.reduce((sum, token) => sum + (wanted.has(token) ? 1 : 0), 0);
+    return { gpu, score };
+  }).sort((left, right) => right.score - left.score);
+  return ranked[0]?.score > 0 && ranked[0].score > (ranked[1]?.score || 0) ? ranked[0].gpu : null;
+}
+
+export function mergeSnapshots(
+  portable,
+  windowsSnapshot = null,
+  nvidiaAdapters = null,
+  diagnostics = {},
+  hardwareSensors = null,
+) {
+  const snapshot = {
+    ...portable,
+    timestamp: Date.now(),
+    providers: [...new Set([...(portable.providers || []), ...(windowsSnapshot?.providers || [])])],
+    system: mergeObject(portable.system, windowsSnapshot?.system),
+    cpu: mergeObject(portable.cpu, windowsSnapshot?.cpu),
+    memory: mergeObject(portable.memory, windowsSnapshot?.memory),
+    disks: windowsSnapshot?.disks?.length ? windowsSnapshot.disks : portable.disks,
+    physicalDisks: windowsSnapshot?.physicalDisks || portable.physicalDisks || [],
+    diskIo: mergeObject(portable.diskIo, windowsSnapshot?.diskIo),
+    network: windowsSnapshot?.network?.interfaces?.length
+      ? mergeObject(portable.network, windowsSnapshot.network)
+      : portable.network,
+    gpu: windowsSnapshot?.gpu || portable.gpu,
+    thermalZones: windowsSnapshot?.thermalZones?.length ? windowsSnapshot.thermalZones : portable.thermalZones,
+    battery: windowsSnapshot?.battery ?? portable.battery,
+    hardwareSensors,
+    diagnostics: { ...portable.diagnostics, ...diagnostics },
+    providerDetails: {
+      windows: { sampledAt: windowsSnapshot?.timestamp || null, probeErrors: windowsSnapshot?.probeErrors || [] },
+      hardware: { sampledAt: hardwareSensors?.timestamp || null, issues: hardwareSensors?.issues || [] },
+      nvidia: { sampledAt: nvidiaAdapters?.[0]?.sampledAt || null },
+    },
+  };
+
+  if (Array.isArray(nvidiaAdapters) && nvidiaAdapters.length) {
+    const primary = selectPrimaryGpu(nvidiaAdapters);
+    snapshot.gpu = { ...primary, adapters: nvidiaAdapters, provider: 'nvidia-smi' };
+    snapshot.providers.push('nvidia-smi');
+  }
+
+  if (hardwareSensors) {
+    snapshot.providers.push(hardwareSensors.provider);
+    snapshot.cpu = mergeObject(snapshot.cpu, {
+      usage: hardwareSensors.cpu?.loadPercent,
+      temperatureC: hardwareSensors.cpu?.temperatureC,
+      powerWatts: hardwareSensors.cpu?.powerWatts,
+      voltageVolts: hardwareSensors.cpu?.voltageVolts,
+      sensorClockMHz: hardwareSensors.cpu?.clockMHz,
+    });
+    const hardwareGpus = hardwareSensors.gpus?.length ? hardwareSensors.gpus : hardwareSensors.gpu ? [hardwareSensors.gpu] : [];
+    const primaryHardwareGpu = matchHardwareGpu(snapshot.gpu?.name, hardwareGpus);
+    if (snapshot.gpu || primaryHardwareGpu) {
+      snapshot.gpu = mergeObject(snapshot.gpu, {
+        name: primaryHardwareGpu?.name,
+        hardwareIdentifier: primaryHardwareGpu?.hardwareIdentifier,
+        provider: snapshot.gpu?.provider || (primaryHardwareGpu ? 'librehardwaremonitor' : null),
+        usage: primaryHardwareGpu?.loadPercent,
+        temperatureC: primaryHardwareGpu?.temperatureC,
+        hotspotTemperatureC: primaryHardwareGpu?.hotspotTemperatureC,
+        powerWatts: primaryHardwareGpu?.powerWatts,
+        voltageVolts: primaryHardwareGpu?.voltageVolts,
+        fanRpm: primaryHardwareGpu?.fanRpm,
+        fanPercent: primaryHardwareGpu?.fanPercent,
+        clockMHz: primaryHardwareGpu?.clockMHz,
+        memoryClockMHz: primaryHardwareGpu?.memoryClockMHz,
+      });
+      if (primaryHardwareGpu) {
+        snapshot.gpu.fieldSources = {
+          ...(snapshot.gpu.fieldSources || {}),
+          usage: primaryHardwareGpu.loadPercent !== null ? 'librehardwaremonitor' : snapshot.gpu.provider,
+          temperatureC: primaryHardwareGpu.temperatureC !== null ? 'librehardwaremonitor' : snapshot.gpu.provider,
+          powerWatts: primaryHardwareGpu.powerWatts !== null ? 'librehardwaremonitor' : snapshot.gpu.provider,
+          fanRpm: primaryHardwareGpu.fanRpm !== null ? 'librehardwaremonitor' : snapshot.gpu.provider,
+          fanPercent: primaryHardwareGpu.fanPercent !== null ? 'librehardwaremonitor' : snapshot.gpu.provider,
+          clockMHz: primaryHardwareGpu.clockMHz !== null ? 'librehardwaremonitor' : snapshot.gpu.provider,
+          memoryClockMHz: primaryHardwareGpu.memoryClockMHz !== null ? 'librehardwaremonitor' : snapshot.gpu.provider,
+        };
+      }
+      if (snapshot.gpu.adapters?.length) {
+        snapshot.gpu.adapters = snapshot.gpu.adapters.map((adapter) => {
+          const matched = matchHardwareGpu(adapter.name, hardwareGpus);
+          if (!matched) return adapter;
+          return mergeObject(adapter, {
+            usage: matched.loadPercent,
+            temperatureC: matched.temperatureC,
+            hotspotTemperatureC: matched.hotspotTemperatureC,
+            powerWatts: matched.powerWatts,
+            voltageVolts: matched.voltageVolts,
+            fanRpm: matched.fanRpm,
+            fanPercent: matched.fanPercent,
+            clockMHz: matched.clockMHz,
+            memoryClockMHz: matched.memoryClockMHz,
+            hardwareIdentifier: matched.hardwareIdentifier,
+            fieldSources: {
+              ...(adapter.fieldSources || {}),
+              usage: matched.loadPercent !== null ? 'librehardwaremonitor' : adapter.provider,
+              temperatureC: matched.temperatureC !== null ? 'librehardwaremonitor' : adapter.provider,
+              powerWatts: matched.powerWatts !== null ? 'librehardwaremonitor' : adapter.provider,
+            },
+          });
+        });
+      }
+    }
+
+    const availableSensors = (hardwareSensors.sensors || []).filter((sensor) => sensor.status !== 'unavailable' && finiteOrNull(sensor.value) !== null);
+    const storageThroughput = availableSensors.filter((sensor) => /^Storage$/i.test(sensor.hardwareType || '') && sensor.sensorType === 'Throughput');
+    const storageLoads = availableSensors.filter((sensor) => /^Storage$/i.test(sensor.hardwareType || '') && sensor.sensorType === 'Load');
+    const sumMatching = (sensors, pattern) => {
+      const values = sensors.filter((sensor) => pattern.test(sensor.name || '')).map((sensor) => finiteOrNull(sensor.value)).filter(Number.isFinite);
+      return values.length ? values.reduce((sum, value) => sum + value, 0) : null;
+    };
+    const maxMatching = (sensors, pattern) => {
+      const values = sensors.filter((sensor) => pattern.test(sensor.name || '')).map((sensor) => finiteOrNull(sensor.value)).filter(Number.isFinite);
+      return values.length ? Math.max(...values) : null;
+    };
+    const hardwareDiskUsage = maxMatching(storageLoads, /total activity|disk activity/i);
+    const hardwareDiskRead = sumMatching(storageThroughput, /read/i);
+    const hardwareDiskWrite = sumMatching(storageThroughput, /write/i);
+    const originalDiskProvider = snapshot.diskIo?.provider || 'windows-cim';
+    const originalDiskUsage = finiteOrNull(snapshot.diskIo?.usage);
+    const originalDiskRead = finiteOrNull(snapshot.diskIo?.readBytesPerSec);
+    const originalDiskWrite = finiteOrNull(snapshot.diskIo?.writeBytesPerSec);
+    const usedHardwareDiskFallback = (
+      (originalDiskUsage === null && hardwareDiskUsage !== null)
+      || (originalDiskRead === null && hardwareDiskRead !== null)
+      || (originalDiskWrite === null && hardwareDiskWrite !== null)
+    );
+    snapshot.diskIo = mergeObject(snapshot.diskIo, {
+      usage: finiteOrNull(snapshot.diskIo?.usage) ?? hardwareDiskUsage,
+      readBytesPerSec: finiteOrNull(snapshot.diskIo?.readBytesPerSec) ?? hardwareDiskRead,
+      writeBytesPerSec: finiteOrNull(snapshot.diskIo?.writeBytesPerSec) ?? hardwareDiskWrite,
+      provider: usedHardwareDiskFallback ? 'librehardwaremonitor' : snapshot.diskIo?.provider,
+    });
+    snapshot.diskIo.fieldSources = {
+      usage: originalDiskUsage !== null ? originalDiskProvider : hardwareDiskUsage !== null ? 'librehardwaremonitor' : originalDiskProvider,
+      readBytesPerSec: originalDiskRead !== null ? originalDiskProvider : hardwareDiskRead !== null ? 'librehardwaremonitor' : originalDiskProvider,
+      writeBytesPerSec: originalDiskWrite !== null ? originalDiskProvider : hardwareDiskWrite !== null ? 'librehardwaremonitor' : originalDiskProvider,
+    };
+
+    const networkSensors = availableSensors.filter((sensor) => /^Network$/i.test(sensor.hardwareType || '') && sensor.sensorType === 'Throughput');
+    const hardwareDownload = sumMatching(networkSensors, /download|receive/i);
+    const hardwareUpload = sumMatching(networkSensors, /upload|send/i);
+    const originalDownload = finiteOrNull(snapshot.network?.downloadBytesPerSec);
+    const originalUpload = finiteOrNull(snapshot.network?.uploadBytesPerSec);
+    const originalNetworkSources = snapshot.network?.fieldSources || {};
+    if (originalDownload === null && hardwareDownload !== null) snapshot.network.downloadBytesPerSec = hardwareDownload;
+    if (originalUpload === null && hardwareUpload !== null) snapshot.network.uploadBytesPerSec = hardwareUpload;
+    snapshot.network.fieldSources = {
+      downloadBytesPerSec: originalDownload === null && hardwareDownload !== null ? 'librehardwaremonitor' : originalNetworkSources.downloadBytesPerSec || 'windows-cim',
+      uploadBytesPerSec: originalUpload === null && hardwareUpload !== null ? 'librehardwaremonitor' : originalNetworkSources.uploadBytesPerSec || 'windows-cim',
+    };
+    if (finiteOrNull(snapshot.network?.downloadBytesPerSec) !== null && finiteOrNull(snapshot.network?.uploadBytesPerSec) !== null) {
+      snapshot.network.totalBytesPerSec = snapshot.network.downloadBytesPerSec + snapshot.network.uploadBytesPerSec;
+    }
+  }
+
+  snapshot.providers = [...new Set(snapshot.providers)];
+
+  const windowsHas = (group, key) => {
+    const value = windowsSnapshot?.[group]?.[key];
+    return value !== null && value !== undefined && value !== '' && (!Array.isArray(value) || value.length > 0);
+  };
+  snapshot.fieldSources = {
+    system: {
+      osName: windowsHas('system', 'osName') ? 'windows-cim' : 'node-os',
+      processCount: windowsHas('system', 'processCount') ? 'windows-cim' : 'node-os',
+      threadCount: windowsHas('system', 'threadCount') ? 'windows-cim' : 'node-os',
+      cpuQueueLength: windowsHas('system', 'cpuQueueLength') ? 'windows-cim' : 'node-os',
+    },
+    cpu: {
+      model: windowsHas('cpu', 'model') ? 'windows-cim' : 'node-os',
+      usage: hardwareSensors?.cpu?.loadPercent !== null && hardwareSensors?.cpu?.loadPercent !== undefined
+        ? 'librehardwaremonitor' : windowsHas('cpu', 'usage') ? 'windows-cim' : 'node-os',
+      currentClockMHz: windowsHas('cpu', 'currentClockMHz') ? 'windows-cim' : 'node-os',
+      maxClockMHz: windowsHas('cpu', 'maxClockMHz') ? 'windows-cim' : 'node-os',
+      physicalCores: windowsHas('cpu', 'physicalCores') ? 'windows-cim' : 'node-os',
+      logicalCores: windowsHas('cpu', 'logicalCores') ? 'windows-cim' : 'node-os',
+      perCoreUsage: windowsHas('cpu', 'perCoreUsage') ? 'windows-cim' : 'node-os',
+      temperatureC: hardwareSensors?.cpu?.temperatureC !== null && hardwareSensors?.cpu?.temperatureC !== undefined ? 'librehardwaremonitor' : null,
+      powerWatts: hardwareSensors?.cpu?.powerWatts !== null && hardwareSensors?.cpu?.powerWatts !== undefined ? 'librehardwaremonitor' : null,
+      voltageVolts: hardwareSensors?.cpu?.voltageVolts !== null && hardwareSensors?.cpu?.voltageVolts !== undefined ? 'librehardwaremonitor' : null,
+    },
+    memory: Object.fromEntries(['totalBytes', 'availableBytes', 'usedBytes', 'usage', 'pageFileTotalBytes', 'pageFileAvailableBytes']
+      .map((key) => [key, windowsHas('memory', key) ? 'windows-cim' : 'node-os'])),
+  };
+
+  Object.assign(snapshot, buildMonitorMetricInventory(snapshot));
+
+  return snapshot;
+}
+
+function powershellCandidates() {
+  const systemRoot = process.env.SystemRoot || process.env.WINDIR || 'C:\\Windows';
+  return [
+    path.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
+    'powershell.exe',
+    'pwsh.exe',
+  ];
+}
+
+const WINDOWS_MONITOR_END_PREFIX = '__TURTLE_MONITOR_END__:';
+
+export function createPersistentWindowsMonitorScript(snapshotScript = WINDOWS_SNAPSHOT_SCRIPT) {
+  const encodedSnapshot = Buffer.from(snapshotScript, 'utf8').toString('base64');
+  return String.raw`
+$ErrorActionPreference = 'Continue'
+[Console]::InputEncoding = [System.Text.Encoding]::UTF8
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$snapshotSource = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encodedSnapshot}'))
+$snapshotBlock = [ScriptBlock]::Create($snapshotSource)
+while ($null -ne ($requestLine = [Console]::In.ReadLine())) {
+  if ($requestLine -eq 'quit') { break }
+  $requestId = ''
+  try {
+    $request = $requestLine | ConvertFrom-Json -ErrorAction Stop
+    $requestId = [string]$request.id
+    $groups = @($request.counterGroups | Where-Object { $_ })
+    $env:TURTLE_MONITOR_COUNTER_GROUPS = $(if ($groups.Count) { $groups -join ',' } else { 'ALL' })
+    $env:TURTLE_MONITOR_FAST_ONLY = $(if ([string]$request.mode -eq 'fast') { '1' } else { '0' })
+    & $snapshotBlock
+  } catch {
+    [Console]::Error.WriteLine([string]$_.Exception.Message)
+  }
+  [Console]::Out.WriteLine('${WINDOWS_MONITOR_END_PREFIX}' + $requestId)
+  [Console]::Out.Flush()
+}
+`;
+}
+
+export class PersistentWindowsMonitor {
+  constructor({ spawnImpl = spawn, timeoutMs = 12000, maxBuffer = 4 * 1024 * 1024 } = {}) {
+    this.spawnImpl = spawnImpl;
+    this.timeoutMs = timeoutMs;
+    this.maxBuffer = maxBuffer;
+    this.child = null;
+    this.pending = null;
+    this.stdoutBuffer = '';
+    this.outputLines = [];
+    this.stderr = '';
+    this.sequence = 0;
+    this.stopping = false;
+    this.scriptPath = path.join(os.tmpdir(), `turtle-monitor-windows-${process.pid}.ps1`);
+  }
+
+  query({ counterGroups = null, mode = 'full' } = {}) {
+    if (process.platform !== 'win32') return Promise.resolve(null);
+    if (this.pending) return this.pending.promise;
+    this._ensureChild();
+    const id = String(++this.sequence);
+    let resolveRequest;
+    let rejectRequest;
+    const promise = new Promise((resolve, reject) => {
+      resolveRequest = resolve;
+      rejectRequest = reject;
+    });
+    const timer = setTimeout(() => {
+      this._rejectPending(new Error('Windows monitor request timed out'));
+      this._terminate();
+    }, this.timeoutMs);
+    this.pending = { id, promise, resolve: resolveRequest, reject: rejectRequest, timer };
+    this.outputLines = [];
+    this.stderr = '';
+    try {
+      this.child.stdin.write(`${JSON.stringify({ id, counterGroups, mode })}\n`);
+    } catch (error) {
+      this._rejectPending(error);
+      this._terminate();
+    }
+    return promise;
+  }
+
+  stop() {
+    this.stopping = true;
+    this._rejectPending(new Error('Windows monitor stopped'));
+    if (this.child && !this.child.killed) {
+      try { this.child.stdin.write('quit\n'); } catch {}
+      const child = this.child;
+      setTimeout(() => {
+        if (!child.killed) child.kill();
+      }, 1000).unref?.();
+    }
+    setTimeout(() => this._cleanupScript(), 1200).unref?.();
+  }
+
+  _ensureChild() {
+    if (this.child) return;
+    this.stopping = false;
+    const candidates = powershellCandidates();
+    const executable = candidates.find((candidate) => !path.isAbsolute(candidate) || fs.existsSync(candidate))
+      || candidates[0];
+    fs.writeFileSync(this.scriptPath, createPersistentWindowsMonitorScript(), 'ascii');
+    const child = this.spawnImpl(executable, [
+      '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', this.scriptPath,
+    ], {
+      windowsHide: true,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    this.child = child;
+    this.stdoutBuffer = '';
+    this.outputLines = [];
+    this.stderr = '';
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk) => this._onStdout(chunk));
+    child.stderr.on('data', (chunk) => {
+      this.stderr = `${this.stderr}${chunk}`.slice(-32768);
+    });
+    child.on('error', (error) => {
+      this._rejectPending(error);
+      this._resetChild(child);
+    });
+    child.on('close', (code, signal) => {
+      if (!this.stopping) {
+        this._rejectPending(new Error(this.stderr.trim() || `Windows monitor exited with ${code ?? signal}`));
+      }
+      this._resetChild(child);
+    });
+    child.stdin.on('error', (error) => {
+      if (!this.stopping) this._rejectPending(error);
+    });
+  }
+
+  _onStdout(chunk) {
+    this.stdoutBuffer += chunk;
+    if (this.stdoutBuffer.length > this.maxBuffer) {
+      this._rejectPending(new Error('Windows monitor output exceeded the buffer limit'));
+      this._terminate();
+      return;
+    }
+    let newline = this.stdoutBuffer.indexOf('\n');
+    while (newline >= 0) {
+      const line = this.stdoutBuffer.slice(0, newline).replace(/^\uFEFF/, '').trim();
+      this.stdoutBuffer = this.stdoutBuffer.slice(newline + 1);
+      if (line.startsWith(WINDOWS_MONITOR_END_PREFIX)) {
+        const id = line.slice(WINDOWS_MONITOR_END_PREFIX.length);
+        if (this.pending?.id === id) {
+          const pending = this.pending;
+          this.pending = null;
+          clearTimeout(pending.timer);
+          const output = this.outputLines.join('\n');
+          this.outputLines = [];
+          if (output.includes('{')) pending.resolve(output);
+          else pending.reject(new Error(this.stderr.trim() || 'Windows monitor returned no snapshot'));
+        }
+      } else if (line) {
+        this.outputLines.push(line);
+      }
+      newline = this.stdoutBuffer.indexOf('\n');
+    }
+  }
+
+  _rejectPending(error) {
+    if (!this.pending) return;
+    const pending = this.pending;
+    this.pending = null;
+    clearTimeout(pending.timer);
+    pending.reject(error);
+  }
+
+  _terminate() {
+    if (this.child && !this.child.killed) this.child.kill();
+  }
+
+  _resetChild(child) {
+    if (this.child !== child) return;
+    this.child = null;
+    this.stdoutBuffer = '';
+    this.outputLines = [];
+    this._cleanupScript();
+  }
+
+  _cleanupScript() {
+    try { fs.unlinkSync(this.scriptPath); } catch {}
+  }
+}
+
+function runPowerShellScript(file, script, {
+  timeoutMs, maxBuffer, counterGroups, mode = 'full', spawnImpl = spawn,
+}) {
+  return new Promise((resolve, reject) => {
+    const child = spawnImpl(file, [
+      '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', '-',
+    ], {
+      windowsHide: true,
+      timeout: timeoutMs,
+      killSignal: 'SIGKILL',
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: {
+        ...process.env,
+        TURTLE_MONITOR_COUNTER_GROUPS: counterGroups?.length ? counterGroups.join(',') : 'ALL',
+        TURTLE_MONITOR_FAST_ONLY: mode === 'fast' ? '1' : '0',
+      },
+    });
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+
+    const finish = (error, value) => {
+      if (settled) return;
+      settled = true;
+      if (error) reject(error);
+      else resolve(value);
+    };
+
+    child.on('error', (error) => finish(error));
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk;
+      if (stdout.length > maxBuffer) {
+        child.kill();
+        finish(new Error('PowerShell output exceeded the buffer limit'));
+      }
+    });
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    child.on('close', (code, signal) => {
+      if (code === 0) finish(null, stdout);
+      else finish(new Error(stderr.trim() || `PowerShell exited with ${code ?? signal}`));
+    });
+    child.stdin.on('error', () => {});
+    child.stdin.end(script);
+  });
+}
+
+export async function queryWindowsSystem({
+  spawnImpl = spawn, timeoutMs = 12000, counterGroups = null, mode = 'full',
+} = {}) {
+  if (process.platform !== 'win32') return null;
+  let lastError = null;
+
+  for (const candidate of powershellCandidates()) {
+    try {
+      return await runPowerShellScript(candidate, WINDOWS_SNAPSHOT_SCRIPT, {
+        timeoutMs,
+        maxBuffer: 4 * 1024 * 1024,
+        counterGroups,
+        mode,
+        spawnImpl,
+      });
+    } catch (error) {
+      lastError = error;
+      if (!/ENOENT|not recognized|not found/i.test(error.message)) break;
+    }
+  }
+  throw lastError || new Error('No PowerShell runtime found');
+}
+
+export function resolveMonitorCadence({ panelOpen = false, onBattery = false, idleSeconds = 0 } = {}) {
+  if (panelOpen) {
+    return { portable: 1000, windows: 2000, nvidia: 2000, hardware: 2000 };
+  }
+  if (onBattery || idleSeconds >= 60) {
+    return { portable: 5000, windows: 10000, nvidia: 10000, hardware: 10000 };
+  }
+  return { portable: 2000, windows: 5000, nvidia: 5000, hardware: 5000 };
+}
+
+export class SystemMonitor {
+  constructor(win, intervalMs = 2000, dependencies = {}) {
+    this.win = win;
+    this.intervalMs = intervalMs;
+    this.timer = null;
+    this.publishTimer = null;
+    this.lastData = null;
+    this.lastPortable = null;
+    this.windowsSnapshot = null;
+    this.nvidiaAdapters = null;
+    this.hardwareSensors = null;
+    this.diagnostics = { windowsError: null, nvidiaError: null, hardwareSensorError: null };
+    this.previousCpuTimes = null;
+    this.previousNetwork = new Map();
+    this.previousDisk = null;
+    this.previousWindowsAt = null;
+    this.windowsCounterGroups = null;
+    this.windowsInFlight = false;
+    this.nvidiaInFlight = false;
+    this.hardwareInFlight = false;
+    this.nvidiaAvailable = null;
+    this.hardwareAvailable = null;
+    this.activityState = { panelOpen: false, onBattery: false, suspended: false };
+    this.getSystemIdleTime = dependencies.getSystemIdleTime || (() => 0);
+    this.now = dependencies.now || Date.now;
+    this.nextDue = { portable: 0, windows: 0, nvidia: 0, hardware: 0 };
+    this.windowsCapabilityRefreshAt = 0;
+    this.windowsFullRefreshAt = 0;
+    this.windowsClient = dependencies.windowsClient
+      || (dependencies.queryWindows ? null : new PersistentWindowsMonitor());
+    this.queryWindows = dependencies.queryWindows
+      || ((options) => this.windowsClient.query(options));
+    this.nvidiaClient = dependencies.nvidiaClient
+      || (dependencies.queryNvidia ? null : new NvidiaQueryClient());
+    this.queryNvidia = dependencies.queryNvidia
+      || (() => this.nvidiaClient.query());
+    this.hardwareClient = dependencies.hardwareClient || new HardwareSensorClient(dependencies.sensorHostPath);
+  }
+
+  start() {
+    this._schedule(0, true);
+  }
+
+  stop() {
+    if (this.timer) clearTimeout(this.timer);
+    if (this.publishTimer) clearTimeout(this.publishTimer);
+    this.timer = null;
+    this.publishTimer = null;
+    this.windowsClient?.stop();
+    this.hardwareClient?.stop();
+  }
+
+  requestSnapshot() {
+    if (this.lastData) this._send(this.lastData);
+    this.nextDue = { portable: 0, windows: 0, nvidia: 0, hardware: 0 };
+    this.windowsFullRefreshAt = 0;
+    this._schedule(0, true);
+  }
+
+  setActivityState(patch = {}) {
+    const previous = this.activityState;
+    this.activityState = {
+      panelOpen: patch.panelOpen ?? previous.panelOpen,
+      onBattery: patch.onBattery ?? previous.onBattery,
+      suspended: patch.suspended ?? previous.suspended,
+    };
+    if (this.activityState.suspended) {
+      if (this.timer) clearTimeout(this.timer);
+      this.timer = null;
+      return;
+    }
+    const resumed = previous.suspended && !this.activityState.suspended;
+    const becameInteractive = (!previous.panelOpen && this.activityState.panelOpen) || resumed;
+    if (resumed) {
+      this.nvidiaClient?.resetCapabilities();
+      this.nvidiaAvailable = null;
+      this.hardwareAvailable = null;
+      this.windowsCounterGroups = null;
+      this.windowsCapabilityRefreshAt = 0;
+      this.windowsFullRefreshAt = 0;
+    }
+    if (becameInteractive) {
+      this.nextDue = { portable: 0, windows: 0, nvidia: 0, hardware: 0 };
+    }
+    this._schedule(0, becameInteractive);
+  }
+
+  async requestHardwareElevation() {
+    const result = await this.hardwareClient.requestElevation();
+    this.hardwareAvailable = null;
+    this.diagnostics.hardwareSensorError = null;
+    if (!this.hardwareInFlight) await this._pollHardware();
+    return {
+      ...result,
+      elevated: Boolean(this.hardwareClient?.elevated),
+    };
+  }
+
+  _schedule(delayMs, force = false) {
+    if (this.activityState.suspended) return;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = setTimeout(() => {
+      this.timer = null;
+      this._tick(force);
+    }, Math.max(0, delayMs));
+    this.timer.unref?.();
+  }
+
+  _tick(force = false) {
+    if (this.activityState.suspended) return;
+    const now = this.now();
+    let idleSeconds = 0;
+    try { idleSeconds = Number(this.getSystemIdleTime()) || 0; } catch {}
+    const cadence = resolveMonitorCadence({ ...this.activityState, idleSeconds });
+
+    if (force || now >= this.nextDue.portable) {
+      const portableResult = collectPortableSnapshot({ previousCpuTimes: this.previousCpuTimes });
+      this.previousCpuTimes = portableResult.cpuTimes;
+      this.lastPortable = portableResult.snapshot;
+      this.nextDue.portable = now + cadence.portable;
+      this._queuePublish();
+    }
+
+    if (now >= this.windowsCapabilityRefreshAt) {
+      this.windowsCounterGroups = null;
+      this.windowsCapabilityRefreshAt = now + 300000;
+    }
+    if ((force || now >= this.nextDue.windows) && !this.windowsInFlight) {
+      this.nextDue.windows = now + (this.diagnostics.windowsError ? 30000 : cadence.windows);
+      const mode = now >= this.windowsFullRefreshAt ? 'full' : 'fast';
+      this._pollWindows(mode);
+    }
+    if ((force || now >= this.nextDue.nvidia) && !this.nvidiaInFlight) {
+      this.nextDue.nvidia = now + (this.nvidiaAvailable === false ? 300000 : cadence.nvidia);
+      this._pollNvidia();
+    }
+    if ((force || now >= this.nextDue.hardware) && !this.hardwareInFlight) {
+      this.nextDue.hardware = now + (this.hardwareAvailable === false ? 300000 : cadence.hardware);
+      this._pollHardware();
+    }
+
+    const nextAt = Math.min(...Object.values(this.nextDue).filter((value) => value > now));
+    const delay = Number.isFinite(nextAt) ? Math.min(2000, Math.max(250, nextAt - now)) : 2000;
+    this._schedule(delay);
+  }
+
+  async _pollWindows(mode = 'fast') {
+    this.windowsInFlight = true;
+    try {
+      const output = await this.queryWindows({ counterGroups: this.windowsCounterGroups, mode });
+      if (output) {
+        const now = Date.now();
+        const elapsedSec = this.previousWindowsAt ? (now - this.previousWindowsAt) / 1000 : null;
+        const parsed = parseWindowsSystemOutput(output, {
+          previousNetwork: this.previousNetwork,
+          previousDisk: this.previousDisk,
+          elapsedSec,
+        });
+        this.windowsSnapshot = mergeWindowsSnapshots(this.windowsSnapshot, parsed.snapshot, {
+          full: mode === 'full',
+        });
+        if (mode === 'full') this.windowsFullRefreshAt = now + 30000;
+        const counterSources = new Set(this.windowsSnapshot.providers || []);
+        this.windowsCounterGroups = [
+          ['CPU', 'Get-Counter:CPU'],
+          ['System', 'Get-Counter:System'],
+          ['Disk', 'Get-Counter:Disk'],
+          ['Network', 'Get-Counter:Network'],
+          ['GPU', 'Get-Counter:GPU'],
+        ].filter(([, source]) => counterSources.has(source)).map(([group]) => group);
+        if (!this.windowsCounterGroups.length) this.windowsCounterGroups = ['None'];
+        if (parsed.nextNetwork.size) this.previousNetwork = parsed.nextNetwork;
+        if (parsed.nextDisk) this.previousDisk = parsed.nextDisk;
+        this.previousWindowsAt = now;
+        this.diagnostics.windowsError = null;
+      }
+    } catch (error) {
+      this.diagnostics.windowsError = error.message;
+    } finally {
+      this.windowsInFlight = false;
+      this._queuePublish();
+    }
+  }
+
+  async _pollNvidia() {
+    this.nvidiaInFlight = true;
+    try {
+      const adapters = await this.queryNvidia();
+      if (Array.isArray(adapters) && adapters.length) {
+        this.nvidiaAdapters = adapters;
+        this.nvidiaAvailable = true;
+        this.diagnostics.nvidiaError = null;
+      }
+    } catch (error) {
+      this.nvidiaAvailable = false;
+      this.diagnostics.nvidiaError = error.message;
+    } finally {
+      this.nvidiaInFlight = false;
+      this._queuePublish();
+    }
+  }
+
+  async _pollHardware() {
+    this.hardwareInFlight = true;
+    try {
+      const snapshot = await this.hardwareClient.query();
+      if (snapshot) {
+        this.hardwareSensors = snapshot;
+        this.hardwareAvailable = true;
+        this.diagnostics.hardwareSensorError = null;
+      }
+    } catch (error) {
+      this.hardwareAvailable = false;
+      this.diagnostics.hardwareSensorError = error.message;
+    } finally {
+      this.hardwareInFlight = false;
+      this._queuePublish();
+    }
+  }
+
+  _queuePublish() {
+    if (this.publishTimer) return;
+    this.publishTimer = setTimeout(() => {
+      this.publishTimer = null;
+      this._publishMerged();
+    }, 100);
+    this.publishTimer.unref?.();
+  }
+
+  _publishMerged() {
+    if (!this.lastPortable) return;
+    this.lastData = mergeSnapshots(
+      this.lastPortable,
+      this.windowsSnapshot,
+      this.nvidiaAdapters,
+      this.diagnostics,
+      this.hardwareSensors,
+    );
+    this._send(this.lastData);
+  }
+
+  _send(data) {
+    if (this.win && !this.win.isDestroyed() && !this.win.webContents.isDestroyed()) {
+      if (this.win.webContents.isLoadingMainFrame?.()) return;
+      this.win.webContents.send('system-data', data);
+    }
+  }
+}

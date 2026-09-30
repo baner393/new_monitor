@@ -1,0 +1,11 @@
+node_modules/
+out/
+.vite/
+*.log
+.codegraph/
+*.bak
+tmp_screenshot.*
+keys/
+.build-edition
+native/**/bin/
+native/**/obj/

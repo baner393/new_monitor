@@ -1,0 +1,92 @@
+{
+  "schemaVersion": 1,
+  "runtime": ".NET Framework 4.7.2 x64",
+  "library": "LibreHardwareMonitorLib 0.9.6",
+  "files": [
+    {
+      "file": "BlackSharp.Core.dll",
+      "bytes": 32768,
+      "sha256": "cafb93afcc8d8a367e21f619673d05c06887d8964867fed1371f02ded1cd3e23"
+    },
+    {
+      "file": "DiskInfoToolkit.dll",
+      "bytes": 903680,
+      "sha256": "1acbf51b3c10c51c986cf43021680d34a2e38d9a5ba652bcfa9a1b5f7fc09800"
+    },
+    {
+      "file": "HardwareSensorHost.exe",
+      "bytes": 19456,
+      "sha256": "362fc9b73aa77adff7d185e160e38a5b07078943817e051d3579b9400493765e"
+    },
+    {
+      "file": "HardwareSensorHost.exe.config",
+      "bytes": 171,
+      "sha256": "435ea23443d8dd98eeb707aad9d3a5c1fe6046f8d76647a44d495d94ea4597ef"
+    },
+    {
+      "file": "HidSharp.dll",
+      "bytes": 262792,
+      "sha256": "d86690efde30ea9179f669320f39148853793b743a98b531afeaf30598e22f54"
+    },
+    {
+      "file": "LICENSE.txt",
+      "bytes": 16725,
+      "sha256": "1f256ecad192880510e84ad60474eab7589218784b9a50bc7ceee34c2b91f1d5"
+    },
+    {
+      "file": "LibreHardwareMonitorLib.dll",
+      "bytes": 1203200,
+      "sha256": "6ebc194316536ba61af5be24508ad9fcbb2ecc685e716c12e787c79530f66bf0"
+    },
+    {
+      "file": "RAMSPDToolkit-NDD.dll",
+      "bytes": 233472,
+      "sha256": "b6882354c7c8ec186617e421507743dbfae09c5c1fc24cef76a1d0c0c26651de"
+    },
+    {
+      "file": "System.Buffers.dll",
+      "bytes": 23816,
+      "sha256": "2d78d770c9cb997199154ae8c018b9f1d1efbc86729f7264dde6dbad2a12cac3"
+    },
+    {
+      "file": "System.CodeDom.dll",
+      "bytes": 34056,
+      "sha256": "adab61ffc51ef97ad6f3da0af3aa6fa4324db70f817e6d31fc765f53dc3d2881"
+    },
+    {
+      "file": "System.Memory.dll",
+      "bytes": 145200,
+      "sha256": "d5e8e4866f9cfa66f7765660f84b210198893e55335487afe5ebda342c0e913d"
+    },
+    {
+      "file": "System.Numerics.Vectors.dll",
+      "bytes": 110344,
+      "sha256": "20c2fa81b8c70d651099d762954f285fd4f942e63b2d7217c145dab8d4b2f4c9"
+    },
+    {
+      "file": "System.Runtime.CompilerServices.Unsafe.dll",
+      "bytes": 19256,
+      "sha256": "08cbd7278b66f1e68425a82d4b97181a4130d93e3dd91831407aba7212ccdacf"
+    },
+    {
+      "file": "System.Security.AccessControl.dll",
+      "bytes": 35952,
+      "sha256": "ff14c5f628b9a6798d173aefbba0a43d61e66f715108e2576ac0d3dfab9071d0"
+    },
+    {
+      "file": "System.Security.Principal.Windows.dll",
+      "bytes": 18312,
+      "sha256": "b4d8e15adc235d0e858e39b5133e5d00a4baa8c94f4f39e3b5e791b0f9c0c806"
+    },
+    {
+      "file": "System.Threading.AccessControl.dll",
+      "bytes": 34568,
+      "sha256": "5e3a3902f04f840c0fc1f9c2f249f804f6cfdf7901b2e06778bc2a4603ae4694"
+    },
+    {
+      "file": "THIRD-PARTY-LICENSES.txt",
+      "bytes": 25903,
+      "sha256": "b887094f525e7afd14cfae8319ff012700f641e07090da420031dbfac31de1f0"
+    }
+  ]
+}

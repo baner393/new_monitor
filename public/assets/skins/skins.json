@@ -1,0 +1,41 @@
+{
+  "skins": [
+    {
+      "id": "turtle",
+      "name": "turtle",
+      "displayName": "turtle",
+      "author": "Unknown",
+      "description": "",
+      "frames": {
+        "blink_closed": "assets/skins/turtle/blink.png",
+        "happy": "assets/skins/turtle/happy.png",
+        "hover": "assets/skins/turtle/hover.png",
+        "idle": "assets/skins/turtle/idle.png",
+        "pain": "assets/skins/turtle/pain.png",
+        "pull": "assets/skins/turtle/pull.png"
+      },
+      "preview": "assets/skins/turtle/idle.png",
+      "scale": 1,
+      "baseSize": 48
+    },
+    {
+      "id": "cat",
+      "name": "cat",
+      "displayName": "cat",
+      "author": "Unknown",
+      "description": "",
+      "frames": {
+        "blink_closed": "assets/skins/cat/blink.png",
+        "happy": "assets/skins/cat/happy.png",
+        "hover": "assets/skins/cat/hover.png",
+        "idle": "assets/skins/cat/idle.png",
+        "pain": "assets/skins/cat/pain.png",
+        "pull": "assets/skins/cat/pull.png"
+      },
+      "preview": "assets/skins/cat/idle.png",
+      "scale": 0.9375,
+      "baseSize": 64
+    }
+  ],
+  "defaultSkin": "turtle"
+}
