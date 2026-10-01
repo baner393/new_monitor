@@ -1392,3 +1392,124 @@ test('App Server active state stays authoritative over an idle local rollout', a
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('a recent local completion wins over a stale active App Server catalog entry', async () => {
+  class FakeAppServer extends EventEmitter {
+    async connect() {}
+    async request(method) {
+      if (method === 'thread/list') return {
+        data: [{ id: 'finished-local', name: 'Finished locally', updatedAt: Date.parse('2026-07-31T06:10:00Z') / 1000, status: { type: 'active' } }],
+        nextCursor: null,
+      };
+      if (method === 'thread/resume') return { thread: { id: 'finished-local', status: { type: 'idle' } } };
+      return {};
+    }
+    stop() {}
+  }
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'new-monitor-codex-finished-local-'));
+  const sessions = path.join(root, 'sessions');
+  fs.mkdirSync(sessions);
+  fs.writeFileSync(path.join(sessions, 'finished-local.jsonl'), `${rollout([
+    { timestamp: '2026-07-31T06:10:00Z', type: 'session_meta', payload: { id: 'finished-local', cwd: root } },
+    { timestamp: '2026-07-31T06:11:00Z', type: 'event_msg', payload: { type: 'task_started', turn_id: 'turn-done' } },
+    { timestamp: '2026-07-31T06:12:00Z', type: 'event_msg', payload: { type: 'task_complete', turn_id: 'turn-done' } },
+  ])}\n`);
+  const monitor = new CodexMonitor({
+    config: { version: 2, enabled: true, homeMode: 'manual', manualHome: root },
+    appServerFactory: () => new FakeAppServer(),
+  });
+  try {
+    await monitor.scan(true);
+    await monitor.connectThread('finished-local');
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      if (monitor.getSnapshot().tasks.find((task) => task.id === 'finished-local')?.connectionState === CODEX_CONNECTION.CONNECTED) break;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    assert.equal(
+      monitor.getSnapshot().tasks.find((task) => task.id === 'finished-local')?.activity,
+      CODEX_ACTIVITY.SILENT,
+    );
+  } finally {
+    monitor.stop();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('a late active status does not revive a completed App Server turn', async () => {
+  class FakeAppServer extends EventEmitter {
+    async connect() {}
+    async request(method) {
+      if (method === 'thread/resume') return { thread: { status: { type: 'idle' } } };
+      return {};
+    }
+    stop() {}
+  }
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'new-monitor-codex-completion-race-'));
+  const sessions = path.join(root, 'sessions');
+  fs.mkdirSync(sessions);
+  fs.writeFileSync(path.join(sessions, 'completion-race.jsonl'), `${rollout([
+    { timestamp: new Date().toISOString(), type: 'session_meta', payload: { id: 'completion-race', cwd: root } },
+  ])}\n`);
+  const server = new FakeAppServer();
+  const monitor = new CodexMonitor({
+    config: { version: 2, enabled: true, homeMode: 'manual', manualHome: root },
+    appServerFactory: () => server,
+  });
+  try {
+    await monitor.scan(true);
+    await monitor.connectThread('completion-race');
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      if (monitor.getSnapshot().tasks.find((task) => task.id === 'completion-race')?.connectionState === CODEX_CONNECTION.CONNECTED) break;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    const completionEmittedAtMs = Date.now();
+    server.emit('notification', {
+      method: 'turn/started',
+      params: { threadId: 'completion-race', turn: { id: 'turn-race' } },
+    });
+    server.emit('notification', {
+      method: 'turn/completed',
+      params: { threadId: 'completion-race', turn: { id: 'turn-race', status: 'completed' } },
+    });
+    server.emit('notification', {
+      method: 'thread/status/changed',
+      params: { threadId: 'completion-race', status: { type: 'active' } },
+    });
+    assert.equal(
+      monitor.getSnapshot().tasks.find((task) => task.id === 'completion-race')?.activity,
+      CODEX_ACTIVITY.SILENT,
+    );
+
+    server.emit('notification', {
+      method: 'turn/completed',
+      emittedAtMs: completionEmittedAtMs - 6_000,
+      params: { threadId: 'completion-race', turn: { id: 'turn-next', status: 'completed' } },
+    });
+    server.emit('notification', {
+      method: 'thread/status/changed',
+      params: { threadId: 'completion-race', status: { type: 'active' } },
+    });
+    assert.equal(
+      monitor.getSnapshot().tasks.find((task) => task.id === 'completion-race')?.activity,
+      CODEX_ACTIVITY.RUNNING,
+    );
+
+    server.emit('notification', {
+      method: 'turn/completed',
+      emittedAtMs: completionEmittedAtMs + 30,
+      params: { threadId: 'completion-race', turn: { id: 'turn-next', status: 'completed' } },
+    });
+    server.emit('notification', {
+      method: 'turn/started',
+      emittedAtMs: completionEmittedAtMs + 40,
+      params: { threadId: 'completion-race', turn: { id: 'turn-following' } },
+    });
+    assert.equal(
+      monitor.getSnapshot().tasks.find((task) => task.id === 'completion-race')?.activity,
+      CODEX_ACTIVITY.RUNNING,
+    );
+  } finally {
+    monitor.stop();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

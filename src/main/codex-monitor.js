@@ -605,6 +605,7 @@ export class CodexMonitor {
     this.managedTasks = new Map();
     this.managedMessages = new Map();
     this.managedUnread = new Map();
+    this.completedThreadAtMsById = new Map();
     this.pendingRequests = new Map();
     this.connectionStates = new Map();
     this.client = null;
@@ -642,6 +643,7 @@ export class CodexMonitor {
     this.client = null;
     this.clientReady = false;
     this.catalogSynced = false;
+    this.completedThreadAtMsById.clear();
   }
 
   getConfig() {
@@ -664,6 +666,7 @@ export class CodexMonitor {
       this.catalogTasks.clear();
       this.catalogSynced = false;
       this.managedUnread.clear();
+      this.completedThreadAtMsById.clear();
       this.connectionStates.clear();
       this.client?.stop();
       this.client = null;
@@ -863,6 +866,9 @@ export class CodexMonitor {
       this.tasks.set(id, {
         ...task,
         ...catalog,
+        activity: Number(task.updatedAtMs || 0) >= Number(catalog?.updatedAtMs || 0)
+          ? task.activity
+          : (catalog?.activity || task.activity),
         title: indexed?.title || (catalog?.hasSavedName ? catalog.title : task.title),
         hasSavedName: Boolean(indexed || catalog?.hasSavedName),
         messages: catalog?.messages?.length ? catalog.messages : task.messages,
@@ -1134,6 +1140,7 @@ export class CodexMonitor {
       const threadStatus = resumed?.thread?.status || {};
       const status = threadStatus.type;
       const active = status === 'active' || status === 'inProgress';
+      if (active) this.completedThreadAtMsById.delete(threadId);
       let thread = resumed?.thread || null;
       let activeTurnId = activeTurnIdFromThread(thread);
       if (active && !activeTurnId) {
@@ -1148,6 +1155,13 @@ export class CodexMonitor {
         });
         this.connectionStates.set(threadId, { state: CODEX_CONNECTION.CONNECTED, error: '' });
       } else {
+        if (active) {
+          this.#setManagedTask(threadId, {
+            activity: codexActivityFromThreadStatus(threadStatus),
+            activeTurnId: '',
+            updatedAtMs: Date.now(),
+          });
+        }
         this.connectionStates.set(threadId, {
           state: active ? CODEX_CONNECTION.TEMPORARY_READ_ONLY : CODEX_CONNECTION.CONNECTED,
           error: active ? '任务正在 Codex 中运行，但暂未取得可追加消息的 turn 标识' : '',
@@ -1228,6 +1242,7 @@ export class CodexMonitor {
     let thread = (await this.client.request('thread/resume', { threadId }, 15_000))?.thread || null;
     const status = thread?.status?.type;
     const active = status === 'active' || status === 'inProgress';
+    if (active) this.completedThreadAtMsById.delete(threadId);
     let activeTurnId = activeTurnIdFromThread(thread);
     if (active && !activeTurnId) {
       thread = await this.#hydrateThreadMessages(threadId);
@@ -1392,6 +1407,9 @@ export class CodexMonitor {
       else this.tasks.set(id, {
         ...task,
         ...catalogTask,
+        activity: Number(task.updatedAtMs || 0) >= Number(catalogTask.updatedAtMs || 0)
+          ? task.activity
+          : (catalogTask.activity || task.activity),
         title: catalogTask.hasSavedName ? catalogTask.title : task.title,
         messages: catalogTask.messages?.length ? catalogTask.messages : task.messages,
         historyComplete: catalogTask.messages?.length ? true : task.historyComplete,
@@ -1483,6 +1501,7 @@ export class CodexMonitor {
     const threadId = String(params.threadId || params.thread?.id || '');
     if (!threadId) return;
     if (method === 'turn/started') {
+      this.completedThreadAtMsById.delete(threadId);
       for (const [eventId, event] of this.managedUnread) {
         if (event.threadId === threadId && event.activity === CODEX_ACTIVITY.BLOCKED) {
           this.managedUnread.delete(eventId);
@@ -1514,6 +1533,7 @@ export class CodexMonitor {
       const failed = ['failed', 'interrupted'].includes(params.turn?.status);
       const activity = failed ? CODEX_ACTIVITY.BLOCKED : CODEX_ACTIVITY.READY;
       const eventId = `${threadId}:${turnId}:${activity}`;
+      this.completedThreadAtMsById.set(threadId, finiteTimestamp(message.emittedAtMs, Date.now()));
       this.#setManagedTask(threadId, { activity: CODEX_ACTIVITY.SILENT, activeTurnId: '', updatedAtMs: Date.now() });
       this.managedUnread.set(eventId, {
         id: eventId,
@@ -1532,6 +1552,18 @@ export class CodexMonitor {
     } else if (method === 'thread/status/changed') {
       const status = params.status || {};
       const activity = codexActivityFromThreadStatus(status);
+      const completedAtMs = this.completedThreadAtMsById.get(threadId) || 0;
+      const emittedAtMs = finiteTimestamp(message.emittedAtMs, 0);
+      const staleActiveAfterCompletion = activity === CODEX_ACTIVITY.RUNNING
+        && completedAtMs > 0
+        && (emittedAtMs > 0
+          ? emittedAtMs <= completedAtMs
+          : Date.now() - completedAtMs <= 5_000);
+      if (staleActiveAfterCompletion) {
+        this.#rebuildSnapshot();
+        return;
+      }
+      if (activity === CODEX_ACTIVITY.RUNNING) this.completedThreadAtMsById.delete(threadId);
       const systemError = activity === CODEX_ACTIVITY.BLOCKED;
       const ownActive = Boolean(this.managedTasks.get(threadId)?.activeTurnId);
       this.#setManagedTask(threadId, {
