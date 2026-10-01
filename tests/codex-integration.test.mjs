@@ -355,6 +355,21 @@ test('running and aborted rollouts map to quiet running and blocked unread state
   assert.equal(aborted.unread.canReply, false);
 });
 
+test('Codex rollout with an undated completion does not become unread from the file mtime', () => {
+  const nowMs = Date.now();
+  const undated = parseCodexRollout(rollout([
+    { type: 'session_meta', payload: { id: 'undated-thread', cwd: 'C:\\work\\app' } },
+    { type: 'event_msg', payload: { type: 'task_complete', turn_id: 'undated-turn' } },
+  ]), { modifiedAtMs: nowMs, enabledAtMs: nowMs - 1000 });
+  assert.equal(undated.unread, null);
+
+  const dated = parseCodexRollout(rollout([
+    { timestamp: new Date(nowMs).toISOString(), type: 'session_meta', payload: { id: 'dated-thread', cwd: 'C:\\work\\app' } },
+    { timestamp: new Date(nowMs).toISOString(), type: 'event_msg', payload: { type: 'task_complete', turn_id: 'dated-turn' } },
+  ]), { modifiedAtMs: nowMs, enabledAtMs: nowMs - 1000 });
+  assert.equal(dated.unread?.id, 'dated-thread:dated-turn:ready');
+});
+
 test('second-based Codex timestamps remain ordered after an aborted turn', () => {
   const enabledAtMs = Date.parse('2026-07-31T06:15:00Z');
   const base = [

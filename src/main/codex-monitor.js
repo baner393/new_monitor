@@ -145,6 +145,7 @@ function createRolloutState(filePath = '', modifiedAtMs = 0) {
     lastAgentMessage: '',
     lastStartedAtMs: 0,
     lastFinishedAtMs: 0,
+    lastFinishTimestampKnown: false,
     lastActivityAtMs: modifiedAtMs,
     lastTurnId: '',
     lastFinishKind: '',
@@ -240,12 +241,19 @@ function applyRolloutRow(state, row) {
       state.lastTurnId = String(payload.turn_id || state.lastTurnId || '');
       state.lastFinishKind = '';
     } else if (payload.type === 'task_complete') {
-      state.lastFinishedAtMs = Math.max(state.lastFinishedAtMs, finiteTimestamp(payload.completed_at, timestamp));
+      const completedAtMs = Math.max(
+        finiteTimestamp(payload.completed_at, 0),
+        finiteTimestamp(row.timestamp, 0),
+      );
+      state.lastFinishedAtMs = Math.max(state.lastFinishedAtMs, completedAtMs || state.modifiedAtMs);
+      state.lastFinishTimestampKnown = completedAtMs > 0;
       state.lastTurnId = String(payload.turn_id || state.lastTurnId || '');
       state.lastFinishKind = 'completed';
       if (payload.last_agent_message) appendMessage(state, 'assistant', payload.last_agent_message, timestamp);
     } else if (payload.type === 'turn_aborted') {
-      state.lastFinishedAtMs = Math.max(state.lastFinishedAtMs, timestamp);
+      const finishedAtMs = finiteTimestamp(row.timestamp, 0);
+      state.lastFinishedAtMs = Math.max(state.lastFinishedAtMs, finishedAtMs || state.modifiedAtMs);
+      state.lastFinishTimestampKnown = finishedAtMs > 0;
       state.lastTurnId = String(payload.turn_id || state.lastTurnId || '');
       state.lastFinishKind = 'aborted';
     }
@@ -299,7 +307,8 @@ function snapshotRolloutState(state, { enabledAtMs = 0, readEventIds = new Set()
     historyComplete: state.historyComplete,
   };
   let unread = null;
-  if (!running && state.lastFinishKind && state.lastFinishedAtMs >= enabledAtMs) {
+  if (!running && state.lastFinishKind && state.lastFinishTimestampKnown
+    && state.lastFinishedAtMs >= enabledAtMs) {
     const activity = state.lastFinishKind === 'completed' ? CODEX_ACTIVITY.READY : CODEX_ACTIVITY.BLOCKED;
     const eventId = `${threadId}:${state.lastTurnId || state.lastFinishedAtMs}:${activity}`;
     if (!readEventIds.has(eventId)) {
