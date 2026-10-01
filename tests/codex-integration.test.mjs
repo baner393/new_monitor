@@ -154,6 +154,47 @@ test('Codex config is portable, versioned and bounds persisted read events', () 
   assert.equal(normalizeCodexIntegrationConfig({ newMessageView: 'unknown' }).newMessageView, CODEX_NEW_MESSAGE_VIEW.CONVERSATION);
 });
 
+test('Codex config updates preserve connection and conversation state across stale concurrent saves', async () => {
+  const monitor = new CodexMonitor({
+    config: {
+      version: 2,
+      enabled: false,
+      desiredThreadIds: ['kept-thread'],
+      readEventIds: ['read-event'],
+      notifiedEventIds: ['notified-event'],
+      sessionPreferences: { 'thread-a': { effort: 'high' } },
+    },
+  });
+  try {
+    monitor.updateConfig({
+      ...normalizeCodexIntegrationConfig({ enabled: false }),
+      managedReplies: false,
+      desiredThreadIds: [],
+      readEventIds: [],
+      notifiedEventIds: [],
+      sessionPreferences: { 'thread-b': { effort: 'low' } },
+    });
+    const merged = monitor.getConfig();
+    assert.deepEqual(merged.desiredThreadIds, ['kept-thread']);
+    assert.deepEqual(merged.readEventIds, ['read-event']);
+    assert.deepEqual(merged.notifiedEventIds, ['notified-event']);
+    assert.deepEqual(merged.sessionPreferences, {
+      'thread-a': { effort: 'high' },
+      'thread-b': { effort: 'low' },
+    });
+
+    monitor.updateConfig({ ...merged, desiredThreadIds: [], readEventIds: [], sessionPreferences: {} }, {
+      replacePersistentState: true,
+    });
+    assert.deepEqual(monitor.getConfig().desiredThreadIds, []);
+    assert.deepEqual(monitor.getConfig().readEventIds, []);
+    assert.deepEqual(monitor.getConfig().sessionPreferences, {});
+    await monitor.scan(true);
+  } finally {
+    monitor.stop();
+  }
+});
+
 test('Codex direct turns use on-request approvals unless bypass is enabled', () => {
   assert.deepEqual(buildCodexTurnPermissionOverrides(false), { approvalPolicy: 'on-request' });
   assert.deepEqual(buildCodexTurnPermissionOverrides(true), {
@@ -188,6 +229,13 @@ test('Codex conversations expose the shared effort slider', () => {
   assert.match(cssSource, /\.codex-reasoning-trigger/);
   assert.match(cssSource, /\.codex-reasoning-popover/);
   assert.match(cssSource, /\.agent-effort-slider/);
+});
+
+test('Codex conversation and settings saves merge against the latest persisted config', () => {
+  const companionSource = fs.readFileSync(path.join(process.cwd(), 'src', 'renderer', 'codex-companion.js'), 'utf8');
+  assert.match(companionSource, /const current = await this\.#api\('codex'\)\.getConfig\(\)/);
+  assert.match(companionSource, /const currentProviderConfig = await this\.#api\(provider\)\.getConfig\(\)/);
+  assert.match(companionSource, /const currentCodexConfig = await this\.#api\('codex'\)\.getConfig\(\)/);
 });
 
 test('unread Codex events follow needs-input, blocked, ready priority', () => {
@@ -1491,7 +1539,7 @@ test('a late active status does not revive a completed App Server turn', async (
     });
     assert.equal(
       monitor.getSnapshot().tasks.find((task) => task.id === 'completion-race')?.activity,
-      CODEX_ACTIVITY.RUNNING,
+      CODEX_ACTIVITY.SILENT,
     );
 
     server.emit('notification', {
@@ -1510,6 +1558,78 @@ test('a late active status does not revive a completed App Server turn', async (
     );
   } finally {
     monitor.stop();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('desired Codex connections and conversation preferences survive monitor recreation', async () => {
+  class FakeAppServer extends EventEmitter {
+    calls = [];
+    async connect() {}
+    async request(method) {
+      this.calls.push(method);
+      if (method === 'thread/list') return {
+        data: [{ id: 'persisted-thread', updatedAt: Date.now(), status: { type: 'idle' } }],
+        nextCursor: null,
+      };
+      if (method === 'thread/resume') return { thread: { id: 'persisted-thread', status: { type: 'idle' } } };
+      return {};
+    }
+    stop() {}
+  }
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'new-monitor-codex-persist-'));
+  const sessions = path.join(root, 'sessions');
+  fs.mkdirSync(sessions);
+  fs.writeFileSync(path.join(sessions, 'persisted-thread.jsonl'), `${rollout([
+    { timestamp: new Date().toISOString(), type: 'session_meta', payload: { id: 'persisted-thread', cwd: root } },
+  ])}\n`);
+  let savedConfig = {
+    version: 2,
+    enabled: true,
+    homeMode: 'manual',
+    manualHome: root,
+    sessionPreferences: { 'persisted-thread': { effort: 'high' } },
+  };
+  const servers = [];
+  const makeMonitor = () => new CodexMonitor({
+    config: savedConfig,
+    onConfigChange: (config) => { savedConfig = config; },
+    appServerFactory: () => {
+      const server = new FakeAppServer();
+      servers.push(server);
+      return server;
+    },
+  });
+  const waitUntilConnected = async (monitor) => {
+    for (let attempt = 0; attempt < 200; attempt += 1) {
+      if (monitor.getSnapshot().tasks.find((task) => task.id === 'persisted-thread')?.connectionState === CODEX_CONNECTION.CONNECTED) return;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  };
+  const first = makeMonitor();
+  try {
+    await first.scan(true);
+    await first.connectThread('persisted-thread');
+    await waitUntilConnected(first);
+    assert.ok(savedConfig.desiredThreadIds.includes('persisted-thread'));
+    first.stop();
+
+    const reopened = makeMonitor();
+    try {
+      reopened.start();
+      await waitUntilConnected(reopened);
+      assert.ok(savedConfig.desiredThreadIds.includes('persisted-thread'));
+      assert.equal(savedConfig.sessionPreferences['persisted-thread'].effort, 'high');
+      assert.ok(servers.at(-1).calls.includes('thread/resume'), servers.at(-1).calls.join(', '));
+      assert.equal(
+        reopened.getSnapshot().tasks.find((task) => task.id === 'persisted-thread')?.connectionState,
+        CODEX_CONNECTION.CONNECTED,
+      );
+    } finally {
+      reopened.stop();
+    }
+  } finally {
+    first.stop();
     fs.rmSync(root, { recursive: true, force: true });
   }
 });

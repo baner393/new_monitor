@@ -655,10 +655,22 @@ export class CodexMonitor {
     };
   }
 
-  updateConfig(next) {
+  updateConfig(next, { replacePersistentState = false } = {}) {
     const previousConfig = this.config;
     const wasEnabled = this.config.enabled;
-    this.config = normalizeCodexIntegrationConfig({ ...this.config, ...next });
+    const nextConfig = {
+      ...this.config,
+      ...next,
+      desiredThreadIds: replacePersistentState
+        ? next.desiredThreadIds
+        : this.config.desiredThreadIds,
+      readEventIds: replacePersistentState ? next.readEventIds : this.config.readEventIds,
+      notifiedEventIds: replacePersistentState ? next.notifiedEventIds : this.config.notifiedEventIds,
+      sessionPreferences: replacePersistentState
+        ? next.sessionPreferences
+        : { ...this.config.sessionPreferences, ...(next.sessionPreferences || {}) },
+    };
+    this.config = normalizeCodexIntegrationConfig(nextConfig);
     if (!wasEnabled && this.config.enabled) this.config.enabledAtMs = Date.now();
     this.#persistConfig();
     if (!this.config.enabled) {
@@ -1556,9 +1568,8 @@ export class CodexMonitor {
       const emittedAtMs = finiteTimestamp(message.emittedAtMs, 0);
       const staleActiveAfterCompletion = activity === CODEX_ACTIVITY.RUNNING
         && completedAtMs > 0
-        && (emittedAtMs > 0
-          ? emittedAtMs <= completedAtMs
-          : Date.now() - completedAtMs <= 5_000);
+        // Without a timestamp, only a fresh turn/started event can prove this is a new turn.
+        && (emittedAtMs === 0 || emittedAtMs <= completedAtMs);
       if (staleActiveAfterCompletion) {
         this.#rebuildSnapshot();
         return;

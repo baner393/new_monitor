@@ -514,7 +514,7 @@ ipcMain.handle('settings-reset', () => {
     codexIntegration: normalizeCodexIntegrationConfig(DEFAULT_CODEX_INTEGRATION_CONFIG),
     claudeIntegration: normalizeClaudeIntegrationConfig(DEFAULT_CLAUDE_INTEGRATION_CONFIG),
   };
-  codexMonitor?.updateConfig(currentSettings.codexIntegration);
+  codexMonitor?.updateConfig(currentSettings.codexIntegration, { replacePersistentState: true });
   claudeMonitor?.updateConfig(currentSettings.claudeIntegration);
   saveSettings();
   return { ...currentSettings };

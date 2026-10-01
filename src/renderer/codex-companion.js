@@ -425,7 +425,7 @@ export class CodexCompanion {
     const preference = normalizeCodexSessionPreference({ effort: nextEffort });
     this.bubble.querySelectorAll('.codex-reasoning-effort input, .codex-thinking-mode').forEach((node) => { node.disabled = true; });
     try {
-      const current = this.configs.codex || {};
+      const current = await this.#api('codex').getConfig();
       this.configs.codex = await this.#api('codex').saveConfig({
         ...current,
         sessionPreferences: { ...(current.sessionPreferences || {}), [sourceId]: preference },
@@ -1601,14 +1601,16 @@ export class CodexCompanion {
       const selectedNewMessageView = this.configPanel.querySelector('.codex-new-message-view input:checked')?.value
         || CODEX_NEW_MESSAGE_VIEW.CONVERSATION;
       if (this.configs.codex?.newMessageView !== selectedNewMessageView) {
+        const currentCodexConfig = await this.#api('codex').getConfig();
         this.configs.codex = await window.electronAPI.codex.saveConfig({
-          ...this.configs.codex,
+          ...currentCodexConfig,
           newMessageView: selectedNewMessageView,
         });
       }
       const provider = this.activeProvider;
+      const currentProviderConfig = await this.#api(provider).getConfig();
       this.config = await this.#api(provider).saveConfig({
-        ...this.configs[provider],
+        ...currentProviderConfig,
         enabled,
         managedReplies: this.configPanel.querySelector('.codex-managed').checked,
         replyTransport: this.configPanel.querySelector('.codex-reply-transport').value,
