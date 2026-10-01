@@ -69,6 +69,7 @@ export class OnboardingGuide {
     this.isCharmMode = typeof isCharmMode === 'function' ? isCharmMode : null;
     this.onVisibilityChange = typeof onVisibilityChange === 'function' ? onVisibilityChange : null;
     this.state = createDefaultOnboardingState();
+    this.stateLoaded = false;
     this.sessionSteps = [];
     this.replaying = false;
     this.active = false;
@@ -143,6 +144,7 @@ export class OnboardingGuide {
     } catch (error) {
       console.warn('[Onboarding] Failed to load state:', error);
     }
+    this.stateLoaded = true;
     if (isOnboardingComplete(this.state, this._mode()) || this.state.dismissed) return;
     clearTimeout(this._startTimer);
     this._startTimer = setTimeout(() => this.start(), Math.max(0, delay));
@@ -213,7 +215,7 @@ export class OnboardingGuide {
    * 未完成且未被跳过，自动开始（老用户切到挂饰时补学挂饰课）。
    */
   onAnchorModeChanged() {
-    if (this.replaying) return;
+    if (this.replaying || !this.stateLoaded) return;
     if (this.active) {
       this.sessionSteps = [];
       this.finishing = false;

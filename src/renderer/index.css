@@ -694,6 +694,7 @@ button:disabled, input:disabled, textarea:disabled, select:disabled { opacity: 0
   min-height: 0;
   padding: 19px 20px 24px;
   overflow: auto;
+  overflow-anchor: none;
   scrollbar-width: thin;
   scrollbar-color: rgba(102, 227, 138, .42) rgba(9, 14, 20, .35);
 }

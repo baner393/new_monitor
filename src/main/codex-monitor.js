@@ -10,6 +10,7 @@ import {
   CODEX_REPLY_TRANSPORT,
   buildCodexVisibleTasks,
   cleanCodexUserMessage,
+  codexActivityFromThreadStatus,
   normalizeCodexIntegrationConfig,
   normalizeCodexSessionPreference,
   normalizeCodexLocale,
@@ -84,6 +85,7 @@ function timestampToMs(value) {
 
 function messagesFromThread(thread) {
   const messages = [];
+  let lastCreatedAtMs = 0;
   for (const [turnIndex, turn] of (thread?.turns || []).entries()) {
     for (const [itemIndex, item] of (turn?.items || []).entries()) {
       const type = String(item?.type || '');
@@ -100,13 +102,15 @@ function messagesFromThread(thread) {
             stringifyToolValue(item.output ?? item.result ?? item.content ?? item.arguments),
           ].filter(Boolean).join('\n');
       if (!message) continue;
+      const timestamp = timestampToMs(item.createdAt || turn.startedAt || turn.completedAt || thread.updatedAt)
+        || turnIndex * 1000;
+      lastCreatedAtMs = Math.max(timestamp + itemIndex, lastCreatedAtMs + 1);
       messages.push({
         id: String(item.id || `app-server:${thread.id}:${messages.length}`),
         role,
         kind: role === 'tool' ? type : 'message',
         message,
-        createdAtMs: (timestampToMs(item.createdAt || turn.startedAt || turn.completedAt || thread.updatedAt)
-          || turnIndex * 1000) + itemIndex,
+        createdAtMs: lastCreatedAtMs,
       });
     }
   }
@@ -1085,10 +1089,18 @@ export class CodexMonitor {
       const current = this.connectionStates.get(id)?.state;
       const ownedActive = Boolean(this.managedTasks.get(id)?.activeTurnId);
       if (task.activity === CODEX_ACTIVITY.RUNNING && !ownedActive) {
+        const runtime = this.connectionStates.get(id);
         const connectionState = current === CODEX_CONNECTION.CONNECTED
           ? CODEX_CONNECTION.TEMPORARY_READ_ONLY
           : current || CODEX_CONNECTION.WAITING_IDLE;
-        this.connectionStates.set(id, { state: connectionState, error: '' });
+        const retryTemporaryReadOnly = connectionState === CODEX_CONNECTION.TEMPORARY_READ_ONLY
+          && Number(runtime?.retryAtMs || 0) <= Date.now();
+        if (retryTemporaryReadOnly) {
+          this.connectionStates.set(id, { state: CODEX_CONNECTION.CONNECTING, error: '' });
+          void this.#connectDesiredThread(id);
+          continue;
+        }
+        this.connectionStates.set(id, { ...runtime, state: connectionState, error: '' });
         if (this.clientReady
           && ![CODEX_CONNECTION.CONNECTING, CODEX_CONNECTION.TEMPORARY_READ_ONLY].includes(connectionState)) {
           this.connectionStates.set(id, { state: CODEX_CONNECTION.CONNECTING, error: '' });
@@ -1110,7 +1122,8 @@ export class CodexMonitor {
       this.connectionStates.set(threadId, { state: CODEX_CONNECTION.CONNECTING, error: '' });
       this.#rebuildSnapshot();
       const resumed = await this.client.request('thread/resume', { threadId }, 15_000);
-      const status = resumed?.thread?.status?.type;
+      const threadStatus = resumed?.thread?.status || {};
+      const status = threadStatus.type;
       const active = status === 'active' || status === 'inProgress';
       let thread = resumed?.thread || null;
       let activeTurnId = activeTurnIdFromThread(thread);
@@ -1120,7 +1133,7 @@ export class CodexMonitor {
       }
       if (active && activeTurnId) {
         this.#setManagedTask(threadId, {
-          activity: CODEX_ACTIVITY.RUNNING,
+          activity: codexActivityFromThreadStatus(threadStatus),
           activeTurnId,
           updatedAtMs: Date.now(),
         });
@@ -1129,6 +1142,7 @@ export class CodexMonitor {
         this.connectionStates.set(threadId, {
           state: active ? CODEX_CONNECTION.TEMPORARY_READ_ONLY : CODEX_CONNECTION.CONNECTED,
           error: active ? '任务正在 Codex 中运行，但暂未取得可追加消息的 turn 标识' : '',
+          retryAtMs: active ? Date.now() + this.pollIntervalMs : 0,
         });
       }
       if (resumed?.thread?.name) {
@@ -1349,8 +1363,7 @@ export class CodexMonitor {
           title: sanitizeTaskTitle(savedName || thread.preview),
           project: sanitizeProjectName(thread.cwd),
           model: String(thread.model || ''),
-          activity: status.type === 'active' ? CODEX_ACTIVITY.RUNNING
-            : status.type === 'systemError' ? CODEX_ACTIVITY.BLOCKED : CODEX_ACTIVITY.SILENT,
+          activity: codexActivityFromThreadStatus(status),
           updatedAtMs: timestampToMs(thread.updatedAt || thread.createdAt),
           managed: false,
           messages: this.catalogTasks.get(id)?.messages || [],
@@ -1509,14 +1522,11 @@ export class CodexMonitor {
       this.connectionStates.set(threadId, { state: CODEX_CONNECTION.CONNECTED, error: '' });
     } else if (method === 'thread/status/changed') {
       const status = params.status || {};
-      const systemError = status.type === 'systemError';
-      const needsInput = status.type === 'active'
-        && (status.activeFlags || []).some((flag) => flag === 'waitingOnApproval' || flag === 'waitingOnUserInput');
+      const activity = codexActivityFromThreadStatus(status);
+      const systemError = activity === CODEX_ACTIVITY.BLOCKED;
       const ownActive = Boolean(this.managedTasks.get(threadId)?.activeTurnId);
       this.#setManagedTask(threadId, {
-        activity: systemError ? CODEX_ACTIVITY.BLOCKED
-          : needsInput ? CODEX_ACTIVITY.NEEDS_INPUT
-          : status.type === 'active' ? CODEX_ACTIVITY.RUNNING : CODEX_ACTIVITY.SILENT,
+        activity,
         updatedAtMs: Date.now(),
       });
       if (systemError) {
@@ -1537,7 +1547,11 @@ export class CodexMonitor {
         });
       }
       if (status.type === 'active' && !ownActive) {
-        this.connectionStates.set(threadId, { state: CODEX_CONNECTION.TEMPORARY_READ_ONLY, error: '' });
+        this.connectionStates.set(threadId, {
+          state: CODEX_CONNECTION.TEMPORARY_READ_ONLY,
+          error: '',
+          retryAtMs: Date.now() + this.pollIntervalMs,
+        });
       } else if (status.type !== 'active' && this.config.desiredThreadIds.includes(threadId)) {
         this.connectionStates.set(threadId, { state: CODEX_CONNECTION.CONNECTED, error: '' });
       }

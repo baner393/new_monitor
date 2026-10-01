@@ -1,76 +1,31 @@
-/**
- * ring-icons.js — 环形菜单像素图标（24×24 crispEdges）
- *
- * SVG 路径逐字照抄 mockup（.project-memory/proposals/radial-menu-mockup.html
- * 的 ICON 对象，设计文档 §1.5 定稿），运行时经 data URL 转成 PIXI 纹理。
- * 模块加载即预热全部纹理（SVG 图像异步解码，开环时必须已就绪）。
- */
+/** 九项轮盘图标：统一的 24×24 圆角线条 SVG。 */
 import * as PIXI from 'pixi.js';
 
-const ICON_COLOR = '#e8eefc';
-
-function svgWrap(inner) {
-  return `data:image/svg+xml;utf8,${encodeURIComponent(
-    `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" shape-rendering="crispEdges" fill="${ICON_COLOR}">${inner}</svg>`,
-  )}`;
-}
-
 const ICON_SVG = {
-  monitor: `
-    <rect x="3" y="5" width="18" height="12" rx="1" fill="none" stroke="${ICON_COLOR}" stroke-width="2"/>
-    <rect x="6" y="8" width="4" height="6" fill="${ICON_COLOR}"/>
-    <rect x="12" y="8" width="2" height="2" fill="${ICON_COLOR}"/>
-    <rect x="12" y="12" width="6" height="2" fill="${ICON_COLOR}"/>
-    <line x1="10" y1="17" x2="10" y2="20" stroke="${ICON_COLOR}" stroke-width="2"/>
-    <line x1="14" y1="17" x2="14" y2="20" stroke="${ICON_COLOR}" stroke-width="2"/>`,
-  gear: `
-    <rect x="10" y="2" width="4" height="3" fill="${ICON_COLOR}"/>
-    <rect x="10" y="19" width="4" height="3" fill="${ICON_COLOR}"/>
-    <rect x="2" y="10" width="3" height="4" fill="${ICON_COLOR}"/>
-    <rect x="19" y="10" width="3" height="4" fill="${ICON_COLOR}"/>
-    <rect x="4" y="4" width="3" height="3" fill="${ICON_COLOR}"/>
-    <rect x="17" y="4" width="3" height="3" fill="${ICON_COLOR}"/>
-    <rect x="4" y="17" width="3" height="3" fill="${ICON_COLOR}"/>
-    <rect x="17" y="17" width="3" height="3" fill="${ICON_COLOR}"/>
-    <rect x="8" y="8" width="8" height="8" fill="none" stroke="${ICON_COLOR}" stroke-width="2"/>
-    <rect x="10" y="10" width="4" height="4" fill="${ICON_COLOR}"/>`,
-  palette: `
-    <path d="M12 3 A9 9 0 1 0 21 12 L17 12 A1.5 1.5 0 0 0 15.5 13.5 L15.5 15 A1.5 1.5 0 0 0 14 16.5 L8 16.5 A3 3 0 0 1 5 13.5 A9 9 0 0 1 12 3 Z"
-          fill="none" stroke="${ICON_COLOR}" stroke-width="2"/>
-    <rect x="6" y="9" width="3" height="3" fill="${ICON_COLOR}"/>
-    <rect x="10" y="6" width="3" height="3" fill="${ICON_COLOR}"/>
-    <rect x="15" y="9" width="3" height="3" fill="${ICON_COLOR}"/>`,
-  eyeOff: `
-    <path d="M3 12 C5 7 8 5 12 5 C16 5 19 7 21 12 C19 17 16 19 12 19 C8 19 5 17 3 12 Z"
-          fill="none" stroke="${ICON_COLOR}" stroke-width="2"/>
-    <rect x="11" y="11" width="2" height="2" fill="${ICON_COLOR}"/>
-    <line x1="4" y1="4" x2="20" y2="20" stroke="${ICON_COLOR}" stroke-width="2.5"/>`,
-  tag: `
-    <path d="M11 3 L20 3 L20 12 L12 20 L3 11 Z" fill="none" stroke="${ICON_COLOR}" stroke-width="2"/>
-    <rect x="14" y="6" width="3" height="3" fill="${ICON_COLOR}"/>`,
-  toggle: `
-    <rect x="3" y="8" width="18" height="8" rx="4" fill="none" stroke="${ICON_COLOR}" stroke-width="2"/>
-    <circle cx="8" cy="12" r="3" fill="${ICON_COLOR}"/>`,
-  book: `
-    <path d="M4 3 L11 3 L11 21 L4 21 Z" fill="none" stroke="${ICON_COLOR}" stroke-width="2"/>
-    <path d="M13 3 L20 3 L20 21 L13 21 Z" fill="none" stroke="${ICON_COLOR}" stroke-width="2"/>`,
-  brush: `
-    <path d="M3 21 L8 16 L17 7 L19 5 L15 9 L6 18 Z" fill="${ICON_COLOR}"/>
-    <rect x="16" y="3" width="6" height="6" rx="1" fill="none" stroke="${ICON_COLOR}" stroke-width="2"/>`,
-  chat: `
-    <path d="M3 4 L21 4 L21 15 L11 15 L6 20 L6 15 L3 15 Z" fill="none" stroke="${ICON_COLOR}" stroke-width="2" stroke-linejoin="round"/>
-    <rect x="6" y="7" width="9" height="2" fill="${ICON_COLOR}"/>
-    <rect x="6" y="10" width="6" height="2" fill="${ICON_COLOR}"/>`,
+  monitor: '<rect x="3" y="4" width="18" height="14" rx="2"/><path d="M9 21h6M12 18v3M6 8h5M6 11h3"/>',
+  gear: '<circle cx="12" cy="12" r="3.5"/><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.5 1.5m10.4 10.4 1.5 1.5m0-13.4-1.5 1.5M6.8 17.2l-1.5 1.5"/><circle cx="12" cy="12" r="8" stroke-opacity=".65"/>',
+  palette: '<path d="M12 3a9 9 0 1 0 9 9c0-1.4-1.2-2.2-2.5-1.7-2 .8-2.9-.2-2.9-1.4 0-1.4 1.3-2.2 1.3-3.2C16.9 4.2 14.7 3 12 3Z"/><circle cx="6.5" cy="11" r="1"/><circle cx="10" cy="7" r="1"/><circle cx="7.8" cy="16" r="1"/>',
+  eyeOff: '<path d="M3 12c2.2-3.8 5.2-5.7 9-5.7s6.8 1.9 9 5.7c-2.2 3.8-5.2 5.7-9 5.7S5.2 15.8 3 12Z"/><circle cx="12" cy="12" r="2.7"/><path d="M3 3 21 21"/>',
+  chat: '<path d="M4 4h16v13H9l-5 4V4Z"/><path d="M8 9h8M8 13h5"/>',
+  tag: '<path d="M3 4h10l8 8-9 9-9-9V4Z"/><circle cx="8" cy="9" r="1.4"/>',
+  toggle: '<rect x="2.5" y="7" width="19" height="10" rx="5"/><circle cx="15.5" cy="12" r="3"/>',
+  book: '<path d="M12 5c-3-2-6-2-9-1v15c3-1 6-1 9 1 3-2 6-2 9-1V4c-3-1-6-1-9 1Zm0 0v15"/>',
+  brush: '<path d="m4 20 5-1 10-10-4-4L5 15l-1 5ZM13 7l4 4M16 4l2-2 4 4-2 2"/>',
 };
 
 const textures = new Map();
+const ICON_RESOLUTION = 3;
 
-/** 预热全部图标纹理（模块加载即调用一次）。 */
+/** 构造轮盘时一次性创建纹理，避免首次展开才启动 SVG 解码。 */
 export function preloadRingIconTextures() {
-  for (const [key, inner] of Object.entries(ICON_SVG)) {
-    if (!textures.has(key)) {
-      textures.set(key, PIXI.Texture.from(svgWrap(inner)));
-    }
+  for (const [key, path] of Object.entries(ICON_SVG)) {
+    if (textures.has(key)) continue;
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${path}</svg>`;
+    textures.set(key, PIXI.Texture.from(`data:image/svg+xml;utf8,${encodeURIComponent(svg)}`, {
+      resolution: ICON_RESOLUTION,
+      resourceOptions: { scale: ICON_RESOLUTION },
+      scaleMode: PIXI.SCALE_MODES.LINEAR,
+    }));
   }
 }
 

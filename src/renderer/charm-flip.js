@@ -7,17 +7,16 @@
  *     g_eff = (−ax, G−ay)（重力 + 运动惯性力 + 向心力自动叠加，因为
  *     加速度差分里天然含向心分量），薄板像真实挂牌一样弹簧阻尼地摆向
  *     g_eff：静止垂直下垂、加速时滞后外甩、甩圈时被离心力掀起；
- *   · spinY（绕挂点竖轴）：甩动注入能量翻滚（背面 = 原版精灵镜像），
+ *   · spinY（绕挂点竖轴）：甩动注入能量翻滚（背面 = 独立金属背板），
  *     能量耗尽回 ±8° 静置摇摆；侧棱倒下斥力防卡死（沿用 565e5fb）；
  *   · spinZ（绕绳轴自转）：能量 >55% 随机激发的纷飞 + 回正弹簧。
  *
  * 渲染映射（2D 合成，薄板厚度可见——描边不再固定）：
- *   · 正、背面是两张独立精灵：正面显示原图，背面水平镜像；背面沿
+ *   · 正、背面是两张独立精灵：正面显示原图，背面为同轮廓金属材质；背面沿
  *     thickness·sin(spinY) 产生横向视差；
- *   · 侧壁 = 切片堆叠挤出（sprite stacking / godotshaders 2D sprite
- *     fake-3D 的公开做法）：深度 λ 处的切片投影到 x = −thickness·sinY·λ，
- *     N 层金属剪影扫过两面间距——任意角度的侧壁都贴着宠物轮廓，
- *     而不是一条独立竖条；金属反光由切片银虹彩渐变与箔面/光带承担；
+ *   · 侧壁 = 行段网格挤出：深度 λ 处投影到 x = thickness·sinY·λ，
+ *     每层覆盖完整深度区间，窄轮廓在90°也形成连续实心截面；
+ *     冷银中段与两端窄倒角提供硬币厚度感；
  *   · tilt + spinZ 施加到容器 rotation（都绕挂点）。
  */
 
@@ -34,6 +33,7 @@ export const FLIP_DEFAULTS = Object.freeze({
   tiltDamping: 11,      // 重力链接阻尼（2ζω）
   thicknessRatio: 0.07, // 厚度 = 显示宽 × ratio（clamp 2~9px）
   flipEnabled: true,
+  backMaterial: 'metal',
 });
 
 /**
@@ -57,6 +57,7 @@ export function knobsToFlipConfig(values = {}) {
     tiltDamping: 2 * Math.sqrt(tiltStiffness) * 0.85,
     thicknessRatio: 0.03 + thick * 0.08,        // 3%..11% 显示宽
     flipEnabled: values.charmFlipEnabled !== false,
+    backMaterial: values.charmBackMaterial === 'pattern' ? 'pattern' : 'metal',
   };
 }
 
@@ -161,7 +162,7 @@ export function sliceOffsets(s, thickness, count) {
 
 /**
  * 闪卡各层随宠物基准缩放同步（皮肤加载与 turtleSize 改变时都要调用）。
- * body/back/mask 用宠物基准 scale；foil/band/edge/slices 的纹理是皮肤帧 ×3
+ * body/mask 用宠物基准 scale；back/backSheen/foil/band/edge/slices 的纹理是皮肤帧 ×3
  * 预渲染，对应 scale/3。翻转每帧只接管 scale.x（cos(spinY) 压缩），
  * 本函数负责把 scale.y（和未翻转时的基准 scale.x）同步到新尺寸——
  * 纯尺寸变化绝不重建纹理。
@@ -169,10 +170,10 @@ export function sliceOffsets(s, thickness, count) {
 export function syncLayerScales(layers, baseScale) {
   const faceScale = baseScale;
   const texScale = baseScale / 3;
-  for (const key of ['body', 'back', 'mask']) {
+  for (const key of ['body', 'mask', 'backMask']) {
     if (layers[key]) layers[key].scale.set(faceScale, faceScale);
   }
-  for (const key of ['foil', 'band', 'edge']) {
+  for (const key of ['back', 'backSheen', 'foil', 'band', 'backFoil', 'backBand', 'edge']) {
     if (layers[key]) layers[key].scale.set(texScale, texScale);
   }
   if (layers.slices) {
@@ -191,41 +192,75 @@ export function syncLayerScales(layers, baseScale) {
 export function applyFlip(s, state, o) {
   const cosY = Math.cos(state.spinY);
   const sinY = Math.sin(state.spinY);
-  const sx = Math.max(0.05, Math.abs(cosY));
+  const sx = Math.abs(cosY);
   const frontFacing = cosY >= 0;
+  // 侧面对只显示金属截面：不把正面图案强制保留成 5% 宽的条纹。
+  const faceVisible = sx > 0.018;
+  const gap = o.thickness * sinY;
+  const patternBack = o.backMaterial === 'pattern';
+  const backDirection = patternBack && !o.backPatternMirror ? 1 : -1;
 
-  // 两张独立的面：正面在原点，背面使用同原图的横向镜像并随角度视差。
+  // 两张独立的面：正面在原点，背面为高分辨率金属背板，随角度产生视差。
   // 侧对时两者都收窄，把可见面积交给两面间的侧棱带。
   if (s.body) {
     s.body.scale.x = o.baseScale * sx;
-    s.body.visible = frontFacing;
+    s.body.visible = frontFacing && faceVisible;
   }
   if (s.back) {
-    s.back.scale.x = -o.baseScale * sx;
-    s.back.position.x = o.thickness * sinY;
-    s.back.visible = !frontFacing;
+    s.back.scale.x = backDirection * (patternBack ? o.baseScale : o.edgeBase) * sx;
+    s.back.scale.y = patternBack ? o.baseScale : o.edgeBase;
+    s.back.position.x = gap;
+    s.back.visible = !frontFacing && faceVisible;
+    const silver = Math.round(218 + 37 * Math.max(0, -cosY * 0.8 + sinY * 0.35));
+    s.back.tint = patternBack ? 0xffffff : (silver << 16) | (silver << 8) | silver;
+  }
+  if (s.backSheen) {
+    s.backSheen.scale.x = -o.edgeBase * sx;
+    s.backSheen.position.x = gap;
+    s.backSheen.visible = !patternBack && !frontFacing && faceVisible;
+    // 光泽由朝向决定，不因转速或全息开关产生白闪。
+    const reflection = Math.max(0, Math.cos(state.spinY - Math.PI - 0.45 + state.tilt * 0.6));
+    s.backSheen.alpha = 0.12 + Math.pow(reflection, 6) * 0.5;
   }
   if (s.mask) s.mask.scale.x = o.baseScale * sx;
+  if (s.backMask) {
+    s.backMask.scale.x = backDirection * o.baseScale * sx;
+    s.backMask.position.x = gap;
+  }
   if (s.edge) {
-    s.edge.scale.x = o.edgeBase * sx;
-    s.edge.visible = frontFacing;
+    s.edge.scale.x = o.edgeBase * sx * (frontFacing ? 1 : backDirection);
+    s.edge.position.x = frontFacing ? 0 : gap;
+    s.edge.visible = faceVisible;
   }
 
-  // 真厚度侧壁：切片堆叠挤出（sprite stacking）。每层 = 金属剪影
-  // （与面同形状），沿两面间距均匀分布——任意角度侧壁都贴着宠物轮廓。
-  // 金属反光由切片的银虹彩渐变 + 箔面/光带承担；不再存在全高白闪层。
-  const gap = o.thickness * sinY;
+  // 每层覆盖一个完整深度区间；行段四边形随投影变形，90°时仍连续实心。
   const gapW = Math.abs(gap);
   if (s.slices) {
-    const offsets = sliceOffsets(sinY, o.thickness, s.slices.length);
-    const on = gapW > 0.5;
+    const on = gapW > 0.01;
     for (let i = 0; i < s.slices.length; i++) {
       const sl = s.slices[i];
       sl.visible = on;
       if (on) {
-        // 与面同横压；不透明填充，镜像无意义（scale 保持正）
-        sl.scale.x = o.edgeBase * sx;
-        sl.position.x = offsets[i];
+        const direction = frontFacing ? 1 : backDirection;
+        const halfBand = gapW / (2 * s.slices.length);
+        if (sl.slabVertices) {
+          sl.scale.x = o.edgeBase * direction;
+          for (let j = 0; j < sl.vertices.length; j += 2) {
+            const left = j % 8 === 0 || j % 8 === 6;
+            sl.vertices[j] = sl.slabVertices[j] * sx
+              + (left ? -1 : 1) * halfBand / o.edgeBase;
+          }
+        } else {
+          sl.scale.x = o.edgeBase * Math.max(gapW / (s.slices.length * o.span), sx) * direction;
+        }
+        sl.position.x = gap * (i + 0.5) / s.slices.length;
+        const depth = (i + 0.5) / s.slices.length;
+        const bevel = depth < 0.08 || depth > 0.92;
+        const lightDepth = sinY >= 0 ? depth : 1 - depth;
+        const shade = bevel ? (lightDepth < 0.08 ? 1 : 0.78)
+          : 0.88 + 0.07 * Math.sin(lightDepth * Math.PI);
+        const value = Math.round(shade * 255);
+        sl.tint = (value << 16) | (value << 8) | value;
       }
     }
   }
@@ -235,11 +270,12 @@ export function applyFlip(s, state, o) {
   const holoK = Math.max(tilt, clamp(Math.abs(state.tilt) / 0.49, 0, 1));
   const glow = Math.min(1, 0.45 + state.energy * 0.55 + Math.min(0.4, Math.abs(state.velY) * 0.12));
   if (s.foil) {
-    s.foil.visible = frontFacing;
+    s.foil.visible = frontFacing && faceVisible;
+    s.foil.scale.x = o.edgeBase * sx;
     s.foil.alpha = Math.pow(holoK, 1.05) * glow;
   }
   if (s.band) {
-    s.band.visible = frontFacing;
+    s.band.visible = frontFacing && faceVisible;
     // spinY 会累计多圈；光带的位置只取当前一圈，否则几次翻滚就会永远
     // 扫到宠物数百像素外，倾角反光虽然已触发却完全看不见。
     const visualSpin = Math.atan2(sinY, cosY);
@@ -251,6 +287,23 @@ export function applyFlip(s, state, o) {
     // 对齐宠物中心。此前 -0.4×span 会令主亮带落到 mask 外，被完全裁掉。
     s.band.position.x = (visualSpin / Math.PI) * o.span * 0.8
       + (state.tilt / 0.49) * o.span * 0.25 - o.span * 1.2;
+  }
+
+  // 图案背面有自己的 mask 与反光，正面 mask 不参与背面视差。
+  if (s.backFoil) {
+    s.backFoil.visible = patternBack && !frontFacing && faceVisible;
+    s.backFoil.scale.x = backDirection * o.edgeBase * sx;
+    s.backFoil.position.x = gap;
+    s.backFoil.alpha = Math.pow(holoK, 1.05) * glow;
+  }
+  if (s.backBand) {
+    s.backBand.visible = patternBack && !frontFacing && faceVisible;
+    const backSpin = Math.atan2(-sinY, -cosY);
+    const sweep = 0.5 + 0.5 * Math.sin(backSpin * 1.6 + state.tilt * 1.8 + 0.9);
+    s.backBand.alpha = (0.25 + sweep * 0.75) * holoK * glow;
+    s.backBand.position.x = gap + backDirection * ((backSpin / Math.PI) * o.span * 0.8
+      + (state.tilt / 0.49) * o.span * 0.25 - o.span * 1.2);
+    s.backBand.scale.x = backDirection * o.edgeBase;
   }
 
   // 重力链接 + 纷飞自转（都绕挂点）

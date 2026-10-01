@@ -29,6 +29,21 @@ export function ringDistance(a, b) {
   return Math.hypot(b.x - a.x, b.y - a.y);
 }
 
+/** Keep the ring center far enough from screen edges to leave every sector visible. */
+export function clampRingCenter(center, width, height, margin) {
+  const screenWidth = Number.isFinite(width) ? Math.max(0, width) : 0;
+  const screenHeight = Number.isFinite(height) ? Math.max(0, height) : 0;
+  const edge = Number.isFinite(margin) ? Math.max(0, margin) : 0;
+  const clampAxis = (value, size) => {
+    if (!Number.isFinite(value) || size <= edge * 2) return size / 2;
+    return Math.max(edge, Math.min(size - edge, value));
+  };
+  return {
+    x: clampAxis(center?.x, screenWidth),
+    y: clampAxis(center?.y, screenHeight),
+  };
+}
+
 /** 第 i 项的中心角（扇区 0 = 12 点）。 */
 export function ringItemAngle(i) {
   return RING_SECTOR_RAD * i;

@@ -10,8 +10,64 @@ import {
   HANG_GRAVITY,
   TILT_MAX,
 } from '../src/renderer/charm-flip.js';
+import { buildSlabGeometry } from '../src/renderer/charm-foil.js';
 
 const DT = 1 / 60;
+
+test('图案背面使用本底尺寸原色、独立反光与遮罩，材质切回金属不串层', () => {
+  const layers = Object.fromEntries(['body', 'back', 'backSheen', 'backMask', 'backFoil', 'backBand', 'edge'].map((key) => [key, mockSprite()]));
+  const state = { ...createFlipState(), spinY: Math.PI * 0.8, energy: 0.7 };
+  const options = { baseScale: 3, edgeBase: 1, thickness: 6, span: 96, backMaterial: 'pattern' };
+  applyFlip(layers, state, options);
+  assert.equal(layers.body.visible, false);
+  assert.equal(layers.back.visible, true);
+  assert.equal(layers.back.scale.x, 3 * Math.abs(Math.cos(state.spinY)));
+  assert.equal(layers.back.scale.y, 3);
+  assert.equal(layers.back.tint, 0xffffff);
+  assert.equal(layers.backSheen.visible, false);
+  assert.equal(layers.backFoil.visible, true);
+  assert.equal(layers.backBand.visible, true);
+  assert.equal(layers.backFoil.position.x, layers.back.position.x);
+  assert.equal(layers.backMask.position.x, layers.back.position.x);
+  assert.equal(layers.backMask.scale.x, layers.back.scale.x);
+  assert.ok(layers.backFoil.alpha > 0);
+  applyFlip(layers, state, { ...options, backMaterial: 'metal' });
+  assert.equal(layers.back.scale.y, 1);
+  assert.equal(layers.backSheen.visible, true);
+  assert.equal(layers.backFoil.visible, false);
+  assert.equal(layers.backBand.visible, false);
+  assert.equal(knobsToFlipConfig({ charmBackMaterial: 'pattern' }).backMaterial, 'pattern');
+  assert.equal(knobsToFlipConfig({ charmBackMaterial: 'invalid' }).backMaterial, 'metal');
+});
+
+test('金属翻转：侧面隐藏两张面，倒角明暗分层，背面高光不受转速影响', () => {
+  const layers = { body: mockSprite(), back: mockSprite(), backSheen: mockSprite(), edge: mockSprite(), slices: Array.from({ length: 14 }, mockSprite) };
+  const state = createFlipState();
+  const options = { baseScale: 3, edgeBase: 1, thickness: 6, span: 96 };
+  for (const angle of [Math.PI / 2, Math.PI * 1.5]) {
+    for (const delta of [-0.008, 0, 0.008]) {
+      state.spinY = angle + delta;
+      applyFlip(layers, state, options);
+      assert.equal(layers.body.visible, false, '侧面对正面图案不保留最低宽度条纹');
+      assert.equal(layers.back.visible, false);
+      assert.ok(new Set(layers.slices.map((slice) => slice.tint)).size >= 3, '侧壁必须有倒角和暗截面');
+    }
+  }
+  for (const angle of [Math.PI * 0.7, Math.PI, Math.PI * 1.3, Math.PI * 5]) {
+    state.spinY = angle;
+    for (const velocity of [-20, 0, 20]) {
+      state.velY = velocity;
+      applyFlip(layers, state, options);
+      assert.equal(layers.body.visible, false);
+      assert.equal(layers.back.visible, true);
+      assert.equal(layers.backSheen.visible, true);
+      assert.ok(layers.slices.every((slice) => !slice.visible || slice.scale.x < 0), '背面侧壁须镜像同一个不对称轮廓');
+      assert.ok(layers.backSheen.alpha > 0 && layers.backSheen.alpha < 1);
+      assert.equal(layers.back.scale.y, layers.backSheen.scale.y);
+      assert.ok(Math.abs(layers.back.scale.x + Math.abs(Math.cos(angle))) < 1e-9);
+    }
+  }
+});
 
 function runSteps(state, steps, fn) {
   let last;
@@ -143,10 +199,10 @@ test('applyFlip：正背面独立镜像并以厚度产生视差', () => {
   applyFlip(sprites, state, o);
   assert.ok(Math.abs(sprites.body.scale.x) <= 2 * 0.05 + 1e-9);
   assert.ok(sprites.slices.every((sl) => sl.visible), '侧对时切片全部显示');
-  // 3 层切片均匀填在 gap=6 内：1.5 / 3 / 4.5
-  [1.5, 3, 4.5].forEach((want, i) => {
+  // 3 层完整深度区间中心：1 / 3 / 5。
+  [1, 3, 5].forEach((want, i) => {
     assert.ok(Math.abs(sprites.slices[i].position.x - want) < 1e-6, `slice[${i}].x=${sprites.slices[i].position.x}`);
-    assert.ok(Math.abs(sprites.slices[i].scale.x - (2 / 3) * 0.05) < 1e-6, '切片与面同横压');
+    assert.ok(Math.abs(sprites.slices[i].scale.x - (2 / 3) * 0.02) < 1e-6, '深度区间覆盖完整厚度');
   });
   assert.ok(Math.abs(sprites.back.position.x - 6) < 1e-6, '背面应位于前面右侧一个完整厚度');
 
@@ -159,17 +215,63 @@ test('applyFlip：正背面独立镜像并以厚度产生视差', () => {
   assert.ok(sprites.slices.every((sl) => !sl.visible), '正对背面时无侧壁');
 });
 
+test('实心侧壁：不对称窄行、断开行段及大小厚度在侧对前后连续覆盖', () => {
+  const width = 96, height = 12;
+  const pixels = new Uint8ClampedArray(width * height * 4);
+  const rows = [[[12, 15]], [[36, 60]], [], [[6, 9], [72, 90]]];
+  for (let y = 0; y < height; y++) {
+    for (const [left, right] of rows[Math.floor(y / 3)]) {
+      for (let x = left; x < right; x++) pixels[(y * width + x) * 4 + 3] = 255;
+    }
+  }
+  const geometry = buildSlabGeometry({ width, height, getContext: () => ({ getImageData: () => ({ data: pixels }) }) }, { x: 0.3, y: 0.12 });
+  assert.equal(geometry.vertices.length / 8, 4, '空白行不填充，断开行段保留独立四边形');
+  const slices = Array.from({ length: 14 }, () => ({ ...mockSprite(), vertices: geometry.vertices.slice(), slabVertices: geometry.vertices }));
+  for (const span of [32, 96, 192]) for (const thickness of [2, 6, 9]) {
+    for (const degrees of [0.1, 60, 89.5, 90, 90.5, 120, 270]) {
+      for (const backMaterial of ['metal', 'pattern']) {
+        const state = { ...createFlipState(), spinY: degrees * Math.PI / 180 };
+        applyFlip({ slices }, state, { baseScale: span / 32, edgeBase: span / 96, span, thickness, backMaterial });
+        if (!slices[0].visible) continue;
+        const gap = thickness * Math.sin(state.spinY);
+        const direction = Math.cos(state.spinY) >= 0 || backMaterial === 'pattern' ? 1 : -1;
+        for (let row = 0; row < geometry.vertices.length; row += 8) {
+          const projected = [geometry.vertices[row], geometry.vertices[row + 2]]
+            .map((x) => x * Math.abs(Math.cos(state.spinY)) * direction * span / 96);
+          const ranges = slices.map((slice) => [slice.vertices[row], slice.vertices[row + 2]]
+            .map((x) => x * slice.scale.x + slice.position.x).sort((a, b) => a - b))
+            .sort((a, b) => a[0] - b[0]);
+          const expectedLeft = Math.min(...projected) + Math.min(0, gap);
+          const expectedRight = Math.max(...projected) + Math.max(0, gap);
+          assert.ok(Math.abs(ranges[0][0] - expectedLeft) < 0.0001);
+          let right = ranges[0][1];
+          for (const range of ranges.slice(1)) {
+            assert.ok(range[0] <= right + 0.0001, `侧壁不得漏缝：${span}px / ${thickness}px / ${degrees}°`);
+            right = Math.max(right, range[1]);
+          }
+          assert.ok(Math.abs(right - expectedRight) < 0.0001);
+        }
+        assert.ok(slices.slice(1, -1).every((slice) => (slice.tint & 255) >= 224), '中段不能像暗色空腔');
+      }
+    }
+  }
+});
+
 test('applyFlip：全息门控同时响应 tilt，光带横扫位置也纳入 tilt', () => {
   const sprites = { foil: mockSprite(), band: mockSprite(), body: mockSprite() };
   const state = createFlipState();
   const o = { baseScale: 1, edgeBase: 1, restL: -25, restR: 25, stripTop: -5, stripH: 50, thickness: 4, span: 100 };
   applyFlip(sprites, state, o);
   assert.equal(sprites.foil.alpha, 0, '正对且垂直时不触发全息');
+  assert.equal(sprites.foil.scale.x, o.edgeBase);
   const baseBandX = sprites.band.position.x;
   state.tilt = 0.49;
   applyFlip(sprites, state, o);
   assert.ok(sprites.foil.alpha > 0.4, `foil.alpha=${sprites.foil.alpha}，±28° tilt 应触发全强门控`);
   assert.notEqual(sprites.band.position.x, baseBandX, 'tilt 应改变光带横扫位置');
+  state.spinY = Math.PI / 3;
+  applyFlip(sprites, state, o);
+  assert.ok(Math.abs(sprites.foil.scale.x - o.edgeBase * 0.5) < 1e-9, '正面箔面必须跟随原图投影压缩');
 });
 
 test('applyFlip：累计翻滚不会把倾角光带扫出宠物范围', () => {
@@ -248,15 +350,16 @@ test('静置回正：翻滚停在背面圈数上，走最短路径回正面（�
 
 // ── 回归：闪卡层随 turtleSize 同步缩放（2026-09-21 修复）──
 
-test('syncLayerScales：body/back/mask 用基准 scale，foil/band/edge/slices 用 scale/3', () => {
+test('syncLayerScales：body/mask 用基准 scale，金属背板及箔材质用 scale/3', () => {
   const layers = {
-    body: mockSprite(), back: mockSprite(), mask: mockSprite(),
+    body: mockSprite(), back: mockSprite(), backSheen: mockSprite(), mask: mockSprite(),
     foil: mockSprite(), band: mockSprite(), edge: mockSprite(),
     slices: [mockSprite(), mockSprite(), mockSprite()],
   };
   syncLayerScales(layers, 1);
   assert.equal(layers.body.scale.y, 1);
-  assert.equal(layers.back.scale.y, 1);
+  assert.equal(layers.back.scale.y, 1 / 3);
+  assert.equal(layers.backSheen.scale.y, 1 / 3);
   assert.equal(layers.mask.scale.y, 1);
   assert.equal(layers.foil.scale.y, 1 / 3);
   assert.equal(layers.band.scale.y, 1 / 3);
@@ -266,7 +369,8 @@ test('syncLayerScales：body/back/mask 用基准 scale，foil/band/edge/slices �
   // 尺寸 scale=1 → 4：所有层的 y 缩放必须更新，不残留旧值
   syncLayerScales(layers, 4);
   assert.equal(layers.body.scale.y, 4);
-  assert.equal(layers.back.scale.y, 4);
+  assert.equal(layers.back.scale.y, 4 / 3);
+  assert.equal(layers.backSheen.scale.y, 4 / 3);
   assert.equal(layers.mask.scale.y, 4);
   assert.equal(layers.foil.scale.y, 4 / 3);
   assert.equal(layers.band.scale.y, 4 / 3);

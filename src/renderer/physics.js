@@ -287,19 +287,18 @@ class PhysicsEngine {
 
         // 如果绳子松弛（stretch < 0），施加微弱拉力保持绳长
       } else if (stretch < -5) {
-        const nx = dx / dist
-        const ny = dy / dist
-        const slackForce = this.ropeStiffness * 0.1 * stretch
-        if (this.charmMode) {
-          // 挂饰：slackForce 为负（stretch<0），+= 让力指向 −n（锚点方向）——
-          // 只回收、绝不能推离，否则大幅运动后产生持续单向推力
-          this.turtle.vx += slackForce * nx * dt
-          this.turtle.vy += slackForce * ny * dt
-        } else {
+        if (!this.charmMode) {
           // 经典：保持原版「维持绳长」的微弱外推，不动原版动力学
+          const nx = dx / dist
+          const ny = dy / dist
+          const slackForce = this.ropeStiffness * 0.1 * stretch
           this.turtle.vx -= slackForce * nx * dt
           this.turtle.vy -= slackForce * ny * dt
         }
+        // 挂饰：松弛 = 真实软绳无力，靠重力自然垂回 restRopeLength。
+        // 任何径向力都会把宠物锁在锚点周围：外推 → 持续单向推离
+        // （2026-09-21 修复前）；回收 → 锚点势阱吸死（2026-09-25「黑洞」bug：
+        // 调大绳长/回拉力度后宠物被吸在鼠标周围永远震荡，回不到悬垂位）。
       }
     }
 

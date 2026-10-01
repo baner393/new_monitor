@@ -37,6 +37,7 @@ import {
 import { loadSubscriptionConfig, SubscriptionRuntime } from './subscription-runtime.js';
 import { createCharmTray } from './charm-tray.js';
 import { startCharmHook } from './charm-hook.js';
+import { normalizePetSettings } from '../shared/pet-settings-model.js';
 
 let mainWindow;
 let customWindow;
@@ -154,6 +155,7 @@ const DEFAULT_SETTINGS = {
   charmThickness:    50,
   charmFlipEnabled:  true,
   charmHoloEnabled:  true,
+  charmBackMaterial: 'metal',
   charmHotkeyEnabled: true,
   charmHotkey:       'Ctrl+Alt+A',
   onboarding: {
@@ -188,6 +190,7 @@ function loadSettings() {
     if (fs.existsSync(SETTINGS_PATH)) {
       const data = JSON.parse(fs.readFileSync(SETTINGS_PATH, 'utf-8'));
       currentSettings = { ...DEFAULT_SETTINGS, ...data };
+      currentSettings.charmBackMaterial = normalizePetSettings(data).charmBackMaterial;
       currentSettings.monitorPanel = data.monitorPanel
         ? normalizeMonitorPanelConfig(data.monitorPanel)
         : migrateLegacyMonitorVisibility(data.monitorVisibility, DEFAULT_MONITOR_PANEL);
@@ -215,8 +218,10 @@ function saveSettings() {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('settings-changed', currentSettings);
     }
+    return true;
   } catch (err) {
     console.error('[Settings] Failed to save:', err.message);
+    return false;
   }
 }
 
@@ -470,6 +475,22 @@ ipcMain.on('charm-hotkey-recording', (_event, active) => {
 
 ipcMain.on('settings-save', () => {
   saveSettings();
+});
+
+// Apply a settings-panel patch and acknowledge only after it reaches disk.
+ipcMain.handle('settings-apply', (_event, values = {}) => {
+  const previous = currentSettings;
+  const normalized = normalizePetSettings(values);
+  const next = { ...currentSettings };
+  for (const key of Object.keys(normalized)) {
+    if (Object.hasOwn(values, key)) next[key] = normalized[key];
+  }
+  currentSettings = next;
+  if (!saveSettings()) {
+    currentSettings = previous;
+    throw new Error('Settings could not be saved to disk');
+  }
+  return { ...currentSettings };
 });
 
 // IPC: skin.set — set selected skin and persist

@@ -61,7 +61,7 @@ export class SettingsPanel {
     this._onReplayOnboarding = typeof onReplayOnboarding === 'function' ? onReplayOnboarding : null;
     this._onVisibilityChange = typeof onVisibilityChange === 'function' ? onVisibilityChange : null;
     this._build();
-    this._loadSettings();
+    this._loading = this._loadSettings();
     this._startPreviewLoop();
   }
 
@@ -187,6 +187,9 @@ export class SettingsPanel {
     if (!PET_SETTING_SECTIONS.some((section) => section.id === sectionId)) return;
     this._section = sectionId;
     this._renderSection();
+    // Replace the section first so the old section's scroll anchor cannot
+    // restore its position after the workspace has been cleared.
+    this.workspace.scrollTop = 0;
     this._syncUi();
   }
 
@@ -262,6 +265,7 @@ export class SettingsPanel {
       for (const [key, field] of groupFields) {
         if (field.type === 'boolean') list.append(this._createSwitchControl(key, field));
         else if (field.type === 'hotkey') list.append(this._createHotkeyControl(key, field));
+        else if (field.type === 'enum') list.append(this._createSelectControl(key, field));
         else list.append(this._createRangeControl({
           key,
           ...field,
@@ -272,6 +276,25 @@ export class SettingsPanel {
       }
       this.workspace.append(list);
     }
+  }
+
+  _createSelectControl(key, field) {
+    const row = element('div', 'pet-settings-range');
+    row.dataset.control = key;
+    const copy = element('div', 'pet-settings-control-copy');
+    copy.append(element('strong', '', field.label));
+    copy.append(element('small', '', field.hint));
+    const select = element('select', 'pet-settings-hotkey-button');
+    select.setAttribute('aria-label', field.label);
+    for (const option of field.options) {
+      const node = element('option', '', option.label);
+      node.value = option.value;
+      select.append(node);
+    }
+    select.value = this._values[key];
+    select.addEventListener('change', () => this._applyValues({ ...this._values, [key]: select.value }, false));
+    row.append(copy, select);
+    return row;
   }
 
   _createHotkeyControl(key, field) {
@@ -358,9 +381,13 @@ export class SettingsPanel {
   }
 
   _applyValues(values, rerender = true) {
+    const previousScrollTop = this.workspace.scrollTop;
     this._values = this._draft.update(values);
     this._syncPreviewSettings();
-    if (rerender) this._renderSection();
+    if (rerender) {
+      this._renderSection();
+      this.workspace.scrollTop = previousScrollTop;
+    }
     this._syncUi();
   }
 
@@ -384,9 +411,11 @@ export class SettingsPanel {
   }
 
   async _loadSettings() {
+    const draft = this._draft;
+    const loadId = this._loadId = (this._loadId || 0) + 1;
     try {
       const saved = await window.electronAPI?.settings?.get?.();
-      if (!saved) return;
+      if (!saved || loadId !== this._loadId || this._draft !== draft || draft.dirty) return;
       this._values = normalizePetSettings(saved);
       this._originalValues = { ...this._values };
       this._draft = new PetSettingsDraft(this._values);
@@ -399,18 +428,22 @@ export class SettingsPanel {
   }
 
   async _save() {
+    if (this._saving) return;
+    await this._loading;
+    if (this._saving) return;
     if (!this._draft.dirty) {
       this.close();
       return;
     }
     this.saveButton.disabled = true;
     this.saveButton.textContent = '正在应用…';
+    this._saving = true;
     try {
-      for (const [key, value] of Object.entries(this._values)) {
-        window.electronAPI?.settings?.set?.(key, value);
-      }
-      window.electronAPI?.settings?.save?.();
-      this._values = this._draft.commit();
+      const patch = Object.fromEntries(Object.entries(this._values)
+        .filter(([key, value]) => value !== this._draft.snapshot[key]));
+      const saved = await window.electronAPI.settings.apply(patch);
+      this._values = normalizePetSettings(saved);
+      this._draft = new PetSettingsDraft(this._values);
       this._originalValues = { ...this._values };
       this._syncUi();
       this.close();
@@ -420,6 +453,8 @@ export class SettingsPanel {
       this.status.dataset.dirty = 'error';
       this.saveButton.disabled = false;
       this.saveButton.textContent = '重新应用';
+    } finally {
+      this._saving = false;
     }
   }
 
@@ -602,6 +637,7 @@ export class SettingsPanel {
     this.root.hidden = false;
     this.root.setAttribute('aria-hidden', 'false');
     this._renderSection();
+    this.workspace.scrollTop = 0;
     this._syncUi();
     this._syncPreviewSettings(true);
     requestAnimationFrame(() => {
@@ -610,6 +646,8 @@ export class SettingsPanel {
       this.panel.focus({ preventScroll: true });
     });
     this._onVisibilityChange?.();
+    this._loading = this._loadSettings();
+    return this._loading;
   }
 
   close() {

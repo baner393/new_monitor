@@ -142,6 +142,19 @@ export function resolveCodexActivity({ connected = true, tasks = [], unread = []
   return CODEX_ACTIVITY.SILENT;
 }
 
+export function codexActivityFromThreadStatus(status) {
+  const type = String(status?.type || status || '').trim().toLowerCase();
+  const flags = Array.isArray(status?.activeFlags)
+    ? status.activeFlags.map((flag) => String(flag || '').replace(/[\s_-]/g, '').toLowerCase())
+    : [];
+  if (type === 'needsinput' || flags.some((flag) => ['waitingonapproval', 'waitingonuserinput'].includes(flag))) {
+    return CODEX_ACTIVITY.NEEDS_INPUT;
+  }
+  if (['systemerror', 'blocked', 'failed', 'interrupted'].includes(type)) return CODEX_ACTIVITY.BLOCKED;
+  if (['active', 'inprogress', 'running'].includes(type)) return CODEX_ACTIVITY.RUNNING;
+  return CODEX_ACTIVITY.SILENT;
+}
+
 function taskCapabilities(task) {
   const connected = task.connectionState === CODEX_CONNECTION.CONNECTED;
   const ownedRequest = Boolean(task.hasOwnedRequest);

@@ -16,6 +16,12 @@ const PULL_THRESHOLD = 80;
 const RIGHT_CLICK_MOVE_TOLERANCE = 10;
 export const PET_HIT_PADDING = 22;
 
+export function isEventOwnedByRoot(event, root) {
+  const path = event?.composedPath?.();
+  return Boolean(path?.includes(root)
+    || (event?.target && root?.contains?.(event.target)));
+}
+
 export function isPointWithinBounds(bounds, x, y, padding = 0) {
   if (!bounds) return false;
   const inset = Math.max(0, Number(padding) || 0);

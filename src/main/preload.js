@@ -248,6 +248,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.send('settings-save');
     },
 
+    /** Apply changed pet settings and confirm successful persistence. */
+    apply: (values) => ipcRenderer.invoke('settings-apply', values),
+
     /** Reset all settings to defaults. Returns the new settings object. */
     reset: () => ipcRenderer.invoke('settings-reset'),
   },

@@ -9,6 +9,10 @@ export function createCodexViewState() {
   };
 }
 
+export function unreadEventsForThread(snapshot, threadId) {
+  return (snapshot?.unread || []).filter((event) => String(event?.threadId || '') === String(threadId || ''));
+}
+
 function taskFor(snapshot, threadId) {
   return (snapshot?.tasks || []).find((task) => (task.threadId || task.id) === threadId)
     || (snapshot?.visibleTasks || []).find((task) => (task.threadId || task.id) === threadId)

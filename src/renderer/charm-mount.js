@@ -13,8 +13,33 @@
  */
 
 import * as PIXI from 'pixi.js';
+import { CHARM_MOUNT_GEOMETRY } from './charm-mount-geometry.js';
 
 export const CHARM_MOUNT_ANCHOR_OFFSET = { x: 16, y: 27 };
+
+export function resolveCharmMountPose({ isCharmMode, ringVisible, cursor, mountAnchor }) {
+  if (!isCharmMode) return { visible: false, position: null };
+
+  const followsCursor = ringVisible
+    && Number.isFinite(cursor?.x)
+    && Number.isFinite(cursor?.y);
+  const point = followsCursor ? cursor : mountAnchor;
+  if (!Number.isFinite(point?.x) || !Number.isFinite(point?.y)) {
+    return { visible: false, position: null };
+  }
+
+  return {
+    visible: true,
+    // The regular physics anchor already includes the cursor offset. Add it
+    // only when positioning directly from the raw cursor during ring display.
+    position: followsCursor
+      ? {
+        x: point.x + CHARM_MOUNT_ANCHOR_OFFSET.x,
+        y: point.y + CHARM_MOUNT_ANCHOR_OFFSET.y,
+      }
+      : { x: point.x, y: point.y },
+  };
+}
 
 const MOUNT_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 44 44">
   <defs>
@@ -51,7 +76,7 @@ function getMountTexture() {
 /** 创建挂环 Sprite（anchor 对齐环底；position 即绳锚点）。随窗口销毁由 PIXI GC。 */
 export function createCharmMountSprite() {
   const sprite = new PIXI.Sprite(getMountTexture());
-  sprite.anchor.set(0.5, 37.7 / 44);
+  sprite.anchor.set(0.5, CHARM_MOUNT_GEOMETRY.anchorY / CHARM_MOUNT_GEOMETRY.textureSize);
   sprite.visible = false;
   return sprite;
 }

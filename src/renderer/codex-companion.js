@@ -17,6 +17,7 @@ import {
   createCodexViewState,
   openCodexTask,
   reconcileCodexViewState,
+  unreadEventsForThread,
 } from './codex-view-state.js';
 import { renderMarkdown } from './markdown.js';
 import {
@@ -40,6 +41,11 @@ const PROVIDERS = Object.freeze({
   codex: { id: 'codex', name: 'Codex', mark: 'C' },
   claude: { id: 'claude', name: 'Claude Code', mark: '✦' },
 });
+
+export function codexConnectionAction(state) {
+  if (state === CODEX_CONNECTION.ERROR) return 'retry';
+  return state === CODEX_CONNECTION.DISCONNECTED ? 'connect' : 'disconnect';
+}
 
 export function providerTask(provider, task) {
   const sourceId = String(task?.threadId || task?.sessionId || task?.id || '');
@@ -1035,6 +1041,7 @@ export class CodexCompanion {
     this.#saveScroll();
     this.inlineError = '';
     this.viewState = openCodexTask(this.viewState, task);
+    void this.#markThreadRead(this.viewState.threadId).catch(() => {});
     this.trayOpen = false;
     this.taskTray.hidden = true;
     this.#renderBubble();
@@ -1439,7 +1446,23 @@ export class CodexCompanion {
   }
 
   async #markThreadRead(threadId) {
-    const events = this.snapshot?.unread?.filter((event) => event.threadId === threadId) || [];
+    const events = unreadEventsForThread(this.snapshot, threadId);
+    if (events.length) {
+      const provider = events[0].provider || 'codex';
+      const readIds = new Set(events.map((event) => event.sourceEventId || String(event.id).replace(/^[^:]+:/, '')));
+      const sourceIds = new Set(events.map((event) => event.sourceThreadId || String(event.threadId).replace(/^[^:]+:/, '')));
+      const providerSnapshot = this.snapshots[provider];
+      if (providerSnapshot) {
+        const unread = (providerSnapshot.unread || []).filter((event) => (
+          !sourceIds.has(String(event.threadId || event.sessionId || ''))
+        ));
+        const alerts = (providerSnapshot.alerts || []).filter((event) => (
+          !readIds.has(String(event.id || ''))
+        ));
+        this.snapshots[provider] = { ...providerSnapshot, unread, alerts, unreadCount: unread.length };
+        this.#updateCombinedSnapshot();
+      }
+    }
     await Promise.all(events.map((event) => this.#markRead(event.id)));
   }
 
@@ -1680,11 +1703,12 @@ export class CodexCompanion {
         this.closeConfig();
         this.#openTask(task);
       });
-      const connected = task.connectionState !== CODEX_CONNECTION.DISCONNECTED;
+      const action = codexConnectionAction(task.connectionState);
+      const connected = action === 'disconnect';
       const button = element(
         'button',
         desktopCompatible || connected ? 'codex-quiet-button' : 'codex-save-button',
-        desktopCompatible ? `打开 ${providerName}` : connected ? this.t('disconnect') : this.t('connect'),
+        desktopCompatible ? `打开 ${providerName}` : action === 'retry' ? this.t('retry') : connected ? this.t('disconnect') : this.t('connect'),
       );
       button.type = 'button';
       button.addEventListener('click', async () => {
@@ -1695,7 +1719,7 @@ export class CodexCompanion {
             return;
           }
           const providerApi = this.#api(provider);
-          const nextSnapshot = connected
+          const nextSnapshot = action === 'disconnect'
             ? await providerApi[provider === 'claude' ? 'disconnectSession' : 'disconnectThread'](task.sourceId)
             : await providerApi[provider === 'claude' ? 'connectSession' : 'connectThread'](task.sourceId);
           this.configs[provider] = await providerApi.getConfig();

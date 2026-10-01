@@ -12,7 +12,7 @@ const blinkSpriteUrl = publicAssetUrl('./assets/sprites/blink.png');
 import { PhysicsEngine } from './physics.js';
 import { RopeRenderer } from './rope.js';
 import { StateMachine } from './state-machine.js';
-import { InputManager, PET_HIT_PADDING, isPointWithinBounds } from './input.js';
+import { InputManager, PET_HIT_PADDING, isEventOwnedByRoot, isPointWithinBounds } from './input.js';
 import { Panel } from './panel.js';
 import { SettingsPanel } from './settings.js';
 import { ROPE_ELASTICITY_STEPS } from './settings.js';
@@ -20,18 +20,19 @@ import { SubscriptionPanel } from './subscription-panel.js';
 import { OnboardingGuide } from './onboarding-guide.js';
 import { SkinSelector } from './skin-selector.js';
 import { CodexCompanion } from './codex-companion.js';
-import { CodexMotionController, codexStatusSymbol } from './codex-motion.js';
+import { applyCodexMotionImpulse, CodexMotionController, codexStatusSymbol } from './codex-motion.js';
 import { PANEL_DRAG_CONTEXT, resolvePanelDragContext, resolvePanelDragSettledState } from './panel-drag-context.js';
 import { CODEX_ACTIVITY } from '../shared/codex-integration.js';
 import { resolveAmbientSwingEnabled } from '../shared/pet-settings-model.js';
 import { ANCHOR_MODES, DEFAULT_ROPE_LENGTHS } from '../shared/anchor-model.js';
 import { resolveMousePassthrough } from './mouse-passthrough.js';
 import { CharmAnchorSampler } from './charm-anchor.js';
-import { createCharmMountSprite, CHARM_MOUNT_ANCHOR_OFFSET } from './charm-mount.js';
-import { buildFoilAssets, buildSlabTexture } from './charm-foil.js';
+import { createCharmMountSprite, CHARM_MOUNT_ANCHOR_OFFSET, resolveCharmMountPose } from './charm-mount.js';
+import { buildFoilAssets, buildSlabTexture, buildSlabGeometry } from './charm-foil.js';
 import { createFlipState, updateFlip, applyFlip, syncLayerScales, knobsToFlipConfig, FLIP_DEFAULTS } from './charm-flip.js';
 import { RingMenu } from './ring-menu.js';
 import { preloadRingIconTextures } from './ring-icons.js';
+import { charmRopeAttachment, ringRopeSag } from './ring-rope.js';
 
 // ── Font loading gate ─────────────────────────────────────────────────
 async function waitForFonts() {
@@ -172,6 +173,7 @@ let charmHoloEnabled = true;
 let prevMotion = 0;
 const foilFx = {
   maskSprite: null, foil: null, band: null, edge: null,
+  backTexture: null, backSheenTexture: null,
   slices: [], // 金属剪影切片（真厚度侧壁，随皮肤重建）
   frameH: 0, // 皮肤帧高（厚度侧棱/显示高度换算用）
   phase: Math.random() * Math.PI * 2, // 初始随机相位，避免多实例同闪
@@ -179,10 +181,19 @@ const foilFx = {
 const foilFoilSprite = new PIXI.Sprite(PIXI.Texture.EMPTY);
 const foilBandSprite = new PIXI.Sprite(PIXI.Texture.EMPTY);
 const foilEdgeSprite = new PIXI.Sprite(PIXI.Texture.EMPTY);
+const backSheenSprite = new PIXI.Sprite(PIXI.Texture.EMPTY);
+const backFoilSprite = new PIXI.Sprite(PIXI.Texture.EMPTY);
+const backBandSprite = new PIXI.Sprite(PIXI.Texture.EMPTY);
 foilFoilSprite.visible = false;
 foilBandSprite.visible = false;
 foilEdgeSprite.visible = false;
-// 子节点在 body/back 创建后以 back → slices/flash → front → edge/foil/band 接线。
+backSheenSprite.visible = false;
+backFoilSprite.visible = false;
+backBandSprite.visible = false;
+for (const reflection of [foilFoilSprite, foilBandSprite, backFoilSprite, backBandSprite]) {
+  reflection.blendMode = PIXI.BLEND_MODES.SCREEN;
+}
+// 层序在材质重建时统一接线。
 
 const SLAB_SLICE_COUNT = 14; // 切片堆叠层数（真厚度侧壁）
 
@@ -192,8 +203,22 @@ function rebuildFoilAssets(sourceImg, grip) {
     const foilTex = PIXI.Texture.from(assets.foil);
     const bandTex = PIXI.Texture.from(assets.band);
     const edgeTex = PIXI.Texture.from(assets.edge);
+    const backTex = PIXI.Texture.from(assets.back, { scaleMode: PIXI.SCALE_MODES.LINEAR });
+    const backSheenTex = PIXI.Texture.from(assets.backSheen, { scaleMode: PIXI.SCALE_MODES.LINEAR });
     // 纹理 = 皮肤帧 ×3；用 scale.y——applyFlip 每帧接管 scale.x（翻转压缩），重建时可能正处压缩态
     const displayScale = bodySprite.scale.y / 3;
+
+    // 背板只保留皮肤轮廓，表情/眨眼帧不得写入金属背面。
+    backSprite.texture = backTex;
+    backSprite.anchor.set(assets.grip.x, assets.grip.y);
+    backSprite.scale.set(displayScale);
+    backSheenSprite.texture = backSheenTex;
+    backSheenSprite.anchor.copyFrom(backSprite.anchor);
+    backSheenSprite.scale.set(displayScale);
+    foilFx.backTexture?.destroy(true);
+    foilFx.backSheenTexture?.destroy(true);
+    foilFx.backTexture = backTex;
+    foilFx.backSheenTexture = backSheenTex;
 
     const maskSprite = new PIXI.Sprite(idleTexture);
     maskSprite.anchor.copyFrom(bodySprite.anchor);
@@ -209,6 +234,14 @@ function rebuildFoilAssets(sourceImg, grip) {
     // 宠物移动/旋转后 mask 仍停在原地，把已触发的光裁掉。
     maskSprite.renderable = false;
 
+    if (foilFx.backMaskSprite) foilFx.backMaskSprite.destroy();
+    const backMaskSprite = new PIXI.Sprite(idleTexture);
+    backMaskSprite.anchor.copyFrom(bodySprite.anchor);
+    backMaskSprite.scale.set(bodySprite.scale.y);
+    backMaskSprite.renderable = false;
+    foilFx.backMaskSprite = backMaskSprite;
+    turtleContainer.addChild(backMaskSprite);
+
     foilFoilSprite.texture = foilTex;
     foilFoilSprite.anchor.set(assets.grip.x, assets.grip.y);
     foilFoilSprite.scale.set(displayScale);
@@ -220,29 +253,44 @@ function rebuildFoilAssets(sourceImg, grip) {
     foilBandSprite.scale.set(displayScale);
     // band 纹理宽 = 2×精灵：顶部对齐精灵顶部（容器坐标 = -grip.y × 显示高）
     foilBandSprite.anchor.set(0, 0);
-    foilBandSprite.position.set(0, -assets.grip.y * assets.size * displayScale);
+    const frameHeight = (assets.frameH || sourceImg.height) * 3;
+    foilBandSprite.position.set(0, -assets.grip.y * frameHeight * displayScale);
     foilBandSprite.mask = maskSprite;
     foilBandSprite.visible = true;
+
+    backFoilSprite.texture = foilTex;
+    backFoilSprite.anchor.set(assets.grip.x, assets.grip.y);
+    backFoilSprite.scale.set(displayScale);
+    backFoilSprite.mask = backMaskSprite;
+    backBandSprite.texture = bandTex;
+    backBandSprite.anchor.set(0, 0);
+    backBandSprite.scale.set(displayScale);
+    backBandSprite.position.y = -assets.grip.y * frameHeight * displayScale;
+    backBandSprite.mask = backMaskSprite;
 
     foilEdgeSprite.texture = edgeTex;
     // edge 纹理含 pad：精灵帧位于 pad 偏移处，anchor 换算对齐 grip 点
     const ax = (assets.pad + assets.grip.x * assets.size) / (assets.size + assets.pad * 2);
-    const ay = (assets.pad + assets.grip.y * assets.size) / (assets.size + assets.pad * 2);
+    const ay = (assets.pad + assets.grip.y * frameHeight) / (frameHeight + assets.pad * 2);
     foilEdgeSprite.anchor.set(ax, ay);
     foilEdgeSprite.scale.set(displayScale);
     foilEdgeSprite.position.set(bodySprite.x, bodySprite.y);
 
-    // 真厚度侧壁：N 层金属剪影切片（sprite stacking 挤出），层间明暗递进
+    // 行段网格覆盖完整深度，窄轮廓在90°也不会漏出两面之间的空隙。
     for (const old of foilFx.slices) old.destroy();
     foilFx.slices = [];
-    const slabTex = PIXI.Texture.from(buildSlabTexture(sourceImg));
+    foilFx.slabTexture?.destroy(true);
+    const slabCanvas = buildSlabTexture(sourceImg);
+    const slabTex = PIXI.Texture.from(slabCanvas, { scaleMode: PIXI.SCALE_MODES.LINEAR });
+    foilFx.slabTexture = slabTex;
+    const slabGeometry = buildSlabGeometry(slabCanvas, assets.grip);
     for (let i = 0; i < SLAB_SLICE_COUNT; i++) {
-      const slice = new PIXI.Sprite(slabTex);
-      slice.anchor.set(assets.grip.x, assets.grip.y);
+      const slice = new PIXI.SimpleMesh(slabTex, slabGeometry.vertices.slice(),
+        slabGeometry.uvs.slice(), slabGeometry.indices.slice());
+      slice.slabVertices = slabGeometry.vertices;
       slice.scale.set(displayScale);
       slice.position.set(0, 0);
-      const shade = 1 - (i / Math.max(1, SLAB_SLICE_COUNT - 1)) * 0.38;
-      slice.tint = PIXI.utils.rgb2hex([shade, shade, shade]); // 越深越暗（纵深暗示）
+      slice.tint = 0xffffff;
       slice.visible = false;
       foilFx.slices.push(slice);
     }
@@ -252,9 +300,12 @@ function rebuildFoilAssets(sourceImg, grip) {
     foilFx.frameW = assets.frameW || assets.size;
     foilFx.frameH = assets.frameH || assets.size;
     // 层序修正（addChild 对已有子节点 = 移到顶层），底→顶：
-    // 背面 → 厚度切片 → 正面卡面 → 描边/箔/光带
-    turtleContainer.addChild(backSprite);
+    // 厚度切片 → 背板/背面高光 → 正面卡面 → 描边/箔/光带
     for (const slice of foilFx.slices) turtleContainer.addChild(slice);
+    turtleContainer.addChild(backSprite);
+    turtleContainer.addChild(backSheenSprite);
+    turtleContainer.addChild(backFoilSprite);
+    turtleContainer.addChild(backBandSprite);
     turtleContainer.addChild(bodySprite);
     turtleContainer.addChild(foilEdgeSprite);
     turtleContainer.addChild(foilFoilSprite);
@@ -273,7 +324,8 @@ const charmAccel = { x: 0, y: 0 }; // 挂饰加速度（速度差分 + 平滑，
 // 闪卡全部层的统一视图（缩放同步用）
 function foilLayers() {
   return {
-    body: bodySprite, back: backSprite, mask: foilFx.maskSprite,
+    body: bodySprite, back: backSprite, backSheen: backSheenSprite, mask: foilFx.maskSprite,
+    backFoil: backFoilSprite, backBand: backBandSprite, backMask: foilFx.backMaskSprite,
     foil: foilFoilSprite, band: foilBandSprite, edge: foilEdgeSprite,
     slices: foilFx.slices,
   };
@@ -283,8 +335,13 @@ function updateFoilFx(dt) {
   // 背面朝向时 applyFlip 会隐藏正面箔层；它不能成为更新早退条件，
   // 否则翻回正面前物理和可见性都会永久冻结。
   if (!foilFx.maskSprite || !foilFx.size) return;
-  // 状态机可在本帧替换正面纹理；背面始终复用该帧，由 applyFlip 镜像显示。
-  if (backSprite.texture !== bodySprite.texture) backSprite.texture = bodySprite.texture;
+  // 仅双面图案同步表情帧；金属模式始终使用独立背板。
+  if (flipConfig.backMaterial === 'pattern') {
+    backSprite.texture = bodySprite.texture;
+    if (foilFx.backMaskSprite) foilFx.backMaskSprite.texture = bodySprite.texture;
+  } else if (foilFx.backTexture) {
+    backSprite.texture = foilFx.backTexture;
+  }
   // 驱动量：挂饰用乌龟速度，经典用钟摆摆速
   const charmSpeed = Math.hypot(physics.turtle.vx, physics.turtle.vy);
   const pendSpeed = Math.abs(physics.pendulumOmega) * Math.max(20, physics.ropeLength);
@@ -311,12 +368,16 @@ function updateFoilFx(dt) {
     {
       body: bodySprite,
       back: backSprite,
+      backSheen: backSheenSprite,
+      backMask: foilFx.backMaskSprite,
       mask: foilFx.maskSprite,
       edge: foilEdgeSprite,
       slices: foilFx.slices,
       // 全息闪卡开关：关闭时不参与渲染映射（保留翻转与侧壁）
       foil: charmHoloEnabled ? foilFoilSprite : null,
       band: charmHoloEnabled ? foilBandSprite : null,
+      backFoil: charmHoloEnabled ? backFoilSprite : null,
+      backBand: charmHoloEnabled ? backBandSprite : null,
       container: turtleContainer,
     },
     flipState,
@@ -325,6 +386,7 @@ function updateFoilFx(dt) {
       edgeBase: scale / 3, // 纹理 = 皮肤帧 ×3
       thickness: Math.max(2, Math.min(9, displayW * flipConfig.thicknessRatio)),
       span: displayW, // 光带扫动范围 = 精灵显示宽
+      backMaterial: flipConfig.backMaterial,
     },
   );
 }
@@ -335,11 +397,15 @@ let currentGripPoint = { x: 0.5, y: 0.12 };
 const bodySprite = new PIXI.Sprite(idleTexture);
 bodySprite.anchor.set(currentGripPoint.x, currentGripPoint.y);
 bodySprite.scale.set(2.5);
-// 背面与正面使用同一帧；applyFlip 将其 scale.x 设为负值，形成原版镜像。
-const backSprite = new PIXI.Sprite(idleTexture);
+// 背面由皮肤 alpha 生成金属背板，加载完成前不显示正面图案作为替代。
+const backSprite = new PIXI.Sprite(PIXI.Texture.EMPTY);
+backSprite.visible = false;
 backSprite.anchor.copyFrom(bodySprite.anchor);
 backSprite.scale.copyFrom(bodySprite.scale);
 turtleContainer.addChild(backSprite);
+turtleContainer.addChild(backSheenSprite);
+turtleContainer.addChild(backFoilSprite);
+turtleContainer.addChild(backBandSprite);
 turtleContainer.addChild(bodySprite);
 turtleContainer.addChild(foilEdgeSprite);
 turtleContainer.addChild(foilFoilSprite);
@@ -351,7 +417,7 @@ if (import.meta.env.DEV) {
     charmAccel,
     foilFx,
     get flipConfig() { return flipConfig; },
-    sprites: { back: backSprite, edge: foilEdgeSprite, foil: foilFoilSprite, band: foilBandSprite, body: bodySprite },
+    sprites: { back: backSprite, backSheen: backSheenSprite, edge: foilEdgeSprite, foil: foilFoilSprite, band: foilBandSprite, body: bodySprite },
   };
 }
 
@@ -365,11 +431,38 @@ pixiApp.stage.addChild(codexStatusGraphics);
 
 // ── Ring menu（环形菜单，最顶层）─────────────────────────────────────
 preloadRingIconTextures();
-const ringMenu = new RingMenu({ getRadius: () => physics.restRopeLength });
+const ringMenu = new RingMenu({
+  renderer: pixiApp.renderer,
+  getRadius: () => physics.restRopeLength,
+  getPetClearance: () => bodySprite.height * (1 - currentGripPoint.y) + 36,
+  getViewport: () => ({ width: window.innerWidth, height: window.innerHeight }),
+});
+// The quiet dial sits behind the physical rope and pet; the interactive arc,
+// buttons, and label remain above them, matching the HTML preview's depth.
+pixiApp.stage.addChildAt(ringMenu.backgroundContainer, pixiApp.stage.getChildIndex(ropeContainer));
 pixiApp.stage.addChild(ringMenu.container);
 pixiApp.stage.addChild(ringMenu.labelContainer);
+let ringWasActive = false;
+let lastRingCenter = null;
+let lastRingMountPosition = null;
+let lastRingRopeAnchor = null;
+let ringExit = null;
+const charmMountBaseZIndex = pixiApp.stage.getChildIndex(charmMountSprite);
+let charmMountRaisedForRing = false;
+function setCharmMountRingLayer(raise) {
+  if (raise === charmMountRaisedForRing) return;
+  const currentIndex = pixiApp.stage.getChildIndex(charmMountSprite);
+  const ringIndex = pixiApp.stage.getChildIndex(ringMenu.container);
+  const targetIndex = raise
+    ? ringIndex + (currentIndex < ringIndex ? 0 : 1)
+    : charmMountBaseZIndex;
+  pixiApp.stage.setChildIndex(charmMountSprite, Math.min(targetIndex, pixiApp.stage.children.length - 1));
+  charmMountRaisedForRing = raise;
+}
 const codexParticles = [];
 const reducedMotionQuery = window.matchMedia?.('(prefers-reduced-motion: reduce)');
+ringMenu.setReducedMotion(reducedMotionQuery?.matches === true);
+reducedMotionQuery?.addEventListener?.('change', (event) => ringMenu.setReducedMotion(event.matches));
 
 function spawnCodexParticles(kind, count, x, y) {
   if (reducedMotionQuery?.matches) return;
@@ -621,7 +714,10 @@ skinSelector.onSkinChange = async (skinId, skinConfig) => {
     [idleTexture, hoverTexture, pullTexture, happyTexture, painTexture, blinkTexture] = textures;
     // Apply idle texture immediately
     bodySprite.texture = idleTexture;
-    backSprite.texture = idleTexture;
+    backSprite.texture = PIXI.Texture.EMPTY;
+    backSheenSprite.texture = PIXI.Texture.EMPTY;
+    backSprite.visible = false;
+    backSheenSprite.visible = false;
 
     // Apply skin-specific scale (normalize to target display size)
     // Respect saved turtleSize setting instead of hardcoded value
@@ -714,7 +810,7 @@ function monitorPanelStateActive(state) {
   return ['EXPANDING', 'HAPPY', 'PANEL_OPEN', 'COLLAPSING'].includes(state);
 }
 
-function setAnchorMode(nextMode) {
+function setAnchorMode(nextMode, { persist = true } = {}) {
   if (nextMode !== ANCHOR_MODES.TOP && nextMode !== ANCHOR_MODES.CURSOR) return;
   if (nextMode === charmState.mode) return;
   charmState.mode = nextMode;
@@ -740,9 +836,11 @@ function setAnchorMode(nextMode) {
   // 无论切换来源（托盘/设置同步），都把新模式与「新模式绳长」一并持久化——
   // 只写 ropeLength 的话，回环广播会带着旧 anchorMode 把切换翻回去。
   // settings-changed 回环再次进入 applySettings 时同值幂等，不会成环。
-  window.electronAPI.settings.set('anchorMode', nextMode);
-  window.electronAPI.settings.set('ropeLength', physics.restRopeLength);
-  window.electronAPI.settings.save();
+  if (persist) {
+    window.electronAPI.settings.set('anchorMode', nextMode);
+    window.electronAPI.settings.set('ropeLength', physics.restRopeLength);
+    window.electronAPI.settings.save();
+  }
 }
 
 // ── Ring menu 交互（角色互换模型）────────────────────────────────────
@@ -765,8 +863,9 @@ function openRingMenu() {
   if (['PULLING', 'PULLEY_DRAG', 'BOUNCING', 'EXPANDING', 'COLLAPSING'].includes(state)) return;
   // 求值顺序陷阱（mockup openRing）：先取宠物位置，再开环
   ringMenu.open({ x: sprite.x, y: sprite.y }, ringMenuCursor());
+  const center = ringMenu.ringCenter;
   onboardingGuide.completeGesture('charm-ring');
-  console.log(`[Ring] open at (${sprite.x.toFixed(0)}, ${sprite.y.toFixed(0)})`);
+  console.log(`[Ring] open at (${center.x.toFixed(0)}, ${center.y.toFixed(0)})`);
 }
 
 function dispatchRingAction(actionId) {
@@ -856,6 +955,12 @@ function applySettings(settings, { isInitialLoad = false } = {}) {
     if (!charmHoloEnabled) {
       foilFoilSprite.alpha = 0;
       foilBandSprite.alpha = 0;
+      backFoilSprite.alpha = 0;
+      backBandSprite.alpha = 0;
+      foilFoilSprite.visible = false;
+      foilBandSprite.visible = false;
+      backFoilSprite.visible = false;
+      backBandSprite.visible = false;
     }
   }
   if (settings.ropeElasticity !== undefined) {
@@ -870,8 +975,8 @@ function applySettings(settings, { isInitialLoad = false } = {}) {
   // Handle turtleSize - update sprite scale (respect current skin's baseSize)
   if (settings.turtleSize !== undefined) {
     const scale = settings.turtleSize / currentSkinBaseSize;
-    // 纯尺寸变化不重建纹理：body/back/mask 用基准 scale，
-    // foil/band/edge/slices 用 scale/3（纹理 ×3 预渲染）
+    // 纯尺寸变化不重建纹理：body/mask 用基准 scale，
+    // 金属背板与其他材质层用 scale/3（纹理 ×3 预渲染）
     syncLayerScales(foilLayers(), scale);
     console.log(`[Settings] Turtle size: ${settings.turtleSize}, scale: ${scale.toFixed(2)} (baseSize: ${currentSkinBaseSize})`);
   }
@@ -885,7 +990,10 @@ function applySettings(settings, { isInitialLoad = false } = {}) {
     && settings.anchorMode !== undefined
     && settings.anchorMode !== charmState.mode;
   if (settings.anchorMode !== undefined) {
-    setAnchorMode(settings.anchorMode);
+    if (isInitialLoad && settings.ropeLength !== undefined) {
+      charmState.ropeLengths[settings.anchorMode] = settings.ropeLength;
+    }
+    setAnchorMode(settings.anchorMode, { persist: !isInitialLoad });
   }
 
   if (settings.ropeLength !== undefined && !switchingMode) {
@@ -938,7 +1046,9 @@ const inputManager = new InputManager({
   hitTestBounds: () => bodySprite.getBounds(),
   stateMachine,
   physics,
-  shouldIgnoreEvent: (event) => codexCompanion.ownsEvent(event) || onboardingGuide.ownsEvent(event),
+  shouldIgnoreEvent: (event) => codexCompanion.ownsEvent(event)
+    || onboardingGuide.ownsEvent(event)
+    || isEventOwnedByRoot(event, settingsPanel.root),
   onGesture: (gesture) => onboardingGuide.completeGesture(gesture),
   onInteractionChange: () => requestAnimationFrame(() => synchronizeMousePassthroughFromSystem(true)),
   beforePetInteraction: () => {
@@ -1001,20 +1111,39 @@ function synchronizeMousePassthrough(x, y, force = false) {
   return ignore;
 }
 
+function synchronizeMousePassthroughAtLatestCursor(force = false, announceReady = false) {
+  const cursor = charmAnchorSampler.sample() || lastCursorPosition;
+  const ignore = cursor
+    ? synchronizeMousePassthrough(cursor.x, cursor.y, force)
+    : lastMousePassthrough;
+  if (cursor) lastCursorPosition = cursor;
+  if (announceReady) window.electronAPI.markRendererInputReady(ignore);
+  return ignore;
+}
+
 async function synchronizeMousePassthroughFromSystem(force = false, announceReady = false) {
   if (mouseSyncInFlight) return lastMousePassthrough;
   mouseSyncInFlight = true;
+  const requestAt = charmAnchorSampler.beginScreenRequest(performance.now());
   try {
     const cursor = await window.electronAPI.getCursorPosition();
+    if (!charmAnchorSampler.isScreenRequestCurrent(requestAt)) {
+      return synchronizeMousePassthroughAtLatestCursor(force, announceReady);
+    }
     if (cursor) {
+      if (!charmAnchorSampler.noteScreenCursor(cursor.x, cursor.y, requestAt)) {
+        return synchronizeMousePassthroughAtLatestCursor(force, announceReady);
+      }
       lastCursorPosition = cursor;
-      charmAnchorSampler.noteScreenCursor(cursor.x, cursor.y);
     }
     const ignore = cursor ? synchronizeMousePassthrough(cursor.x, cursor.y, force) : true;
     if (!cursor) window.electronAPI.setIgnoreMouseEvents(true);
     if (announceReady) window.electronAPI.markRendererInputReady(ignore);
     return ignore;
   } catch (error) {
+    if (!charmAnchorSampler.isScreenRequestCurrent(requestAt)) {
+      return synchronizeMousePassthroughAtLatestCursor(force, announceReady);
+    }
     console.warn('[Input] Failed to synchronize cursor after load:', error);
     window.electronAPI.setIgnoreMouseEvents(true);
     if (announceReady) window.electronAPI.markRendererInputReady(true);
@@ -1414,10 +1543,27 @@ pixiApp.ticker.add((delta) => {
   );
 
   const isCharm = isCharmMode();
-  const ringOpen = ringMenu.isOpen;
+  // Keep the pet and rope in the menu pose until the closing animation ends.
+  const ringActive = ringMenu.isOpen || ringMenu.container.visible;
+  const ringCenter = ringMenu.ringCenter;
+  const ringAnchorBeforeUpdate = ringMenu.ropeAnchor;
+  if (ringWasActive && !ringActive && lastRingCenter && !reducedMotionQuery?.matches) {
+    ringExit = {
+      age: 0,
+      petOffset: null,
+      mount: lastRingMountPosition,
+      ropeAnchor: lastRingRopeAnchor,
+    };
+  } else if (ringExit) {
+    ringExit.age = Math.min(0.18, ringExit.age + dt);
+  }
+  if (ringActive || reducedMotionQuery?.matches) ringExit = null;
+  const ringExitWeight = ringExit ? (1 - ringExit.age / 0.18) ** 3 : 0;
+  if (ringActive && ringCenter) lastRingCenter = ringCenter;
+  ringWasActive = ringActive;
 
   // Update physics (skipped during PULLING and BOUNCING)
-  if (ringOpen) {
+  if (ringActive) {
     // 环形菜单开环：宠物钉死为圆心，全部物理静置（角色互换模型）
   } else if (!isCharm) {
     physics.updatePendulum(dt);
@@ -1451,6 +1597,9 @@ pixiApp.ticker.add((delta) => {
   }
 
   // Ring menu 推进（开环 + 收环动画都走这里）
+  // 菜单打开时窗口仍 click-through，DOM mousemove 可能停发；把系统光标回退采样
+  // 提升到逐帧单飞，并在有新鲜 DOM 坐标时自动退让给零延迟来源。
+  if (ringMenu.isOpen) charmAnchorSampler.pollOnce({ staleAfterMs: 16 });
   ringMenu.update(dt, ringMenuCursor(), performance.now());
 
   // Update panel animation
@@ -1464,14 +1613,25 @@ pixiApp.ticker.add((delta) => {
   const anchorX = isCharm ? physics.pulley.x : physics.screenAnchorX * window.innerWidth;
   const anchorY = isCharm ? physics.pulley.y : 50;
 
-  // 金属挂环：环底 = 绳锚点（sprite anchor 已对齐环底）。环随锚点走——
-  // 锚点冻结（面板打开）时环与绳保持一体；环形菜单开环或经典模式下不画。
-  if (isCharm && !ringOpen) {
-    charmMountSprite.visible = true;
-    charmMountSprite.position.set(physics.pulley.x, physics.pulley.y);
-  } else {
-    charmMountSprite.visible = false;
+  // 环形菜单期间挂环仍附着在实时光标上，并绘制在扇区上方；收环动画结束后
+  // 回到普通物理锚点，避免进入轮盘时挂饰突然消失。
+  const mountPose = resolveCharmMountPose({
+    isCharmMode: isCharm,
+    ringVisible: ringActive,
+    cursor: ringActive ? ringMenuCursor() : null,
+    mountAnchor: physics.pulley,
+  });
+  if (ringActive && mountPose.position) {
+    lastRingMountPosition = { ...mountPose.position };
+  } else if (ringExit?.mount && mountPose.position) {
+    mountPose.position.x += (ringExit.mount.x - mountPose.position.x) * ringExitWeight;
+    mountPose.position.y += (ringExit.mount.y - mountPose.position.y) * ringExitWeight;
   }
+  charmMountSprite.visible = mountPose.visible;
+  if (mountPose.position) charmMountSprite.position.set(mountPose.position.x, mountPose.position.y);
+  setCharmMountRingLayer(isCharm && ringActive);
+  // During open and close, the actual rope crosses the annulus visibly. Move
+  // only its layer; the cursor mount and floating label stay above it.
 
   // Calculate pull distance BEFORE updating physics
   const pullDist = (state === 'PULLING') ? 
@@ -1585,7 +1745,7 @@ pixiApp.ticker.add((delta) => {
 
   } else if (state === 'PULLEY_PHYSICS') {
     // ── New throw physics simulation ──
-    const totalEnergy = physics.updatePulleyPhysics(dt);
+    const totalEnergy = ringActive ? undefined : physics.updatePulleyPhysics(dt);
 
     // Update sprite from physics turtle
     sprite.x = physics.turtle.x;
@@ -1628,7 +1788,7 @@ pixiApp.ticker.add((delta) => {
     sprite.y = pendulumY;
 
     // Check if momentum has decayed enough to stop
-    if (Math.abs(physics.pulleyMomentumVelocity) < MOMENTUM_STOP_THRESHOLD) {
+    if (!ringActive && Math.abs(physics.pulleyMomentumVelocity) < MOMENTUM_STOP_THRESHOLD) {
       physics.pulleyMomentumVelocity = 0;
       console.log('[PULLEY] MOMENTUM stopped');
       stateMachine.transition('MOMENTUM_STOPPED');
@@ -1674,13 +1834,13 @@ pixiApp.ticker.add((delta) => {
   }
 
   // Ring menu 开环：宠物钉死在圆心（覆盖一切状态分支的位置输出）
-  if (ringOpen && ringMenu.ringCenter) {
-    sprite.x = ringMenu.ringCenter.x;
-    sprite.y = ringMenu.ringCenter.y;
+  if (ringActive && ringCenter) {
+    sprite.x = ringCenter.x;
+    sprite.y = ringCenter.y;
   }
 
   const codexMotionEnabled = (state === 'IDLE' || state === 'HOVER')
-    && !ringMenu.isOpen
+    && !ringActive
     && !settingsPanel.isOpen
     && !settingsPanel.isAnimating
     && !subscriptionPanel.isOpen
@@ -1698,7 +1858,7 @@ pixiApp.ticker.add((delta) => {
   });
   if (codexMotionEnabled) {
     if (motionFrame.pendulumImpulse) {
-      physics.pendulumOmega += motionFrame.pendulumImpulse;
+      applyCodexMotionImpulse(physics, motionFrame.pendulumImpulse);
     }
     const baseDx = sprite.x - anchorX;
     const baseDy = sprite.y - anchorY;
@@ -1711,6 +1871,18 @@ pixiApp.ticker.add((delta) => {
   } else {
     bodySprite.rotation = 0;
   }
+  // Edge clamping can shift the menu center away from the physical pet. Blend
+  // the visible pet back after closing while its underlying physics resumes.
+  if (ringExit) {
+    if (!ringExit.petOffset) {
+      ringExit.petOffset = {
+        x: lastRingCenter.x - sprite.x,
+        y: lastRingCenter.y - sprite.y,
+      };
+    }
+    sprite.x += ringExit.petOffset.x * ringExitWeight;
+    sprite.y += ringExit.petOffset.y * ringExitWeight;
+  }
   bodySprite.x = 0;
   bodySprite.y = 0;
   const codexBodyBounds = bodySprite.getBounds();
@@ -1718,7 +1890,7 @@ pixiApp.ticker.add((delta) => {
   const codexVisualY = codexBodyBounds.y + codexBodyBounds.height / 2;
   // 挂饰下指引卡片锚定屏幕固定点：卡片若锚定宠物（物理摆动）或锚点
   // （1:1 跟随光标），都会出现「光标永远追不上/晃到无法阅读」的问题。
-  if (isCharm && !ringOpen) {
+  if (isCharm && !ringActive) {
     onboardingGuide.setAnchor(window.innerWidth / 2, window.innerHeight * 0.62);
   } else {
     onboardingGuide.setAnchor(codexVisualX, codexVisualY);
@@ -1776,31 +1948,32 @@ pixiApp.ticker.add((delta) => {
     ropeAnchorY = physics.pulley.y;
   }
 
-  // Ring menu 开环：绳锚点被牵在圆上（角色互换）
+  // In classic mode the rope follows the ring direction. Charm mode instead
+  // attaches it to the cursor's metal ring below.
   let ringAnchorApplied = false;
-  if (ringOpen) {
-    const ringAnchor = ringMenu.ropeAnchor;
+  if (ringActive && !isCharm) {
+    const ringAnchor = ringMenu.ropeAnchor || ringAnchorBeforeUpdate;
     if (ringAnchor) {
       ropeAnchorX = ringAnchor.x;
       ropeAnchorY = ringAnchor.y;
       ringAnchorApplied = true;
     }
+  } else if (!isCharm && ringExit?.ropeAnchor) {
+    ropeAnchorX += (ringExit.ropeAnchor.x - ropeAnchorX) * ringExitWeight;
+    ropeAnchorY += (ringExit.ropeAnchor.y - ropeAnchorY) * ringExitWeight;
   }
 
   // 挂饰模式：绳绕挂环滑动——绳的视觉起点 = 环缘上朝向乌龟的点。
   // 乌龟垂在下方时挂点即环底；被甩到锚点上方时挂点绕到环顶，绳不再
   // 从环中间穿过（真实挂环的行为）。
-  if (isCharm && !ringOpen) {
-    const mountCenterX = anchorX;
-    const mountCenterY = anchorY - 9;
-    const dx = sprite.x - mountCenterX;
-    const dy = sprite.y - mountCenterY;
-    const d = Math.hypot(dx, dy);
-    if (d > 1) {
-      ropeAnchorX = mountCenterX + (dx / d) * 13;
-      ropeAnchorY = mountCenterY + (dy / d) * 13;
-    }
+  if (isCharm && mountPose.visible && mountPose.position) {
+    // During the menu the ring follows the real cursor. Attach the rope to
+    // that same metal rim, so aiming stretches and turns the actual rope.
+    const attachment = charmRopeAttachment(mountPose.position, sprite);
+    ropeAnchorX = attachment.x;
+    ropeAnchorY = attachment.y;
   }
+  if (ringActive) lastRingRopeAnchor = { x: ropeAnchorX, y: ropeAnchorY };
 
   const sag = RopeRenderer.calcSagAmount(
     physics.ropeLength,
@@ -1823,7 +1996,7 @@ pixiApp.ticker.add((delta) => {
 
   // Charm mode: same tension term, plus a whip term driven by the turtle's
   // angular velocity around the anchor (系数照抄原版 omega*5 / 上限 15).
-  if (isCharm && state === 'IDLE' && !ringOpen) {
+  if (isCharm && state === 'IDLE' && !ringActive) {
     const dx = sprite.x - ropeAnchorX;
     const dy = sprite.y - ropeAnchorY;
     const dist = Math.sqrt(dx * dx + dy * dy);
@@ -1834,12 +2007,20 @@ pixiApp.ticker.add((delta) => {
     adjustedSag = (sag + whip) * Math.max(0.1, 1 - tension * 0.8);
   }
 
-  // Ring menu 开环期：固定小垂度（钉死无摆动，mockup 同款）
-  if (ringAnchorApplied) {
+  // Aiming changes the visible rope length without changing physical length.
+  // Near the pet it loosens; when pulled away it becomes almost taut.
+  if (ringActive && isCharm) {
+    adjustedSag = ringRopeSag(
+      physics.restRopeLength,
+      { x: ropeAnchorX, y: ropeAnchorY },
+      sprite,
+    );
+  } else if (ringAnchorApplied) {
     adjustedSag = ringMenu.openSag;
   }
 
   ropeRenderer.draw(ropeAnchorX, ropeAnchorY, sprite.x, sprite.y, adjustedSag, ROPE_WIDTH);
+  if (ringExit && ringExitWeight <= 0) ringExit = null;
 
   // Debug: Draw window boundary during PULLING
   debugGraphics.clear();

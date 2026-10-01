@@ -8,6 +8,7 @@ import {
   RING_HOVER_GATE_DISTANCE,
   RING_ITEM_COUNT,
   RING_SECTOR_RAD,
+  clampRingCenter,
   ringAim,
   ringAngleFrom,
   ringItemAngle,
@@ -19,6 +20,21 @@ const C = { x: 400, y: 300 };
 function pointAt(angle, radius) {
   return ringPolar(C, radius, angle);
 }
+
+test('ring center stays inside viewport with enough margin for all sectors', () => {
+  const margin = 150 + 22 + 2;
+  assert.deepEqual(clampRingCenter({ x: 1, y: 2 }, 800, 600, margin), { x: margin, y: margin });
+  assert.deepEqual(clampRingCenter({ x: 799, y: 599 }, 800, 600, margin), {
+    x: 800 - margin,
+    y: 600 - margin,
+  });
+  assert.deepEqual(clampRingCenter({ x: 400, y: 300 }, 800, 600, margin), { x: 400, y: 300 });
+});
+
+test('ring center uses viewport midpoint when the window cannot fit the menu', () => {
+  assert.deepEqual(clampRingCenter({ x: 0, y: 0 }, 200, 100, 174), { x: 100, y: 50 });
+  assert.deepEqual(clampRingCenter({ x: NaN, y: Infinity }, 200, 100, 0), { x: 100, y: 50 });
+});
 
 test('angle convention: 0 at 12 o\'clock, clockwise, y-down', () => {
   assert.ok(Math.abs(ringAngleFrom(C, { x: 400, y: 300 - 50 })) < 1e-9, 'up = 0');

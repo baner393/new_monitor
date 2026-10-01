@@ -38,6 +38,14 @@ export function codexDropLength({ petHeight = 64, baseY = 150, viewportHeight = 
   return Math.min(desired, available);
 }
 
+export function applyCodexMotionImpulse(physics, impulse) {
+  const value = Number(impulse) || 0;
+  if (!physics || !value) return false;
+  if (physics.charmMode) physics.turtle.vx += value;
+  else physics.pendulumOmega += value;
+  return true;
+}
+
 export class CodexMotionController {
   constructor() {
     this.activity = CODEX_ACTIVITY.SILENT;

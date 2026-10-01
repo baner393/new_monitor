@@ -71,3 +71,18 @@ test('ambient swing is user-controlled and temporarily suppressed for every stab
   assert.equal(resolveAmbientSwingEnabled({ ambientSwingEnabled: true, panelMoveStable: false }, true), true);
   assert.equal(normalizePetSettings({ ambientSwingEnabled: false }).ambientSwingEnabled, false);
 });
+
+test('back material accepts only known options and remains independent of physical presets', () => {
+  assert.equal(normalizePetSettings({ charmBackMaterial: 'pattern' }).charmBackMaterial, 'pattern');
+  assert.equal(normalizePetSettings({ charmBackMaterial: 'unknown' }).charmBackMaterial, 'metal');
+  assert.equal(normalizePetSettings({}).charmBackMaterial, 'metal');
+  const selected = { ...PET_SETTINGS_DEFAULTS, charmBackMaterial: 'pattern', turtleSize: 96, charmHotkey: 'Ctrl+Alt+B', charmHoloEnabled: false, panelMoveStable: false };
+  const preset = applyPetSettingsPreset(selected, 'steady');
+  for (const key of ['charmBackMaterial', 'turtleSize', 'charmHotkey', 'charmHoloEnabled', 'panelMoveStable']) {
+    assert.equal(preset[key], selected[key]);
+  }
+  assert.equal(detectPetSettingsPreset(preset), 'steady');
+  const draft = new PetSettingsDraft(selected);
+  draft.update({ ...selected, charmBackMaterial: 'metal' });
+  assert.equal(draft.cancel().charmBackMaterial, 'pattern');
+});

@@ -167,9 +167,9 @@ test('charm step and throw physics agree on the same initial frame', () => {
   assert.ok(Math.abs(a.turtle.vy - b.turtle.vy) < 1e-9, 'same turtle vy');
 });
 
-// ── 回归：松绳推力方向 + charm 模式 pulley.vx 残留（2026-09-21 修复）──
+// ── 回归：松绳无力（软绳语义）+ charm 模式 pulley.vx 残留（2026-09-21/09-25 修复）──
 
-test('松绳时只回收不推离：挂件在锚点右侧松弛，一帧后 vx 必须为负（朝锚点）', () => {
+test('挂饰松绳时无力（真实软绳）：一帧后速度只含重力分量，绝无径向力', () => {
   const engine = freshEngine();
   engine.charmMode = true;
   engine.gravity = 0;
@@ -181,7 +181,53 @@ test('松绳时只回收不推离：挂件在锚点右侧松弛，一帧后 vx �
   engine.turtle.vx = 0;
   engine.turtle.vy = 0;
   engine.updateCharmStep(1 / 60);
-  assert.ok(engine.turtle.vx < 0, `vx=${engine.turtle.vx}，松绳应产生指向锚点的弱回收力（负 x），绝不能推离`);
+  assert.equal(engine.turtle.vx, 0, `vx=${engine.turtle.vx}，松绳必须无力：既不推离（2026-09-21 前）也不回收吸住（2026-09-25 黑洞 bug）`);
+});
+
+test('黑洞回归：调大绳长+回拉力度后挂饰必须垂到新绳长悬垂位，不被吸死在锚点', () => {
+  const engine = new PhysicsEngine();
+  engine.setContext({ state: 'IDLE', windowWidth: 1920, windowHeight: 1080, turtleSize: 64 });
+  engine.charmMode = true;
+  engine.restRopeLength = 80;
+  engine.ropeLength = 80;
+  engine.ropeStiffness = 500;
+  engine.setCharmAnchor({ x: 960, y: 500 });
+  engine.turtle.x = 960;
+  engine.turtle.y = 580;
+  const dt = 1 / 60;
+  for (let i = 0; i < 180; i++) engine.updateCharmStep(dt);
+  // 用户操作：同时调大「回拉力度」与「绳长」（修复前宠物被锚点势阱吸死在
+  // 鼠标周围 0~45px 永远震荡，回不到 300px 悬垂位）
+  engine.ropeStiffness = 950;
+  engine.restRopeLength = 300;
+  engine.ropeLength = 300;
+  for (let i = 0; i < 1200; i++) engine.updateCharmStep(dt);
+  const dx = engine.turtle.x - engine.pulley.x;
+  const dy = engine.turtle.y - engine.pulley.y;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+  assert.ok(Math.abs(dx) < 3, `dx ${dx.toFixed(1)} 应垂在锚点正下方`);
+  assert.ok(Math.abs(dist - 300) < 3, `dist ${dist.toFixed(1)} 应回到 restRopeLength≈300 悬垂，而不是被吸在锚点附近`);
+  assert.ok(Math.hypot(engine.turtle.vx, engine.turtle.vy) < 5, '应完全收敛静止');
+});
+
+test('黑洞回归：只调大绳长（默认回拉力度）同样垂回新绳长悬垂位', () => {
+  const engine = new PhysicsEngine();
+  engine.setContext({ state: 'IDLE', windowWidth: 1920, windowHeight: 1080, turtleSize: 64 });
+  engine.charmMode = true;
+  engine.restRopeLength = 80;
+  engine.ropeLength = 80;
+  engine.ropeStiffness = 500;
+  engine.setCharmAnchor({ x: 960, y: 400 });
+  engine.turtle.x = 960;
+  engine.turtle.y = 480;
+  const dt = 1 / 60;
+  for (let i = 0; i < 180; i++) engine.updateCharmStep(dt);
+  engine.restRopeLength = 300;
+  engine.ropeLength = 300;
+  for (let i = 0; i < 1200; i++) engine.updateCharmStep(dt);
+  const dist = Math.hypot(engine.turtle.x - engine.pulley.x, engine.turtle.y - engine.pulley.y);
+  assert.ok(Math.abs(dist - 300) < 3, `dist ${dist.toFixed(1)} 应回到 restRopeLength≈300 悬垂`);
+  assert.ok(Math.hypot(engine.turtle.vx, engine.turtle.vy) < 5, '应完全收敛静止');
 });
 
 test('charm 模式：绳子反作用不得累积到 pulley.vx，setCharmAnchor 清零残留', () => {

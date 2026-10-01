@@ -15,6 +15,7 @@ import {
 } from '../src/main/codex-monitor.js';
 import { StateMachine } from '../src/renderer/state-machine.js';
 import { InputManager, PET_HIT_PADDING, isPointWithinBounds } from '../src/renderer/input.js';
+import { PhysicsEngine } from '../src/renderer/physics.js';
 import {
   CODEX_ACTIVITY,
   CODEX_CONNECTION,
@@ -200,6 +201,67 @@ test('unread Codex events follow needs-input, blocked, ready priority', () => {
   assert.equal(codexMoodForActivity(CODEX_ACTIVITY.READY), 'happy');
   assert.equal(codexMoodForActivity(CODEX_ACTIVITY.BLOCKED), 'pain');
   assert.equal(codexMoodForActivity(CODEX_ACTIVITY.RUNNING), 'working');
+});
+
+test('Codex App Server activity reads waiting flags during initial and live status sync', async () => {
+  const { codexActivityFromThreadStatus } = await import('../src/shared/codex-integration.js');
+  assert.equal(typeof codexActivityFromThreadStatus, 'function');
+  assert.equal(
+    codexActivityFromThreadStatus({ type: 'active', activeFlags: ['waitingOnApproval'] }),
+    CODEX_ACTIVITY.NEEDS_INPUT,
+  );
+  assert.equal(
+    codexActivityFromThreadStatus({ type: 'active', activeFlags: ['waitingOnUserInput'] }),
+    CODEX_ACTIVITY.NEEDS_INPUT,
+  );
+  assert.equal(codexActivityFromThreadStatus({ type: 'systemError' }), CODEX_ACTIVITY.BLOCKED);
+  assert.equal(
+    codexActivityFromThreadStatus({ type: 'systemError', activeFlags: ['waitingOnUserInput'] }),
+    CODEX_ACTIVITY.NEEDS_INPUT,
+  );
+  assert.equal(codexActivityFromThreadStatus({ type: 'active' }), CODEX_ACTIVITY.RUNNING);
+  assert.equal(codexActivityFromThreadStatus({ type: 'idle' }), CODEX_ACTIVITY.SILENT);
+});
+
+test('opening a task clears every unread event for that task immediately', async () => {
+  const { unreadEventsForThread } = await import('../src/renderer/codex-view-state.js');
+  assert.equal(typeof unreadEventsForThread, 'function');
+  const snapshot = { unread: [
+    { id: 'one', threadId: 'codex:thread-a' },
+    { id: 'other', threadId: 'codex:thread-b' },
+    { id: 'two', threadId: 'codex:thread-a' },
+  ] };
+  assert.deepEqual(
+    unreadEventsForThread(snapshot, 'codex:thread-a').map((event) => event.id),
+    ['one', 'two'],
+  );
+  const source = fs.readFileSync(path.join(process.cwd(), 'src', 'renderer', 'codex-companion.js'), 'utf8');
+  const openTask = source.match(/#openTask\(task\) \{([\s\S]*?)\n  \}/)?.[1] || '';
+  assert.match(openTask, /#markThreadRead\(this\.viewState\.threadId\)/);
+});
+
+test('connection rows offer retry for an errored Codex thread', async () => {
+  const { codexConnectionAction } = await import('../src/renderer/codex-companion.js');
+  assert.equal(typeof codexConnectionAction, 'function');
+  assert.equal(codexConnectionAction(CODEX_CONNECTION.ERROR), 'retry');
+  assert.equal(codexConnectionAction(CODEX_CONNECTION.DISCONNECTED), 'connect');
+  assert.equal(codexConnectionAction(CODEX_CONNECTION.CONNECTED), 'disconnect');
+  assert.equal(codexConnectionAction(CODEX_CONNECTION.TEMPORARY_READ_ONLY), 'disconnect');
+});
+
+test('running motion impulses move the charm turtle instead of touching unused pendulum state', async () => {
+  const { applyCodexMotionImpulse } = await import('../src/renderer/codex-motion.js');
+  assert.equal(typeof applyCodexMotionImpulse, 'function');
+  const physics = new PhysicsEngine();
+  physics.enterCharmMode({ turtleX: 100, turtleY: 180, cursor: { x: 100, y: 100 } });
+  assert.equal(applyCodexMotionImpulse(physics, 0.22), true);
+  assert.equal(physics.pendulumOmega, 0);
+  assert.ok(physics.turtle.vx > 0);
+  assert.equal(physics.turtle.vy, 0);
+
+  const classic = new PhysicsEngine();
+  assert.equal(applyCodexMotionImpulse(classic, -0.22), true);
+  assert.equal(classic.pendulumOmega, -0.22);
 });
 
 test('completed rollout keeps the full reply and only emits one unread event', () => {
@@ -1076,6 +1138,201 @@ test('App Server catalog adds older tasks and hydrates their messages only on de
     assert.ok(monitor.getSnapshot().tasks.some((task) => task.id === 'catalog-only' && task.title === 'Older named task'));
     const page = await monitor.getMessages('catalog-only', { limit: 50 });
     assert.deepEqual(page.messages.map((message) => message.message), ['历史问题', '历史回答']);
+  } finally {
+    monitor.stop();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('App Server catalog keeps waiting-on-input tasks out of the running state', async () => {
+  class FakeAppServer extends EventEmitter {
+    async connect() {}
+    async request(method) {
+      if (method === 'thread/list') return {
+        data: [{
+          id: 'waiting-catalog',
+          updatedAt: Date.now(),
+          status: { type: 'active', activeFlags: ['waitingOnApproval'] },
+        }],
+        nextCursor: null,
+      };
+      return {};
+    }
+    stop() {}
+  }
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'new-monitor-codex-waiting-catalog-'));
+  fs.mkdirSync(path.join(root, 'sessions'));
+  const monitor = new CodexMonitor({
+    config: { version: 2, enabled: true, homeMode: 'manual', manualHome: root },
+    appServerFactory: () => new FakeAppServer(),
+  });
+  try {
+    monitor.start();
+    for (let attempt = 0; attempt < 80; attempt += 1) {
+      if (monitor.getSnapshot().tasks.some((task) => task.id === 'waiting-catalog')) break;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    assert.equal(
+      monitor.getSnapshot().tasks.find((task) => task.id === 'waiting-catalog')?.activity,
+      CODEX_ACTIVITY.NEEDS_INPUT,
+    );
+  } finally {
+    monitor.stop();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('temporary read-only Codex connections retry and recover the active turn automatically', async () => {
+  class FakeAppServer extends EventEmitter {
+    calls = [];
+    async connect() {}
+    async request(method, params) {
+      this.calls.push({ method, params });
+      if (method === 'thread/resume') return {
+        thread: {
+          id: 'retry-running',
+          status: { type: 'active' },
+          turns: [{ id: 'retry-turn', status: { type: 'inProgress' }, items: [] }],
+        },
+      };
+      return {};
+    }
+    stop() {}
+  }
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'new-monitor-codex-retry-'));
+  const sessions = path.join(root, 'sessions');
+  fs.mkdirSync(sessions);
+  fs.writeFileSync(path.join(sessions, 'retry.jsonl'), `${rollout([
+    { timestamp: new Date().toISOString(), type: 'session_meta', payload: { id: 'retry-running', cwd: root } },
+    { timestamp: new Date().toISOString(), type: 'event_msg', payload: { type: 'task_started', turn_id: 'retry-turn' } },
+  ])}\n`);
+  const server = new FakeAppServer();
+  const monitor = new CodexMonitor({
+    config: {
+      version: 2,
+      enabled: true,
+      homeMode: 'manual',
+      manualHome: root,
+      desiredThreadIds: ['retry-running'],
+    },
+    appServerFactory: () => server,
+  });
+  try {
+    monitor.pollIntervalMs = 1;
+    monitor.client = server;
+    monitor.clientReady = true;
+    monitor.catalogSynced = true;
+    monitor.connectionStates.set('retry-running', {
+      state: CODEX_CONNECTION.TEMPORARY_READ_ONLY,
+      error: 'active turn id not available yet',
+      retryAtMs: 0,
+    });
+    await monitor.scan(true);
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      if (monitor.getSnapshot().tasks.find((task) => task.id === 'retry-running')?.connectionState === CODEX_CONNECTION.CONNECTED) break;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.ok(server.calls.some((call) => call.method === 'thread/resume'));
+    assert.equal(
+      monitor.getSnapshot().tasks.find((task) => task.id === 'retry-running')?.connectionState,
+      CODEX_CONNECTION.CONNECTED,
+    );
+  } finally {
+    monitor.stop();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('resuming a waiting App Server task preserves needs-input activity', async () => {
+  class FakeAppServer extends EventEmitter {
+    async connect() {}
+    async request(method) {
+      if (method === 'thread/list') return {
+        data: [{ id: 'waiting-resume', updatedAt: Date.now(), status: { type: 'active' } }],
+        nextCursor: null,
+      };
+      if (method === 'thread/resume') return {
+        thread: {
+          id: 'waiting-resume',
+          status: { type: 'active', activeFlags: ['waitingOnApproval'] },
+          turns: [{ id: 'waiting-turn', status: { type: 'inProgress' }, items: [] }],
+        },
+      };
+      return {};
+    }
+    stop() {}
+  }
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'new-monitor-codex-waiting-resume-'));
+  fs.mkdirSync(path.join(root, 'sessions'));
+  const monitor = new CodexMonitor({
+    config: { version: 2, enabled: true, homeMode: 'manual', manualHome: root },
+    appServerFactory: () => new FakeAppServer(),
+  });
+  try {
+    monitor.start();
+    for (let attempt = 0; attempt < 80; attempt += 1) {
+      if (monitor.getSnapshot().tasks.some((task) => task.id === 'waiting-resume')) break;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    await monitor.connectThread('waiting-resume');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(
+      monitor.getSnapshot().tasks.find((task) => task.id === 'waiting-resume')?.activity,
+      CODEX_ACTIVITY.NEEDS_INPUT,
+    );
+  } finally {
+    monitor.stop();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('App Server history fallback timestamps preserve turn order', async () => {
+  class FakeAppServer extends EventEmitter {
+    async connect() {}
+    async request(method, params) {
+      if (method === 'thread/list') return {
+        data: [{ id: 'ordered-history', updatedAt: Date.now(), status: { type: 'notLoaded' } }],
+        nextCursor: null,
+      };
+      if (method === 'thread/read' && params.threadId === 'ordered-history') return {
+        thread: {
+          id: 'ordered-history',
+          updatedAt: Date.now(),
+          turns: [
+            { items: [
+              { id: 'u1', type: 'userMessage', content: [{ type: 'text', text: '第一轮问题' }] },
+              { id: 'a1', type: 'agentMessage', text: '第一轮回答' },
+            ] },
+            { items: [
+              { id: 'u2', type: 'userMessage', content: [{ type: 'text', text: '第二轮问题' }] },
+              { id: 'a2', type: 'agentMessage', text: '第二轮回答' },
+            ] },
+          ],
+        },
+      };
+      if (method === 'thread/resume') return { thread: { id: 'seed-history', status: { type: 'idle' } } };
+      return {};
+    }
+    stop() {}
+  }
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'new-monitor-codex-history-order-'));
+  const sessions = path.join(root, 'sessions');
+  fs.mkdirSync(sessions);
+  fs.writeFileSync(path.join(sessions, 'seed.jsonl'), `${rollout([
+    { timestamp: new Date().toISOString(), type: 'session_meta', payload: { id: 'seed-history', cwd: root } },
+  ])}\n`);
+  const monitor = new CodexMonitor({
+    config: { version: 2, enabled: true, homeMode: 'manual', manualHome: root },
+    appServerFactory: () => new FakeAppServer(),
+  });
+  try {
+    await monitor.scan(true);
+    await monitor.connectThread('seed-history');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const page = await monitor.getMessages('ordered-history', { limit: 50 });
+    assert.deepEqual(page.messages.map((message) => message.message), [
+      '第一轮问题', '第一轮回答', '第二轮问题', '第二轮回答',
+    ]);
   } finally {
     monitor.stop();
     fs.rmSync(root, { recursive: true, force: true });
