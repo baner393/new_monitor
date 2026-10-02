@@ -251,7 +251,10 @@ export function codexMoodForActivity(activity, { alertFresh = true } = {}) {
   switch (activity) {
     case CODEX_ACTIVITY.NEEDS_INPUT: return 'attention';
     case CODEX_ACTIVITY.BLOCKED: return alertFresh ? 'pain' : 'idle';
-    case CODEX_ACTIVITY.READY: return alertFresh ? 'happy' : 'idle';
+    // READY is backed by an unread completion event. Keep the pet in its
+    // completed mood until that event is acknowledged; presentation can be
+    // delayed while the companion panel or another pet animation is active.
+    case CODEX_ACTIVITY.READY: return 'happy';
     case CODEX_ACTIVITY.RUNNING: return 'working';
     default: return 'idle';
   }

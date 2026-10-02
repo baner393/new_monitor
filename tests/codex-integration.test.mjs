@@ -251,6 +251,22 @@ test('unread Codex events follow needs-input, blocked, ready priority', () => {
   assert.equal(codexMoodForActivity(CODEX_ACTIVITY.RUNNING), 'working');
 });
 
+test('an unread Codex completion keeps the pet happy when its alert presentation is delayed', () => {
+  const activity = resolveCodexActivity({
+    connected: true,
+    tasks: [{ id: 'finished-thread', activity: CODEX_ACTIVITY.SILENT }],
+    unread: [{
+      id: 'finished-turn',
+      threadId: 'finished-thread',
+      activity: CODEX_ACTIVITY.READY,
+      createdAtMs: 1,
+    }],
+  });
+
+  assert.equal(activity, CODEX_ACTIVITY.READY);
+  assert.equal(codexMoodForActivity(activity, { alertFresh: false }), 'happy');
+});
+
 test('Codex App Server activity reads waiting flags during initial and live status sync', async () => {
   const { codexActivityFromThreadStatus } = await import('../src/shared/codex-integration.js');
   assert.equal(typeof codexActivityFromThreadStatus, 'function');
