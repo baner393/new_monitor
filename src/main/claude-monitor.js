@@ -581,12 +581,23 @@ export class ClaudeMonitor {
       sessionPreferences: structuredClone(this.config.sessionPreferences || {}),
     };
   }
-  updateConfig(next) {
+  updateConfig(next, { replacePersistentState = false } = {}) {
     const previousHomeMode = this.config.homeMode;
     const previousManualHome = this.config.manualHome;
     const previousEnabledAtMs = this.config.enabledAtMs;
     const wasEnabled = this.config.enabled;
-    this.config = normalizeClaudeIntegrationConfig({ ...this.config, ...next });
+    this.config = normalizeClaudeIntegrationConfig({
+      ...this.config,
+      ...next,
+      desiredSessionIds: replacePersistentState
+        ? next.desiredSessionIds
+        : this.config.desiredSessionIds,
+      readEventIds: replacePersistentState ? next.readEventIds : this.config.readEventIds,
+      notifiedEventIds: replacePersistentState ? next.notifiedEventIds : this.config.notifiedEventIds,
+      sessionPreferences: replacePersistentState
+        ? next.sessionPreferences
+        : { ...this.config.sessionPreferences, ...(next.sessionPreferences || {}) },
+    });
     if (!wasEnabled && this.config.enabled) this.config.enabledAtMs = Date.now();
     if (previousHomeMode !== this.config.homeMode
       || previousManualHome !== this.config.manualHome

@@ -60,6 +60,90 @@ test('Claude configuration is portable and bounds persisted state', () => {
   assert.deepEqual(config.sessionPreferences.two, { thinkingMode: 'auto', effort: 'high' });
 });
 
+test('Claude config updates preserve saved session connections unless reset explicitly', () => {
+  const monitor = new ClaudeMonitor({
+    config: {
+      enabled: true,
+      desiredSessionIds: ['kept-session'],
+      readEventIds: ['read-event'],
+      notifiedEventIds: ['notified-event'],
+      sessionPreferences: { 'kept-session': { effort: 'max' } },
+    },
+  });
+  try {
+    monitor.updateConfig({
+      ...normalizeClaudeIntegrationConfig({ enabled: true }),
+      desiredSessionIds: [],
+      readEventIds: [],
+      notifiedEventIds: [],
+      sessionPreferences: { 'new-session': { effort: 'low' } },
+    });
+    const merged = monitor.getConfig();
+    assert.deepEqual(merged.desiredSessionIds, ['kept-session']);
+    assert.deepEqual(merged.readEventIds, ['read-event']);
+    assert.deepEqual(merged.notifiedEventIds, ['notified-event']);
+    assert.deepEqual(merged.sessionPreferences, {
+      'kept-session': { thinkingMode: 'auto', effort: 'max' },
+      'new-session': { thinkingMode: 'auto', effort: 'low' },
+    });
+
+    monitor.updateConfig({
+      ...merged,
+      desiredSessionIds: [],
+      readEventIds: [],
+      notifiedEventIds: [],
+      sessionPreferences: {},
+    }, { replacePersistentState: true });
+    assert.deepEqual(monitor.getConfig().desiredSessionIds, []);
+    assert.deepEqual(monitor.getConfig().readEventIds, []);
+    assert.deepEqual(monitor.getConfig().notifiedEventIds, []);
+    assert.deepEqual(monitor.getConfig().sessionPreferences, {});
+  } finally {
+    monitor.stop();
+  }
+});
+
+test('desired Claude session connections survive monitor recreation', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'monitor-claude-persist-'));
+  const project = path.join(root, 'projects', 'demo');
+  fs.mkdirSync(project, { recursive: true });
+  fs.writeFileSync(path.join(project, 'persisted-session.jsonl'), transcript([
+    { type: 'user', sessionId: 'persisted-session', cwd: root, timestamp: new Date().toISOString(), message: { content: 'continue' } },
+  ]));
+  let savedConfig = {
+    enabled: true,
+    homeMode: 'manual',
+    manualHome: root,
+    enabledAtMs: Date.now() - 1000,
+  };
+  const makeMonitor = () => new ClaudeMonitor({
+    config: savedConfig,
+    onConfigChange: (config) => { savedConfig = config; },
+  });
+  const first = makeMonitor();
+  try {
+    await first.scan(true);
+    first.connectSession('persisted-session');
+    assert.ok(savedConfig.desiredSessionIds.includes('persisted-session'));
+    first.stop();
+
+    const reopened = makeMonitor();
+    try {
+      await reopened.scan(true);
+      assert.ok(savedConfig.desiredSessionIds.includes('persisted-session'));
+      assert.equal(
+        reopened.getSnapshot().tasks.find((task) => task.id === 'persisted-session')?.connectionState,
+        'connected',
+      );
+    } finally {
+      reopened.stop();
+    }
+  } finally {
+    first.stop();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('Claude send shortcut defaults to Enter and preserves Ctrl+Enter selection', () => {
   assert.equal(normalizeClaudeIntegrationConfig({}).sendShortcut, CLAUDE_SEND_SHORTCUT.ENTER);
   assert.equal(
