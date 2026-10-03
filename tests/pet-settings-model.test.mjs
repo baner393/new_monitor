@@ -13,6 +13,20 @@ import {
   scalePreviewRopeLength,
 } from '../src/shared/pet-settings-model.js';
 
+test('cursor profile drafts deeply restore, persist and compare independently of key order', () => {
+  const key = `Arrow:${'a'.repeat(64)}`, profile = { u: 0.3, v: 0.4, radius: 0.05 };
+  const original = { ...PET_SETTINGS_DEFAULTS, charmCursorProfiles: { [key]: profile } };
+  const draft = new PetSettingsDraft(original);
+  draft.draft.charmCursorProfiles[key].u = 0.5;
+  assert.equal(draft.dirty, true);
+  assert.equal(draft.cancel().charmCursorProfiles[key].u, 0.3);
+  const output = draft.update({ ...original, charmCursorProfiles: { [key]: { radius: 0.05, v: 0.4, u: 0.3 } } });
+  assert.equal(draft.dirty, false);
+  output.charmCursorProfiles[key].u = 0.9;
+  assert.equal(draft.draft.charmCursorProfiles[key].u, 0.3);
+  assert.deepEqual(applyPetSettingsPreset(original, 'steady').charmCursorProfiles, original.charmCursorProfiles);
+});
+
 test('legacy rope elasticity values migrate to the nearest current step', () => {
   assert.equal(normalizePetSettings({ ropeElasticity: 0.02 }).ropeElasticity, 5);
   assert.equal(normalizePetSettings({ ropeElasticity: 1 }).ropeElasticity, 1);

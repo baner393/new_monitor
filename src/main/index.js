@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, ipcMain, Menu, dialog, powerMonitor, safeStorage, screen, shell } from 'electron';
+import { app, BrowserWindow, clipboard, ipcMain, Menu, dialog, nativeImage, powerMonitor, safeStorage, screen, shell } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import zlib from 'zlib';
@@ -38,8 +38,12 @@ import { loadSubscriptionConfig, SubscriptionRuntime } from './subscription-runt
 import { createCharmTray } from './charm-tray.js';
 import { startCharmHook } from './charm-hook.js';
 import { normalizePetSettings } from '../shared/pet-settings-model.js';
+import { CursorService } from './cursor-service.js';
 
 let mainWindow;
+let cursorService;
+let cursorShutdown = null;
+let cursorQuitRestored = false;
 let customWindow;
 let canvasWindow;
 let regionWindow;
@@ -155,9 +159,11 @@ const DEFAULT_SETTINGS = {
   charmThickness:    50,
   charmFlipEnabled:  true,
   charmHoloEnabled:  true,
+  charmHoloIntensity: 100,
   charmBackMaterial: 'metal',
   charmHotkeyEnabled: true,
   charmHotkey:       'Ctrl+Alt+A',
+  charmCursorProfiles: {},
   onboarding: {
     version: 1,
     completedSteps: [],
@@ -205,6 +211,13 @@ function loadSettings() {
   }
 }
 
+function syncEffectiveCursorSettings() {
+  if (typeof cursorService === 'undefined' || !cursorService) return;
+  const visible = mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible();
+  cursorService.sync({ ...currentSettings, anchorMode: visible ? currentSettings.anchorMode : 'top' })
+    .catch((error) => console.error('[CursorMount]', error.message));
+}
+
 function saveSettings() {
   try {
     const dir = path.dirname(SETTINGS_PATH);
@@ -214,6 +227,7 @@ function saveSettings() {
     fs.writeFileSync(SETTINGS_PATH, JSON.stringify(currentSettings, null, 2), 'utf-8');
     syncCharmHookConfig();
     console.log('[Settings] Saved to', SETTINGS_PATH);
+    if (typeof syncEffectiveCursorSettings === 'function') syncEffectiveCursorSettings();
     // Notify renderer of new settings
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('settings-changed', currentSettings);
@@ -231,6 +245,18 @@ loadSettings();
 // IPC: settings.get — return current settings
 ipcMain.handle('settings-get', () => {
   return { ...currentSettings };
+});
+
+ipcMain.handle('cursor-mount-theme-get', async (event) => {
+  if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) {
+    return { available: false, roles: [], activeRole: null };
+  }
+  try { return await cursorService?.getTheme() || { available: false, roles: [], activeRole: null }; }
+  catch (error) { return { available: false, roles: [], activeRole: null, error: error.message }; }
+});
+ipcMain.handle('cursor-mount-state-get', (event) => {
+  if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return { active: false, supported: false };
+  return cursorService?.state || { active: false, supported: false };
 });
 
 ipcMain.handle('monitor-settings-get', () => ({
@@ -706,6 +732,9 @@ function createWindow({ show = true } = {}) {
     },
   });
   mainWindow = browserWindow;
+  for (const event of ['show', 'hide']) browserWindow.on(event, () => {
+    if (mainWindow === browserWindow) syncEffectiveCursorSettings();
+  });
 
   // Remove menu bar to prevent Alt-triggered black text
   browserWindow.setMenu(null);
@@ -794,6 +823,7 @@ function createWindow({ show = true } = {}) {
       }
       backgroundMonitoringStarted = false;
       mainWindow = null;
+      syncEffectiveCursorSettings();
     }
   });
 
@@ -812,11 +842,36 @@ function createWindow({ show = true } = {}) {
     });
     systemMonitor.setActivityState({ onBattery: powerMonitor.isOnBatteryPower() });
   }
+  syncEffectiveCursorSettings();
   return browserWindow;
 }
 
 // ── Launch on Windows ──────────────────────────────────────────────
 app.whenReady().then(() => {
+  const swapBitmapChannels = (pixels) => {
+    const result = Buffer.from(pixels);
+    for (let i = 0; i < result.length; i += 4) [result[i], result[i + 2]] = [result[i + 2], result[i]];
+    return result;
+  };
+  cursorService = new CursorService({
+    directory: path.join(app.getPath('userData'), 'cursor-mount'),
+    codec: {
+      decodePng: (bytes) => {
+        const image = nativeImage.createFromBuffer(Buffer.from(bytes));
+        const { width, height } = image.getSize();
+        return { width, height, pixels: swapBitmapChannels(image.toBitmap()) };
+      },
+      encodePng: ({ width, height, pixels }) => nativeImage.createFromBitmap(swapBitmapChannels(pixels), { width, height }).toPNG(),
+    },
+    getScaleFactor: () => screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).scaleFactor,
+    onState: (state) => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('cursor-mount-state', state);
+    },
+    onTheme: (theme) => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('cursor-mount-theme', theme);
+    },
+  });
+  syncEffectiveCursorSettings();
   const subscriptionConfig = loadSubscriptionConfig({
     appPath: app.getAppPath(),
     resourcesPath: process.resourcesPath,
@@ -849,6 +904,11 @@ app.whenReady().then(() => {
   subscriptionRuntime.initialize();
   codexMonitor = new CodexMonitor({
     config: currentSettings.codexIntegration,
+    userDataPath: app.getPath('userData'),
+    hookScriptPath: MAIN_WINDOW_VITE_DEV_SERVER_URL
+      ? path.join(app.getAppPath(), 'src', 'main', 'codex-hooks.mjs')
+      : path.join(process.resourcesPath, 'codex-hooks.mjs'),
+    nodeExecutablePath: process.execPath,
     onConfigChange: (config) => {
       currentSettings.codexIntegration = config;
       saveSettings();
@@ -1556,7 +1616,15 @@ app.on('window-all-closed', () => {
   }
 });
 
-app.on('before-quit', () => {
+app.on('before-quit', (event) => {
+  if (cursorService && !cursorQuitRestored) {
+    event.preventDefault();
+    if (!cursorShutdown) {
+      cursorShutdown = cursorService.stop().then(() => { cursorQuitRestored = true; app.quit(); })
+        .catch((error) => { console.error('[CursorMount] Restore failed:', error.message); cursorShutdown = null; });
+    }
+    return;
+  }
   codexMonitor?.stop();
   claudeMonitor?.stop();
   if (stopCharmHook) {

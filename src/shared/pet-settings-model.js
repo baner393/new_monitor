@@ -1,4 +1,5 @@
 import { normalizeHotkeyCombo } from './charm-keymap.js';
+import { normalizeCursorProfiles } from './cursor-hole-model.js';
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, Number(value)));
 
@@ -28,9 +29,11 @@ export const PET_SETTINGS_DEFAULTS = Object.freeze({
   charmThickness: 50,       // 卡牌厚度（0-100）
   charmFlipEnabled: true,   // 翻转效果开关
   charmHoloEnabled: true,   // 全息闪卡开关
+  charmHoloIntensity: 100,  // 虹彩/扫光强度（0-150）
   charmBackMaterial: 'metal',
   charmHotkeyEnabled: true, // 挂饰快捷键开关
   charmHotkey: 'Ctrl+Alt+A',
+  charmCursorProfiles: Object.freeze({}),
 });
 
 export const PET_SETTING_SECTIONS = Object.freeze([
@@ -68,6 +71,7 @@ export const PET_SETTING_FIELDS = Object.freeze({
   charmThickness: { section: 'charm', group: 'visual', label: '卡牌厚度', hint: '翻转时露出的金属侧壁厚度', min: 0, max: 100, step: 5, unit: '%' },
   charmFlipEnabled: { section: 'charm', group: 'visual', label: '翻转效果', hint: '关闭后挂饰保持正面朝外，不翻滚', type: 'boolean' },
   charmHoloEnabled: { section: 'charm', group: 'visual', label: '全息闪卡', hint: '关闭后表面不泛起全息反光与光带', type: 'boolean' },
+  charmHoloIntensity: { section: 'charm', group: 'visual', label: '炫彩强度', hint: '控制虹彩/扫光强度，不影响翻转速度', min: 0, max: 150, step: 5, unit: '%' },
   charmBackMaterial: { section: 'charm', group: 'visual', label: '背面外观', hint: '选择金属背板，或使用与正面相同的图案', type: 'enum', options: [{ value: 'metal', label: '金属背面' }, { value: 'pattern', label: '与正面相同图案' }] },
   charmHotkeyEnabled: { section: 'charm', group: 'hotkey', label: '挂饰快捷键', hint: '按住组合键呼出环形菜单', type: 'boolean' },
   charmHotkey: { section: 'charm', group: 'hotkey', label: '快捷键组合', hint: '点击右侧按键框，按下新的组合即可更换', type: 'hotkey' },
@@ -131,6 +135,7 @@ export function normalizePetSettings(value = {}) {
     }
   }
   normalized.ropeElasticity = nearestElasticityStep(value.ropeElasticity ?? normalized.ropeElasticity);
+  normalized.charmCursorProfiles = normalizeCursorProfiles(value.charmCursorProfiles);
   return normalized;
 }
 
@@ -192,12 +197,17 @@ export function applyPetSettingsPreset(settings, presetId) {
   const preset = PET_SETTINGS_PRESETS[presetId];
   if (!preset) return normalizePetSettings(settings);
   const physicalValues = Object.fromEntries(Object.entries(preset.values)
-    .filter(([key]) => PET_SETTING_FIELDS[key].section === 'classic'));
+    .filter(([key]) => PET_SETTING_FIELDS[key]?.section === 'classic'));
   return normalizePetSettings({ ...settings, ...physicalValues });
 }
 
 function settingsEqual(left, right) {
   return Object.keys(PET_SETTINGS_DEFAULTS).every((key) => {
+    if (key === 'charmCursorProfiles') {
+      const a = left[key], b = right[key];
+      return Object.keys(a).length === Object.keys(b).length && Object.keys(a).every(id => b[id]
+        && ['u', 'v', 'radius'].every(field => a[id][field] === b[id][field]));
+    }
     if (typeof left[key] === 'number') return Math.abs(left[key] - right[key]) < 1e-9;
     return left[key] === right[key];
   });
@@ -214,23 +224,23 @@ export function detectPetSettingsPreset(settings) {
 export class PetSettingsDraft {
   constructor(settings) {
     this.snapshot = normalizePetSettings(settings);
-    this.draft = { ...this.snapshot };
+    this.draft = normalizePetSettings(this.snapshot);
   }
 
   get dirty() { return !settingsEqual(this.snapshot, this.draft); }
 
   update(settings) {
     this.draft = normalizePetSettings(settings);
-    return { ...this.draft };
+    return normalizePetSettings(this.draft);
   }
 
   commit() {
-    this.snapshot = { ...this.draft };
-    return { ...this.snapshot };
+    this.snapshot = normalizePetSettings(this.draft);
+    return normalizePetSettings(this.snapshot);
   }
 
   cancel() {
-    this.draft = { ...this.snapshot };
-    return { ...this.draft };
+    this.draft = normalizePetSettings(this.snapshot);
+    return normalizePetSettings(this.draft);
   }
 }

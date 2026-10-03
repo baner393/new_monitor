@@ -125,14 +125,14 @@ export function buildFoilAssets(skinFrame, grip = { x: 0.5, y: 0.12 }) {
       let c = [0, 0, 0];
       let reflection = 0;
       // 3 道微弯彩虹条纹（发光）
-      for (const [strip, width] of [[0.22, 0.05], [0.5, 0.032], [0.78, 0.055]]) {
+      for (const [strip, width] of [[0.22, 0.075], [0.5, 0.055], [0.78, 0.08]]) {
         const coord = x / S * 0.7 + y / SH * 0.5 + Math.sin(y / SH * 6.28 + strip * 9) * 0.04;
         const dist = Math.abs(((coord % 1) + 1) % 1 - strip);
         const dd = Math.min(dist, 1 - dist);
         if (dd < width) {
           const k = 1 - dd / width;
           c = rainbow(strip * 1.7);
-          reflection = Math.max(reflection, k * k * 0.65);
+          reflection = Math.max(reflection, k * k * 0.9);
         }
       }
       // 只保留轻微的亮部金色反光，不增加不透明底色。
@@ -153,18 +153,18 @@ export function buildFoilAssets(skinFrame, grip = { x: 0.5, y: 0.12 }) {
   const band = makeCanvas(bandW, bandH);
   const bandCtx = band.getContext('2d');
   const bg = bandCtx.createLinearGradient(0, 0, bandW, bandH);
-  bg.addColorStop(0.30, 'rgba(255,120,200,0)');
-  bg.addColorStop(0.44, 'rgba(170,110,255,0.6)');
-  bg.addColorStop(0.52, 'rgba(90,220,255,0.6)');
-  bg.addColorStop(0.62, 'rgba(255,215,120,0.45)');
-  bg.addColorStop(0.72, 'rgba(255,255,255,0)');
+  bg.addColorStop(0.24, 'rgba(255,40,165,0)');
+  bg.addColorStop(0.39, 'rgba(205,35,255,0.88)');
+  bg.addColorStop(0.51, 'rgba(35,205,255,0.9)');
+  bg.addColorStop(0.64, 'rgba(255,190,35,0.78)');
+  bg.addColorStop(0.78, 'rgba(255,255,255,0)');
   bandCtx.fillStyle = bg;
   bandCtx.fillRect(0, 0, bandW, bandH);
   // 白闪窄条
   const wg = bandCtx.createLinearGradient(0, 0, bandW, bandH);
-  wg.addColorStop(0.56, 'rgba(255,255,255,0)');
-  wg.addColorStop(0.6, 'rgba(255,255,255,0.75)');
-  wg.addColorStop(0.64, 'rgba(255,255,255,0)');
+  wg.addColorStop(0.51, 'rgba(255,255,255,0)');
+  wg.addColorStop(0.58, 'rgba(255,255,255,0.92)');
+  wg.addColorStop(0.65, 'rgba(255,255,255,0)');
   bandCtx.fillStyle = wg;
   bandCtx.fillRect(0, 0, bandW, bandH);
 
@@ -243,7 +243,7 @@ export function buildSlabTexture(skinFrame) {
 export function buildSlabGeometry(texture, grip = { x: 0.5, y: 0.12 }) {
   const { width, height } = texture;
   const pixels = texture.getContext('2d').getImageData(0, 0, width, height).data;
-  const vertices = [], uvs = [], indices = [];
+  const vertices = [], uvs = [], indices = [], depthCoordinates = [], runs = [], rows = new Map();
   // 资产用 nearest 放大三倍，同一个源像素行只需一张四边形。
   for (let y = 0; y < height; y += FOIL_SCALE) {
     for (let x = 0; x < width;) {
@@ -251,6 +251,10 @@ export function buildSlabGeometry(texture, grip = { x: 0.5, y: 0.12 }) {
       const left = x;
       while (x < width && pixels[(y * width + x) * 4 + 3] > 25) x++;
       const right = x, bottom = Math.min(height, y + FOIL_SCALE);
+      const run = { left, right, y };
+      runs.push(run);
+      if (!rows.has(y)) rows.set(y, []);
+      rows.get(y).push(run);
       const index = vertices.length / 2;
       vertices.push(left - grip.x * width, y - grip.y * height,
         right - grip.x * width, y - grip.y * height,
@@ -261,7 +265,29 @@ export function buildSlabGeometry(texture, grip = { x: 0.5, y: 0.12 }) {
       uvs.push(u, (y + 0.5) / height, u, (y + 0.5) / height,
         u, (bottom - 0.5) / height, u, (bottom - 0.5) / height);
       indices.push(index, index + 1, index + 2, index, index + 2, index + 3);
+      depthCoordinates.push(0, 1, 1, 0);
     }
   }
-  return { vertices: new Float32Array(vertices), uvs: new Float32Array(uvs), indices: new Uint32Array(indices) };
+  const slopes = [];
+  for (const run of runs) {
+    const center = (run.left + run.right) / 2;
+    const nearest = (y) => (rows.get(y) || []).reduce((best, candidate) => {
+      if (candidate.right < run.left || candidate.left > run.right) return best;
+      const distance = Math.abs((candidate.left + candidate.right) / 2 - center);
+      return !best || distance < best.distance ? { run: candidate, distance } : best;
+    }, null)?.run;
+    const boundarySlope = (y) => {
+      // 跨三个源行估算法线，并在共享行边界插值；像素台阶不应变成梳齿高光。
+      const previous = nearest(Math.max(0, y - FOIL_SCALE * 2)) || run;
+      const next = nearest(Math.min(height - FOIL_SCALE, y + FOIL_SCALE)) || run;
+      const dy = next.y - previous.y;
+      return [dy ? (next.left - previous.left) / dy : 0,
+        dy ? (next.right - previous.right) / dy : 0];
+    };
+    const top = boundarySlope(run.y), bottom = boundarySlope(run.y + FOIL_SCALE);
+    slopes.push(...top, ...top, ...bottom, ...bottom);
+  }
+  return { vertices: new Float32Array(vertices), uvs: new Float32Array(uvs),
+    indices: new Uint32Array(indices), slopes: new Float32Array(slopes),
+    depthCoordinates: new Float32Array(depthCoordinates) };
 }

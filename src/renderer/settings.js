@@ -112,10 +112,12 @@ export class SettingsPanel {
     body.append(this.workspace);
 
     const preview = element('aside', 'pet-settings-preview');
+    this.previewAside = preview;
     const previewHead = element('div', 'pet-settings-preview-head');
     const previewCopy = element('div');
     previewCopy.append(element('div', 'pet-settings-kicker', 'LIVE PHYSICS'));
-    previewCopy.append(element('strong', '', '手感预览'));
+    this.previewTitle = element('strong', '', '手感预览');
+    previewCopy.append(this.previewTitle);
     previewHead.append(previewCopy);
     this.replayButton = element('button', 'pet-settings-replay', '重新测试');
     this.replayButton.type = 'button';
@@ -138,6 +140,9 @@ export class SettingsPanel {
       }
     });
     preview.append(this.canvas);
+    this.charmPreviewHost = element('div', 'pet-settings-charm-preview');
+    this.charmPreviewHost.hidden = true;
+    preview.append(this.charmPreviewHost);
     this.previewHint = element('p', 'pet-settings-preview-hint', '拖动桌宠并松手，立即感受当前参数');
     preview.append(this.previewHint);
     body.append(preview);
@@ -179,6 +184,15 @@ export class SettingsPanel {
     this._previewImage.decoding = 'async';
     this._previewImage.src = new URL('./assets/sprites/idle.png', window.location.href).href;
     this._previewImage.addEventListener('load', () => this._drawPreview());
+    this._charmPreviewLoading = import('./charm-preview.js').then(({ CharmPreview }) => {
+    this._charmPreview = new CharmPreview(this.charmPreviewHost, (key, profile) => {
+      this._applyValues({ ...this._values, charmCursorProfiles: { ...this._values.charmCursorProfiles, [key]: profile } }, false);
+      if (this.holeRadius) this.holeRadius.value = String(profile.radius);
+    }, text => { if (this._section === 'charm') this.previewHint.textContent = text; });
+    this._charmPreview.setPet(this._previewImage.src, this._previewGrip).catch(() => {});
+    this._charmPreview.setValues(this._values);
+    if (this._section === 'charm') this._renderSection();
+    });
     this._renderSection();
     this._syncUi();
   }
@@ -204,6 +218,71 @@ export class SettingsPanel {
 
     if (section.id === 'quick') this._renderQuickControls();
     else this._renderPreciseControls(section.id);
+    const charm = section.id === 'charm';
+    this.previewAside.dataset.charm = String(charm);
+    this.panel.dataset.charm = String(charm);
+    this.canvas.hidden = charm;
+    this.charmPreviewHost.hidden = !charm;
+    this.previewTitle.textContent = charm ? '光标穿孔与挂饰预览' : '手感预览';
+    if (!charm) this.previewHint.textContent = '拖动桌宠并松手，立即感受当前参数';
+    else this._charmPreview?.setValues(this._values);
+    if (charm && this._charmPreview) this._renderCursorControls();
+  }
+
+  _renderCursorControls() {
+    const block = element('section', 'pet-settings-block');
+    block.append(element('div', 'pet-settings-block-label', '光标穿孔'));
+    const select = element('select', 'pet-settings-hotkey-button');
+    select.setAttribute('aria-label', '选择光标图案');
+    for (const role of this._cursorTheme?.roles || []) {
+      const option = element('option', '', role.label || role.role);
+      option.value = role.role; select.append(option);
+    }
+    select.value = this._cursorRole || '';
+    select.addEventListener('change', () => {
+      this._cursorRole = select.value;
+      this._charmPreview.setRole(this._cursorTheme.roles.find(role => role.role === select.value));
+    });
+    block.append(select);
+    const reload = element('button', 'pet-settings-replay', '重新读取光标主题');
+    reload.type = 'button'; reload.addEventListener('click', () => this._loadCursorTheme()); block.append(reload);
+    const modes = element('div', 'pet-settings-cursor-modes');
+    for (const [mode, label] of [['edit', '放大编辑孔位'], ['play', '试甩挂饰']]) {
+      const button = element('button', 'pet-settings-replay', label);
+      button.type = 'button'; button.setAttribute('aria-pressed', String(this._charmPreview.mode === mode));
+      button.addEventListener('click', () => {
+        this._charmPreview.setMode(mode);
+        for (const other of modes.children) other.setAttribute('aria-pressed', String(other === button));
+      }); modes.append(button);
+    }
+    block.append(modes);
+    const label = element('label', 'pet-settings-control-copy');
+    label.append(element('strong', '', '孔径（随光标大小同比缩放）'));
+    this.holeRadius = element('input'); this.holeRadius.type = 'range';
+    this.holeRadius.min = '0.025'; this.holeRadius.max = '0.2'; this.holeRadius.step = '0.005';
+    this.holeRadius.value = String(this._charmPreview.profile?.radius || 0.04);
+    this.holeRadius.addEventListener('input', () => {
+      if (!this._charmPreview.setRadius(Number(this.holeRadius.value))) this.holeRadius.value = String(this._charmPreview.profile?.radius || 0.04);
+    }); label.append(this.holeRadius); block.append(label);
+    block.append(element('p', 'pet-settings-preview-hint', '点击右侧放大的光标设置孔位。透明区、点击尖端和动画帧间变化区不可穿孔；应用保存，取消恢复。'));
+    this.workspace.insertBefore(block, this.workspace.children[1] || null);
+  }
+
+  async _loadCursorTheme() {
+    if (!this.charmPreviewHost) return;
+    const load = this._cursorThemeLoad = (this._cursorThemeLoad || 0) + 1;
+    await this._charmPreviewLoading;
+    try {
+      const theme = await window.electronAPI?.cursorMount?.getTheme?.();
+      if (load !== this._cursorThemeLoad) return;
+      this._cursorTheme = theme;
+      this._cursorRole = this._cursorTheme?.roles?.some(role => role.role === this._cursorRole)
+        ? this._cursorRole : this._cursorTheme?.activeRole || this._cursorTheme?.roles?.[0]?.role;
+      const role = this._cursorTheme?.roles?.find(item => item.role === this._cursorRole);
+      if (role) await this._charmPreview.setRole(role);
+      else this.previewHint.textContent = '当前系统无法读取光标主题';
+      if (load === this._cursorThemeLoad && this._section === 'charm') this._renderSection();
+    } catch { this.previewHint.textContent = '读取主题失败，请重试'; }
   }
 
   _renderQuickControls() {
@@ -473,6 +552,7 @@ export class SettingsPanel {
   }
 
   _syncPreviewSettings(reset = false) {
+    this._charmPreview?.setValues(this._values);
     const physics = this._previewPhysics;
     physics.gravity = this._values.gravity;
     physics.damping = this._values.damping;
@@ -509,6 +589,7 @@ export class SettingsPanel {
   }
 
   _resetPreview(announce = false) {
+    if (this._section === 'charm') { this._charmPreview?.reset(); return; }
     const { width, height } = this._previewSize();
     const physics = this._previewPhysics;
     const ropeLength = scalePreviewRopeLength(this._values.ropeLength, height);
@@ -563,13 +644,15 @@ export class SettingsPanel {
       if (this._open && !this._previewDragging && !this._reducedMotion) {
         this._previewPhysics.updatePulleyPhysics(dt);
       }
-      if (this._open) this._drawPreview();
+      if (this._open && this._section === 'charm') this._charmPreview?.update(this._reducedMotion ? 0 : dt, now);
+      else if (this._open) this._drawPreview();
       this._previewFrame = requestAnimationFrame(tick);
     };
     this._previewFrame = requestAnimationFrame(tick);
   }
 
   _drawPreview() {
+    if (this._section === 'charm') return;
     if (!this.canvas?.isConnected) return;
     const { width, height } = this._previewSize();
     const dpr = Math.max(1, window.devicePixelRatio || 1);
@@ -629,6 +712,7 @@ export class SettingsPanel {
   }
 
   open() {
+    this._loadCursorTheme();
     clearTimeout(this._closeTimer);
     this._originalValues = { ...this._values };
     this._draft = new PetSettingsDraft(this._values);
@@ -683,12 +767,14 @@ export class SettingsPanel {
     return x >= bounds.left && x <= bounds.right && y >= bounds.top && y <= bounds.bottom;
   }
 
-  setPreviewImage(source) {
+  setPreviewImage(source, grip) {
     const value = String(source || '').trim();
     if (!value) return;
     const url = new URL(value, window.location.href).href;
-    if (this._previewImage.src === url) return;
+    if (grip) this._previewGrip = { ...grip };
+    if (this._previewImage.src === url && !grip) return;
     this._previewImage.src = url;
+    this._charmPreview?.setPet(url, this._previewGrip).catch(() => {});
   }
 
   get isAnimating() { return this._animating; }

@@ -11,6 +11,7 @@
 
 import { VelocityTracker } from './velocity-tracker.js';
 import { clampCharmAnchor } from '../shared/anchor-model.js';
+import { charmRopeAttachment } from './ring-rope.js';
 
 // ────────────────────────────────────────────
 // 物理常量
@@ -350,6 +351,7 @@ class PhysicsEngine {
   // ──────────────────────────────────────────
   updateCharmStep(dt) {
     if (!this.charmMode || this.state !== 'IDLE') return undefined
+    if (this.charmMountAnchor) this.setCharmAnchor(this.charmMountAnchor, this.charmRingScale, this.charmRingGeometry)
     dt = Math.min(dt, 0.033)
     return this._stepTurtlePhysics(dt)
   }
@@ -358,8 +360,14 @@ class PhysicsEngine {
   // 挂饰模式：光标驱动滑轮（锚点）。畸形采样整点丢弃并返回 false，
   // 保持上一帧锚点——绝不让 NaN 进 pulley（NaN 会经绳弹簧污染乌龟）。
   // ──────────────────────────────────────────
-  setCharmAnchor(cursor) {
-    const clamped = clampCharmAnchor(cursor, this.windowWidth, this.windowHeight)
+  setCharmAnchor(cursor, ringScale = null, ringGeometry = null) {
+    if (!Number.isFinite(cursor?.x) || !Number.isFinite(cursor?.y)) return false
+    const nativeMount = Number.isFinite(ringScale) && ringScale > 0
+    this.charmMountAnchor = nativeMount ? { ...cursor } : null
+    this.charmRingScale = ringScale
+    this.charmRingGeometry = ringGeometry
+    const clamped = nativeMount ? charmRopeAttachment(cursor, this.turtle, ringScale, ringGeometry)
+      : clampCharmAnchor(cursor, this.windowWidth, this.windowHeight)
     if (!clamped) return false
     this.pulley.x = clamped.x
     this.pulley.y = clamped.y

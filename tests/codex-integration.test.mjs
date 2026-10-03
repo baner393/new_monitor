@@ -419,6 +419,20 @@ test('running and aborted rollouts map to quiet running and blocked unread state
   assert.equal(aborted.unread.canReply, false);
 });
 
+test('a Codex rollout remains running when a long task has no recent log rows', () => {
+  const startedAtMs = Date.now() - 6 * 60 * 1000;
+  const parsed = parseCodexRollout(rollout([
+    { timestamp: new Date(startedAtMs).toISOString(), type: 'session_meta', payload: { id: 'long-running-thread', cwd: 'C:\\work\\app' } },
+    { timestamp: new Date(startedAtMs).toISOString(), type: 'event_msg', payload: { type: 'task_started', turn_id: 'long-running-turn' } },
+  ]), {
+    modifiedAtMs: startedAtMs,
+    nowMs: Date.now(),
+    enabledAtMs: startedAtMs - 1000,
+  });
+
+  assert.equal(parsed.task.activity, CODEX_ACTIVITY.RUNNING);
+});
+
 test('Codex rollout with an undated completion does not become unread from the file mtime', () => {
   const nowMs = Date.now();
   const undated = parseCodexRollout(rollout([
@@ -822,6 +836,347 @@ test('Codex monitor reuses unchanged files, reads only appended bytes and pagina
     assert.ok(older.messages.length > 0);
     assert.equal(latest.messages.at(-1).message, 'message-0');
     assert.equal([...older.messages, ...latest.messages].filter((message) => message.message === 'message-0').length, 2);
+  } finally {
+    monitor.stop();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('official lifecycle hooks correlate by session and turn and report a neutral stop', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'new-monitor-codex-hooks-'));
+  const sessions = path.join(root, 'sessions', '2026', '10', '02');
+  const userDataPath = path.join(root, 'user-data');
+  fs.mkdirSync(sessions, { recursive: true });
+  const startedAt = Date.now() - 10_000;
+  const completedAt = Date.now();
+  fs.writeFileSync(path.join(sessions, 'thread-hook.jsonl'), `${rollout([
+    { timestamp: new Date(startedAt).toISOString(), type: 'session_meta', payload: {
+      id: 'thread-hook', session_id: 'session-hook', cwd: root,
+    } },
+    { timestamp: new Date(startedAt).toISOString(), type: 'event_msg', payload: {
+      type: 'task_started', turn_id: 'turn-hook',
+    } },
+  ])}\n`);
+  const monitor = new CodexMonitor({
+    config: {
+      version: 4, enabled: true, enabledAtMs: startedAt - 1000,
+      homeMode: 'manual', manualHome: root,
+    },
+    userDataPath,
+    runtimeSessionsReader: async () => [],
+    hookEventsReader: async () => [{
+      session_id: 'session-hook',
+      turn_id: 'turn-hook',
+      hook_event_name: 'Stop',
+      timestamp: new Date(completedAt).toISOString(),
+    }],
+  });
+  try {
+    await monitor.scan(true);
+    const snapshot = monitor.getSnapshot();
+    assert.equal(snapshot.tasks.find((task) => task.id === 'thread-hook')?.activity, CODEX_ACTIVITY.SILENT);
+    assert.equal(snapshot.unread[0]?.activity, CODEX_ACTIVITY.READY);
+    assert.match(snapshot.unread[0]?.message || '', /没有提供可判定成功或失败/);
+  } finally {
+    monitor.stop();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('Stop hook does not duplicate a rollout terminal result for the same turn', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'new-monitor-codex-hook-dedup-'));
+  const sessions = path.join(root, 'sessions', '2026', '10', '03');
+  fs.mkdirSync(sessions, { recursive: true });
+  const startedAt = Date.now() - 5000;
+  const completedAt = Date.now() - 1000;
+  const stoppedAt = Date.now();
+  fs.writeFileSync(path.join(sessions, 'thread-hook-dedup.jsonl'), `${rollout([
+    { timestamp: new Date(startedAt).toISOString(), type: 'session_meta', payload: {
+      id: 'thread-hook-dedup', session_id: 'session-hook-dedup', cwd: root,
+    } },
+    { timestamp: new Date(startedAt).toISOString(), type: 'event_msg', payload: {
+      type: 'task_started', turn_id: 'turn-hook-dedup',
+    } },
+    { timestamp: new Date(completedAt).toISOString(), type: 'event_msg', payload: {
+      type: 'task_complete', turn_id: 'turn-hook-dedup', completed_at: completedAt,
+    } },
+  ])}\n`);
+  const monitor = new CodexMonitor({
+    config: {
+      version: 4, enabled: true, enabledAtMs: startedAt - 1000,
+      homeMode: 'manual', manualHome: root,
+    },
+    userDataPath: path.join(root, 'user-data'),
+    runtimeSessionsReader: async () => [],
+    hookEventsReader: async () => [{
+      session_id: 'session-hook-dedup',
+      turn_id: 'turn-hook-dedup',
+      hook_event_name: 'Stop',
+      timestamp: new Date(stoppedAt).toISOString(),
+    }],
+  });
+  try {
+    await monitor.scan(true);
+    const snapshot = monitor.getSnapshot();
+    assert.equal(snapshot.tasks.find((task) => task.id === 'thread-hook-dedup')?.activity, CODEX_ACTIVITY.SILENT);
+    assert.equal(snapshot.unread.length, 1);
+    assert.notEqual(snapshot.unread[0]?.kind, 'turn-ended');
+  } finally {
+    monitor.stop();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('tool activity clears permission waits, late tool hooks cannot revive a stopped turn, and a new turn runs', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'new-monitor-codex-hook-permission-'));
+  const sessions = path.join(root, 'sessions', '2026', '10', '02');
+  fs.mkdirSync(sessions, { recursive: true });
+  const startedAt = Date.now() - 10_000;
+  const rolloutPath = path.join(sessions, 'thread-permission.jsonl');
+  fs.writeFileSync(rolloutPath, `${rollout([
+    { timestamp: new Date(startedAt).toISOString(), type: 'session_meta', payload: {
+      id: 'thread-permission', session_id: 'session-permission', cwd: root,
+    } },
+    { timestamp: new Date(startedAt).toISOString(), type: 'event_msg', payload: {
+      type: 'task_started', turn_id: 'turn-permission',
+    } },
+  ])}\n`);
+  const permissionAt = Date.now() - 7000;
+  const toolStartedAt = Date.now() - 6000;
+  const interruptAt = Date.now() - 5000;
+  const stopAt = Date.now() - 4500;
+  const newTurnAt = Date.now() - 4000;
+  const delayedToolAt = Date.now() - 3000;
+  let events = [{
+    session_id: 'session-permission',
+    turn_id: 'turn-permission',
+    hook_event_name: 'PermissionRequest',
+    timestamp: new Date(permissionAt).toISOString(),
+  }];
+  const monitor = new CodexMonitor({
+    config: {
+      version: 4, enabled: true, enabledAtMs: startedAt - 1000,
+      homeMode: 'manual', manualHome: root,
+    },
+    userDataPath: path.join(root, 'user-data'),
+    runtimeSessionsReader: async () => [],
+    hookEventsReader: async () => events,
+  });
+  try {
+    await monitor.scan(true);
+    assert.equal(monitor.getSnapshot().tasks.find((task) => task.id === 'thread-permission')?.activity, CODEX_ACTIVITY.NEEDS_INPUT);
+    assert.equal(monitor.getSnapshot().unread.length, 1);
+
+    fs.appendFileSync(rolloutPath, `${rollout([{
+      timestamp: new Date(Date.now() - 6500).toISOString(),
+      type: 'turn_context',
+      payload: { cwd: root, model: 'test-model' },
+    }])}\n`);
+    await monitor.scan(true);
+    assert.equal(monitor.getSnapshot().tasks.find((task) => task.id === 'thread-permission')?.activity, CODEX_ACTIVITY.NEEDS_INPUT);
+    assert.equal(monitor.getSnapshot().unread.length, 1);
+
+    const tiedPreToolUse = {
+      session_id: 'session-permission',
+      turn_id: 'turn-permission',
+      hook_event_name: 'PreToolUse',
+      timestamp: new Date(permissionAt).toISOString(),
+      tool_name: 'Bash',
+    };
+    events = [...events, tiedPreToolUse];
+    await monitor.scan(true);
+    assert.equal(monitor.getSnapshot().tasks.find((task) => task.id === 'thread-permission')?.activity, CODEX_ACTIVITY.NEEDS_INPUT);
+    events.reverse();
+    await monitor.scan(true);
+    assert.equal(monitor.getSnapshot().tasks.find((task) => task.id === 'thread-permission')?.activity, CODEX_ACTIVITY.NEEDS_INPUT);
+    assert.equal(monitor.getSnapshot().unread.length, 1);
+
+    events = [...events, {
+      session_id: 'session-permission',
+      turn_id: 'turn-permission',
+      hook_event_name: 'PreToolUse',
+      timestamp: new Date(toolStartedAt).toISOString(),
+      tool_name: 'Bash',
+      tool_input: { command: 'never persist this' },
+    }];
+    await monitor.scan(true);
+    assert.equal(monitor.getSnapshot().tasks.find((task) => task.id === 'thread-permission')?.activity, CODEX_ACTIVITY.RUNNING);
+    assert.equal(monitor.getSnapshot().unread.length, 0);
+
+    const tiedPermissionAndPostToolUse = [
+      {
+        session_id: 'session-permission',
+        turn_id: 'turn-permission',
+        hook_event_name: 'PermissionRequest',
+        timestamp: new Date(toolStartedAt).toISOString(),
+      },
+      {
+        session_id: 'session-permission',
+        turn_id: 'turn-permission',
+        hook_event_name: 'PostToolUse',
+        timestamp: new Date(toolStartedAt).toISOString(),
+      },
+    ];
+    events = [...events, ...tiedPermissionAndPostToolUse];
+    await monitor.scan(true);
+    assert.equal(monitor.getSnapshot().tasks.find((task) => task.id === 'thread-permission')?.activity, CODEX_ACTIVITY.RUNNING);
+    events.reverse();
+    await monitor.scan(true);
+    assert.equal(monitor.getSnapshot().tasks.find((task) => task.id === 'thread-permission')?.activity, CODEX_ACTIVITY.RUNNING);
+
+    events = [...events, {
+      session_id: 'session-permission',
+      turn_id: 'turn-permission',
+      hook_event_name: 'Interrupt',
+      timestamp: new Date(interruptAt).toISOString(),
+    }, {
+      session_id: 'session-permission',
+      turn_id: 'turn-permission',
+      hook_event_name: 'Stop',
+      timestamp: new Date(stopAt).toISOString(),
+    }, {
+      session_id: 'session-permission',
+      turn_id: 'turn-permission',
+      hook_event_name: 'PostToolUse',
+      timestamp: new Date(delayedToolAt).toISOString(),
+      tool_name: 'Bash',
+      tool_output: 'never persist this',
+    }];
+    await monitor.scan(true);
+    assert.equal(monitor.getSnapshot().tasks.find((task) => task.id === 'thread-permission')?.activity, CODEX_ACTIVITY.BLOCKED);
+    assert.equal(monitor.getSnapshot().unread.length, 1);
+    assert.equal(monitor.getSnapshot().unread[0]?.kind, 'interrupted');
+
+    events = [...events, {
+      session_id: 'session-permission',
+      turn_id: 'turn-next',
+      hook_event_name: 'UserPromptSubmit',
+      timestamp: new Date(newTurnAt).toISOString(),
+    }];
+    await monitor.scan(true);
+    assert.equal(monitor.getSnapshot().tasks.find((task) => task.id === 'thread-permission')?.activity, CODEX_ACTIVITY.RUNNING);
+    assert.equal(monitor.getSnapshot().unread.length, 0);
+  } finally {
+    monitor.stop();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('new prompt hook supersedes an older rollout completion and resumes running state', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'new-monitor-codex-prompt-hook-'));
+  const sessions = path.join(root, 'sessions', '2026', '10', '02');
+  fs.mkdirSync(sessions, { recursive: true });
+  const oldFinish = Date.now() - 60_000;
+  const submittedAt = Date.now();
+  fs.writeFileSync(path.join(sessions, 'thread-prompt.jsonl'), `${rollout([
+    { timestamp: new Date(oldFinish - 10_000).toISOString(), type: 'session_meta', payload: {
+      id: 'thread-prompt', session_id: 'session-prompt', cwd: root,
+    } },
+    { timestamp: new Date(oldFinish - 10_000).toISOString(), type: 'event_msg', payload: {
+      type: 'task_started', turn_id: 'turn-old',
+    } },
+    { timestamp: new Date(oldFinish).toISOString(), type: 'event_msg', payload: {
+      type: 'task_complete', turn_id: 'turn-old', completed_at: oldFinish,
+    } },
+  ])}\n`);
+  const monitor = new CodexMonitor({
+    config: {
+      version: 4, enabled: true, enabledAtMs: submittedAt - 1000,
+      homeMode: 'manual', manualHome: root,
+    },
+    userDataPath: path.join(root, 'user-data'),
+    runtimeSessionsReader: async () => [],
+    hookEventsReader: async () => [{
+      session_id: 'session-prompt',
+      turn_id: 'turn-new',
+      hook_event_name: 'UserPromptSubmit',
+      timestamp: new Date(submittedAt).toISOString(),
+    }],
+  });
+  try {
+    await monitor.scan(true);
+    const snapshot = monitor.getSnapshot();
+    assert.equal(snapshot.tasks.find((task) => task.id === 'thread-prompt')?.activity, CODEX_ACTIVITY.RUNNING);
+    assert.equal(snapshot.unread.some((event) => event.turnId === 'turn-old'), false);
+  } finally {
+    monitor.stop();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('Codex monitor installs its global hooks on enable and removes only them on disable', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'new-monitor-codex-hook-config-'));
+  const userDataPath = path.join(root, 'user-data');
+  fs.mkdirSync(path.join(root, 'sessions'), { recursive: true });
+  const monitor = new CodexMonitor({
+    config: {
+      version: 4,
+      enabled: true,
+      enabledAtMs: Date.now() - 1000,
+      managedReplies: false,
+      homeMode: 'manual',
+      manualHome: root,
+    },
+    userDataPath,
+    hookScriptPath: path.resolve('src/main/codex-hooks.mjs'),
+    nodeExecutablePath: process.execPath,
+    runtimeSessionsReader: async () => [],
+  });
+  try {
+    monitor.start();
+    await monitor.hookSyncPromise;
+    const hooksPath = path.join(root, 'hooks.json');
+    const installed = JSON.parse(fs.readFileSync(hooksPath, 'utf8'));
+    assert.ok(installed.hooks.UserPromptSubmit.length);
+    assert.ok(installed.hooks.PreToolUse.length);
+    assert.ok(installed.hooks.PostToolUse.length);
+    assert.ok(installed.hooks.Stop.length);
+
+    monitor.updateConfig({ enabled: false });
+    await monitor.hookSyncPromise;
+    const removed = JSON.parse(fs.readFileSync(hooksPath, 'utf8'));
+    assert.deepEqual(removed.hooks, {});
+  } finally {
+    monitor.stop();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('Codex state database restores a quiet rollout outside the recent-file scan window', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'new-monitor-codex-state-discovery-'));
+  const sessionsRoot = path.join(root, 'sessions', '2026', '10', '02');
+  fs.mkdirSync(sessionsRoot, { recursive: true });
+  const nowMs = Date.now();
+  let targetPath = '';
+  for (let index = 0; index <= 120; index += 1) {
+    const rolloutPath = path.join(sessionsRoot, `rollout-${index}.jsonl`);
+    fs.writeFileSync(rolloutPath, `${rollout([
+      { timestamp: new Date(nowMs - index * 10_000).toISOString(), type: 'session_meta', payload: {
+        id: `thread-${index}`, session_id: `session-${index}`, cwd: root,
+      } },
+      ...(index === 120 ? [{
+        timestamp: new Date(nowMs - index * 10_000).toISOString(),
+        type: 'event_msg',
+        payload: { type: 'task_started', turn_id: 'quiet-old-turn' },
+      }] : []),
+    ])}\n`);
+    const fileTime = new Date(index === 120 ? nowMs - 48 * 60 * 60 * 1000 : nowMs - index * 10_000);
+    fs.utimesSync(rolloutPath, fileTime, fileTime);
+    if (index === 120) targetPath = rolloutPath;
+  }
+  const monitor = new CodexMonitor({
+    config: { version: 4, enabled: true, homeMode: 'manual', manualHome: root },
+    runtimeSessionsReader: async () => [{
+      id: 'thread-120',
+      rolloutPath: targetPath,
+      updatedAtMs: nowMs,
+    }],
+    hookEventsReader: async () => [],
+  });
+  try {
+    await monitor.scan(true);
+    const restored = monitor.getSnapshot().tasks.find((task) => task.id === 'thread-120');
+    assert.equal(restored?.activity, CODEX_ACTIVITY.RUNNING);
   } finally {
     monitor.stop();
     fs.rmSync(root, { recursive: true, force: true });

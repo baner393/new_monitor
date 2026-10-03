@@ -27,6 +27,7 @@ pet_moods:
   disconnected: idle
 view_invariants:
   - A manually opened detail remains open across task snapshots.
+  - Opening a task immediately marks every unread event for that thread read.
   - A new notification queues while another task detail is being viewed or edited.
   - Reply and approval keep the detail view open.
   - Only close or back explicitly dismisses a user-opened detail.
@@ -59,8 +60,45 @@ history_rules:
   - Recent rollout discovery is bounded while explicitly selected task files are always retained.
   - Large rollout files are tailed instead of read in full during the initial scan.
   - App Server history hydrates a detail when the local rollout history is truncated.
+lifecycle_signal_rules:
+  status: Confirmed
+  evidence:
+    - src/main/codex-hooks.mjs
+    - src/main/codex-state-db.mjs
+    - src/main/codex-monitor.js
+    - tests/codex-hooks.test.mjs
+    - tests/codex-state-db.test.mjs
+    - tests/codex-integration.test.mjs
+  hook_events:
+    configured: [UserPromptSubmit, PreToolUse, PostToolUse, PermissionRequest, Interrupt, Stop]
+    synchronous: [UserPromptSubmit, PermissionRequest]
+    asynchronous: [PreToolUse, PostToolUse, Interrupt, Stop]
+    retained_fields: [session_id, turn_id, hook_event_name, timestamp]
+    discarded_fields: [cwd, prompt, transcript_path, stop_hook_active, tool_name, tool_input, tool_output]
+    event_storage: Electron userData/codex-hook-events; retain the latest UserPromptSubmit epoch, latest current-turn event, and current-turn terminal evidence
+  transitions:
+    UserPromptSubmit: running
+    PreToolUse: running; clears older permission wait and unread lifecycle signals
+    PostToolUse: running; clears older permission wait and unread lifecycle signals
+    PermissionRequest: needsInput
+    Stop: silent with a neutral ready notification unless rollout already has a terminal result for this turn; never asserts success or failure
+    Interrupt: blocked and higher priority than Stop for the same turn; late same-turn tool hooks cannot override it
+  correlation:
+    - Match lifecycle events to rollout sessions by session_id, then compare turn_id and lifecycle timestamps.
+    - UserPromptSubmit and PermissionRequest are synchronous; a recorded UserPromptSubmit turn id defines the current event epoch.
+    - Keep the current prompt epoch and latest current-turn event; old-turn events that start late cannot replace a newer prompt.
+    - Keep the highest-priority Stop/Interrupt for the current turn beside its latest event; Interrupt outranks Stop, and terminal events outrank late same-turn tool hooks.
+    - A newer UserPromptSubmit turn replaces terminal signals from the prior turn.
+    - Rollout lifecycle timestamps reject stale hook events; a same-turn Stop/Interrupt outranks a delayed tool hook.
+    - Unrelated later rollout rows do not clear PermissionRequest; a newer tool/prompt hook or terminal rollout event must resolve it.
+    - Codex state_5.sqlite is opened read-only and supplies candidate rollout paths and recency for discovery only.
+    - SQLite recency does not establish whether a task is running, completed, interrupted, or successful.
+  configuration:
+    - Install exact Turtle Monitor command handlers in Codex hooks.json only while Codex integration is enabled.
+    - Preserve unrelated user handlers and remove only exact matching Turtle Monitor commands.
+    - Show installation errors and remind users to review/trust the handler if Codex requests it.
 motion_rules:
-  - running injects alternating impulses into the existing pendulum through a normalized grip point
+  - running injects alternating impulses into the classic pendulum or charm turtle horizontal velocity through the active movement channel
   - blocked lengthens the rope, drops and rebounds, then climbs through the same grip joint
   - dragging or opening an interaction surface pauses active force
   - reduced-motion keeps a static pixel state marker

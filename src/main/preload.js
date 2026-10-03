@@ -25,6 +25,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
   /** Return the current cursor position relative to this window. */
   getCursorPosition: () => ipcRenderer.invoke('cursor-position-get'),
 
+  /** Real temporary Windows system cursor copies; profiles are saved through settings. */
+  cursorMount: {
+    getTheme: () => ipcRenderer.invoke('cursor-mount-theme-get'),
+    getState: () => ipcRenderer.invoke('cursor-mount-state-get'),
+    onState: (callback) => {
+      const listener = (_event, state) => callback(state);
+      ipcRenderer.on('cursor-mount-state', listener);
+      return () => ipcRenderer.removeListener('cursor-mount-state', listener);
+    },
+    onTheme: (callback) => {
+      const listener = (_event, theme) => callback(theme);
+      ipcRenderer.on('cursor-mount-theme', listener);
+      return () => ipcRenderer.removeListener('cursor-mount-theme', listener);
+    },
+  },
+
   /** Subscribe to unified CPU / memory / disk / network / GPU snapshots. */
   onSystemData: (callback) => {
     const listener = (_event, data) => callback(data);

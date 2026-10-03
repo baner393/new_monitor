@@ -10,7 +10,7 @@ Electron main (src/main/index.js)
 ├─ tiered Windows/GPU/hardware sampling
 ├─ persistent settings and edition-gated windows
 ├─ HardwareSensorHost client/elevation
-└─ CodexMonitor: incremental logs + direct App Server / foreground-verified client submit bridge
+└─ CodexMonitor: lifecycle Hooks + rollout JSONL + read-only SQLite discovery + direct App Server / foreground-verified client submit bridge
           │
           ▼ preload IPC (src/main/preload.js)
 Renderer (src/renderer/main.js)
@@ -44,6 +44,12 @@ Status: Confirmed in the uncommitted working tree. Evidence: `src/main/claude-cl
 Claude session preferences migrate from `custom` to `adaptive` and always retain an independent bounded effort. The shared conversation controls render the effort as a discrete slider for Codex and Claude; Claude keeps its thinking mode alongside it, while Codex has an explicit follow-configuration choice. The peak effort tier has a contained visual emphasis that respects reduced-motion preferences.
 
 Claude desktop-compatible sending resolves the newest usable VS Code-family IDE lock even when workspace matching is stale, focuses a UI Automation `Document` or `Edit` composer in the verified client process, then pastes and submits with Enter/Ctrl+Enter fallback. Session-owner metadata retains titles even after its process exits, while a task is treated as externally running only when the owner is alive with an active status. Monitor-managed Claude turns and pending approvals expose the provider-neutral stop action through Claude IPC.
+
+## Codex Desktop live activity signals
+
+Status: Confirmed in the uncommitted working tree. Evidence: `.project-memory/contracts/codex-state-machine.yaml`, `src/main/codex-hooks.mjs`, `src/main/codex-state-db.mjs`, `src/main/codex-monitor.js`, and the targeted Codex tests.
+
+Codex lifecycle Hooks report prompt, tool, permission, interrupt, and stop events. Prompt and permission boundary Hooks write synchronously; high-frequency tool events remain asynchronous. The local event writer stores only session/turn identifiers, event name, and Hook-start time. Same-millisecond events have a deterministic lifecycle order, so a completed `PostToolUse` resolves a permission wait regardless of file enumeration order. `state_5.sqlite` is read-only and supplies rollout discovery/prioritization only; recency does not establish active or completed status. The latest prompt turn id filters delayed events from old turns; same-turn Interrupt outranks Stop, and terminal Hook evidence outranks delayed tool events. Hook review/trust remains a Codex-side step. Abrupt exits without terminal Hook or rollout evidence remain ambiguous; no idle timeout is used to invent completion.
 
 ## Subscription integration
 

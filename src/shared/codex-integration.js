@@ -235,9 +235,16 @@ export function buildCodexVisibleTasks(tasks = [], unread = []) {
         || task.connectionState !== CODEX_CONNECTION.DISCONNECTED;
     })
     .sort((left, right) => {
-      const priority = activityPriority(left.activity) - activityPriority(right.activity);
-      if (priority !== 0) return priority;
-      return Number(right.updatedAtMs || 0) - Number(left.updatedAtMs || 0);
+      const leftNeedsAction = left.activity === CODEX_ACTIVITY.NEEDS_INPUT
+        || left.activity === CODEX_ACTIVITY.BLOCKED
+        || left.connectionState === CODEX_CONNECTION.ERROR;
+      const rightNeedsAction = right.activity === CODEX_ACTIVITY.NEEDS_INPUT
+        || right.activity === CODEX_ACTIVITY.BLOCKED
+        || right.connectionState === CODEX_CONNECTION.ERROR;
+      if (leftNeedsAction !== rightNeedsAction) return leftNeedsAction ? -1 : 1;
+      const byRecentActivity = Number(right.updatedAtMs || 0) - Number(left.updatedAtMs || 0);
+      if (byRecentActivity !== 0) return byRecentActivity;
+      return String(left.threadId || left.id).localeCompare(String(right.threadId || right.id));
     });
 
   return {

@@ -32,6 +32,10 @@ module.exports = {
   ],
   extraResources: [
     {
+      from: 'src/main/codex-hooks.mjs',
+      to: 'codex-hooks.mjs',
+    },
+    {
       from: 'resources/hardware-sensor',
       to: 'hardware-sensor',
       filter: ['**/*'],

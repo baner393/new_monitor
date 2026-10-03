@@ -4,6 +4,12 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import readline from 'readline';
+import { readCodexHookEvents, syncCodexHooks } from './codex-hooks.mjs';
+import {
+  isCodexRuntimeSessionPathWithinHome,
+  normalizeCodexRuntimeSessionPath,
+  readCodexRuntimeSessions,
+} from './codex-state-db.mjs';
 import {
   CODEX_ACTIVITY,
   CODEX_CONNECTION,
@@ -25,8 +31,15 @@ const RECENT_SESSION_FILES = 32;
 const MAX_INITIAL_FILE_BYTES = 4 * 1024 * 1024;
 const DISCOVERY_INTERVAL_MS = 30_000;
 const WATCH_DEBOUNCE_MS = 250;
-const RUNNING_STALE_MS = 5 * 60 * 1000;
 const CLIENT_RETRY_DELAYS = [1000, 2000, 5000, 10_000, 30_000];
+const CODEX_HOOK_EVENT_ORDER = Object.freeze({
+  UserPromptSubmit: 1,
+  PreToolUse: 2,
+  PermissionRequest: 3,
+  PostToolUse: 4,
+  Stop: 5,
+  Interrupt: 6,
+});
 
 function finiteTimestamp(value, fallback = 0) {
   const numeric = Number(value);
@@ -35,6 +48,13 @@ function finiteTimestamp(value, fallback = 0) {
   }
   const parsed = Date.parse(String(value || ''));
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function compareHookEventCandidates(left, right) {
+  return left.timestampMs - right.timestampMs
+    || (CODEX_HOOK_EVENT_ORDER[left.event.hook_event_name] || 0)
+      - (CODEX_HOOK_EVENT_ORDER[right.event.hook_event_name] || 0)
+    || String(left.turnId || '').localeCompare(String(right.turnId || ''));
 }
 
 function parseLine(line) {
@@ -136,6 +156,7 @@ function createRolloutState(filePath = '', modifiedAtMs = 0) {
     modifiedAtMs,
     partial: '',
     threadId: fileThreadId,
+    sessionId: '',
     parentThreadId: '',
     cwd: '',
     model: '',
@@ -147,6 +168,7 @@ function createRolloutState(filePath = '', modifiedAtMs = 0) {
     lastFinishedAtMs: 0,
     lastFinishTimestampKnown: false,
     lastActivityAtMs: modifiedAtMs,
+    lastRowTimestampMs: 0,
     lastTurnId: '',
     lastFinishKind: '',
     messages: [],
@@ -215,11 +237,13 @@ export function buildCodexTurnReasoningOverrides(preference) {
 function applyRolloutRow(state, row) {
   if (!row) return;
   const timestamp = finiteTimestamp(row.timestamp, state.modifiedAtMs);
+  state.lastRowTimestampMs = Math.max(state.lastRowTimestampMs, timestamp);
   state.lastActivityAtMs = Math.max(state.lastActivityAtMs, timestamp);
   const payload = row.payload || {};
 
   if (row.type === 'session_meta') {
     state.threadId ||= String(payload.id || payload.session_id || '');
+    state.sessionId ||= String(payload.session_id || payload.id || '');
     state.parentThreadId ||= String(payload.parent_thread_id || payload.parentThreadId || '');
     state.cwd ||= String(payload.cwd || '');
     state.name ||= String(payload.name || payload.thread_name || '');
@@ -281,7 +305,7 @@ function applyRolloutChunk(state, chunk, { flush = false } = {}) {
   }
 }
 
-function snapshotRolloutState(state, { enabledAtMs = 0, readEventIds = new Set(), nowMs = Date.now() } = {}) {
+function snapshotRolloutState(state, { enabledAtMs = 0, readEventIds = new Set() } = {}) {
   if (state.isInternal) return null;
   const threadId = state.threadId
     || path.basename(state.filePath || '', path.extname(state.filePath || ''));
@@ -292,8 +316,10 @@ function snapshotRolloutState(state, { enabledAtMs = 0, readEventIds = new Set()
     state.lastStartedAtMs,
     state.modifiedAtMs,
   );
-  const running = state.lastStartedAtMs > state.lastFinishedAtMs
-    && nowMs - updatedAtMs <= RUNNING_STALE_MS;
+  // A turn may spend several minutes waiting on a tool or external process
+  // without appending rollout rows. The lifecycle is still open until a
+  // completion/abort event is recorded; age alone is not evidence of idleness.
+  const running = state.lastStartedAtMs > state.lastFinishedAtMs;
   const task = {
     id: threadId,
     parentThreadId: state.parentThreadId || null,
@@ -391,6 +417,28 @@ async function readRange(filePath, start, length) {
   } finally {
     await handle.close();
   }
+}
+
+async function readRolloutIdentity(filePath, maximumBytes = 256 * 1024) {
+  try {
+    const handle = await fs.promises.open(filePath, 'r');
+    try {
+      const buffer = Buffer.alloc(maximumBytes);
+      const { bytesRead } = await handle.read(buffer, 0, maximumBytes, 0);
+      for (const line of buffer.subarray(0, bytesRead).toString('utf8').split(/\r?\n/)) {
+        const row = parseLine(line);
+        if (row?.type !== 'session_meta') continue;
+        const payload = row.payload || {};
+        return {
+          threadId: String(payload.id || payload.session_id || ''),
+          sessionId: String(payload.session_id || payload.id || ''),
+        };
+      }
+    } finally {
+      await handle.close();
+    }
+  } catch { /* The rollout may be concurrently rotated or removed. */ }
+  return { threadId: '', sessionId: '' };
 }
 
 function readCodexLocale(codexHome) {
@@ -578,18 +626,41 @@ class CodexAppServerClient extends EventEmitter {
 }
 
 export class CodexMonitor {
-  constructor({ config, onConfigChange, pollIntervalMs = DISCOVERY_INTERVAL_MS, appServerFactory } = {}) {
+  constructor({
+    config,
+    onConfigChange,
+    pollIntervalMs = DISCOVERY_INTERVAL_MS,
+    appServerFactory,
+    userDataPath = '',
+    hookScriptPath = '',
+    nodeExecutablePath = process.execPath,
+    runtimeSessionsReader = readCodexRuntimeSessions,
+    hookEventsReader = readCodexHookEvents,
+  } = {}) {
     this.migratingFromV1 = Number(config?.version || 1) < 2;
     this.config = normalizeCodexIntegrationConfig(config);
     this.onConfigChange = onConfigChange;
     this.pollIntervalMs = Math.max(5000, pollIntervalMs);
     this.appServerFactory = appServerFactory || ((home) => new CodexAppServerClient(home));
+    this.userDataPath = userDataPath ? path.resolve(userDataPath) : '';
+    this.hookEventDirectory = this.userDataPath ? path.join(this.userDataPath, 'codex-hook-events') : '';
+    this.hookScriptPath = hookScriptPath;
+    this.nodeExecutablePath = nodeExecutablePath;
+    this.runtimeSessionsReader = runtimeSessionsReader;
+    this.hookEventsReader = hookEventsReader;
+    this.hookSyncPromise = Promise.resolve();
+    this.installedHookHome = '';
+    this.hookStatus = this.userDataPath && hookScriptPath ? 'pending' : 'unavailable';
+    this.hookError = '';
     this.window = null;
     this.timer = null;
     this.running = false;
     this.watcher = null;
     this.watchedRoot = '';
+    this.hookWatcher = null;
+    this.watchedHookRoot = '';
     this.watchDebounce = null;
+    this.hookDebounce = null;
     this.scanPromise = null;
     this.scanAgain = false;
     this.scanAgainForce = false;
@@ -626,6 +697,7 @@ export class CodexMonitor {
   start() {
     if (this.running) return;
     this.running = true;
+    void this.#syncCodexHooks();
     this.scan();
     if (this.config.enabled) this.#startClientLifecycle();
   }
@@ -634,9 +706,11 @@ export class CodexMonitor {
     this.running = false;
     if (this.timer) clearTimeout(this.timer);
     if (this.watchDebounce) clearTimeout(this.watchDebounce);
+    if (this.hookDebounce) clearTimeout(this.hookDebounce);
     if (this.clientRetryTimer) clearTimeout(this.clientRetryTimer);
     this.timer = null;
     this.watchDebounce = null;
+    this.hookDebounce = null;
     this.clientRetryTimer = null;
     this.#closeWatcher();
     this.client?.stop();
@@ -653,6 +727,76 @@ export class CodexMonitor {
       readEventIds: [...this.config.readEventIds],
       notifiedEventIds: [...this.config.notifiedEventIds],
     };
+  }
+
+  #hookOptions() {
+    return {
+      scriptPath: this.hookScriptPath,
+      nodeExecutablePath: this.nodeExecutablePath,
+      eventDirectory: this.hookEventDirectory,
+      platform: process.platform,
+    };
+  }
+
+  #syncCodexHooks() {
+    if (!this.userDataPath || !this.hookScriptPath || !this.hookEventDirectory) {
+      this.#setHookStatus('unavailable');
+      return Promise.resolve();
+    }
+    this.hookSyncPromise = this.hookSyncPromise.catch(() => {}).then(async () => {
+      const enabled = this.config.enabled;
+      const activeHome = enabled ? resolveCodexHome(this.config) : '';
+      if (this.installedHookHome && this.installedHookHome !== activeHome) {
+        const removed = await syncCodexHooks({
+          codexHome: this.installedHookHome,
+          enabled: false,
+          options: this.#hookOptions(),
+        });
+        if (removed.error) {
+          console.warn('[Codex] Could not remove previous Hooks configuration:', removed.error);
+          this.#setHookStatus('error', removed.error);
+          return;
+        }
+        else this.installedHookHome = '';
+      }
+      if (!enabled) {
+        const home = this.installedHookHome || resolveCodexHome(this.config);
+        if (!home) {
+          this.#setHookStatus('disabled');
+          return;
+        }
+        const result = await syncCodexHooks({ codexHome: home, enabled: false, options: this.#hookOptions() });
+        if (result.error) {
+          console.warn('[Codex] Could not remove Hooks configuration:', result.error);
+          this.#setHookStatus('error', result.error);
+        } else {
+          this.installedHookHome = '';
+          this.#setHookStatus('disabled');
+        }
+        return;
+      }
+      if (!activeHome) {
+        this.#setHookStatus('unavailable');
+        return;
+      }
+      const result = await syncCodexHooks({ codexHome: activeHome, enabled: true, options: this.#hookOptions() });
+      if (result.error) {
+        console.warn('[Codex] Could not install Hooks configuration:', result.error);
+        this.#setHookStatus('error', result.error);
+      } else {
+        this.installedHookHome = activeHome;
+        this.#setHookStatus('installed');
+      }
+    });
+    return this.hookSyncPromise;
+  }
+
+  #setHookStatus(status, error = '') {
+    this.hookStatus = status;
+    this.hookError = error;
+    this.lastSnapshot.hookStatus = status;
+    this.lastSnapshot.hookError = error;
+    this.#sendSnapshot();
   }
 
   updateConfig(next, { replacePersistentState = false } = {}) {
@@ -673,6 +817,7 @@ export class CodexMonitor {
     this.config = normalizeCodexIntegrationConfig(nextConfig);
     if (!wasEnabled && this.config.enabled) this.config.enabledAtMs = Date.now();
     this.#persistConfig();
+    void this.#syncCodexHooks();
     if (!this.config.enabled) {
       this.tasks.clear();
       this.catalogTasks.clear();
@@ -800,6 +945,7 @@ export class CodexMonitor {
     const sessionsRoot = path.join(codexHome, 'sessions');
     if (!fs.existsSync(sessionsRoot)) {
       this.#watchSessions(codexHome);
+      this.#watchHookEvents();
       this.lastSnapshot = {
         ...this.#emptySnapshot(),
         configured: true,
@@ -814,13 +960,16 @@ export class CodexMonitor {
     }
 
     this.#watchSessions(sessionsRoot);
+    this.#watchHookEvents();
     const nowMs = Date.now();
     const needsDiscovery = force
       || this.knownFiles.size === 0
       || nowMs - this.lastDiscoveryAtMs >= DISCOVERY_INTERVAL_MS;
     if (needsDiscovery) {
       const discovered = await collectSessionFiles(sessionsRoot);
-      this.knownFiles = new Map(discovered.map((file) => [path.resolve(file.path), file]));
+      const runtimeFiles = await this.#discoverRuntimeSessionFiles(codexHome, sessionsRoot);
+      this.knownFiles = new Map([...discovered, ...runtimeFiles]
+        .map((file) => [path.resolve(file.path), file]));
       this.changedPaths.clear();
       this.lastDiscoveryAtMs = nowMs;
     } else if (this.changedPaths.size) {
@@ -843,9 +992,14 @@ export class CodexMonitor {
       }));
     }
     const desiredIds = new Set(this.config.desiredThreadIds);
+    const runtimePaths = new Set([...this.knownFiles.values()]
+      .filter((file) => Number(file.runtimeUpdatedAtMs || 0) > 0)
+      .map((file) => path.resolve(file.path)));
     const files = [...this.knownFiles.values()]
-      .sort((left, right) => right.modifiedAtMs - left.modifiedAtMs)
-      .filter((file, index) => index < RECENT_SESSION_FILES
+      .sort((left, right) => Number(right.runtimeUpdatedAtMs || right.modifiedAtMs)
+        - Number(left.runtimeUpdatedAtMs || left.modifiedAtMs))
+      .filter((file, index) => runtimePaths.has(path.resolve(file.path))
+        || index < RECENT_SESSION_FILES
         || file.modifiedAtMs >= this.config.enabledAtMs
         || [...desiredIds].some((id) => file.path.includes(id)))
       .slice(0, MAX_SESSION_FILES);
@@ -867,6 +1021,10 @@ export class CodexMonitor {
       } catch (error) {
         if (force) console.warn('[Codex] Session read failed:', error.message);
       }
+    }
+    const hookUnread = await this.#applyCodexHookEvents(nextTasks, readIds, unread);
+    for (const event of hookUnread) {
+      if (!unread.some((existing) => existing.id === event.id)) unread.push(event);
     }
     this.tasks = new Map([...this.catalogTasks].map(([id, task]) => {
       const indexed = indexedTitles.get(id);
@@ -892,12 +1050,166 @@ export class CodexMonitor {
     this.#rebuildSnapshot(unread);
   }
 
+  async #discoverRuntimeSessionFiles(codexHome, sessionsRoot) {
+    let sessions = [];
+    try {
+      sessions = await this.runtimeSessionsReader(codexHome, {
+        env: { ...process.env, CODEX_HOME: codexHome },
+      });
+    } catch { return []; }
+    const files = [];
+    for (const session of sessions || []) {
+      const rolloutPath = normalizeCodexRuntimeSessionPath(session?.rolloutPath);
+      if (!rolloutPath.endsWith('.jsonl')
+        || !isCodexRuntimeSessionPathWithinHome(rolloutPath, sessionsRoot)) continue;
+      try {
+        const canonicalPath = await fs.promises.realpath(rolloutPath);
+        if (!isCodexRuntimeSessionPathWithinHome(canonicalPath, sessionsRoot)) continue;
+        const stat = await fs.promises.stat(canonicalPath);
+        if (!stat.isFile()) continue;
+        files.push({
+          path: canonicalPath,
+          modifiedAtMs: stat.mtimeMs,
+          runtimeUpdatedAtMs: Number(session.updatedAtMs || 0),
+          size: stat.size,
+        });
+      } catch { /* A session may be pruned or rotated during discovery. */ }
+    }
+    return files;
+  }
+
+  async #applyCodexHookEvents(nextTasks, readIds, existingUnread = []) {
+    if (!this.hookEventDirectory) return [];
+    let events = [];
+    try { events = await this.hookEventsReader(this.hookEventDirectory); }
+    catch { return []; }
+
+    const stateBySessionId = new Map();
+    for (const { state } of this.fileCache.values()) {
+      if (state.isInternal) continue;
+      const sessionId = String(state.sessionId || state.threadId || '').trim();
+      if (!sessionId) continue;
+      const previous = stateBySessionId.get(sessionId);
+      if (!previous || state.lastActivityAtMs >= previous.lastActivityAtMs) stateBySessionId.set(sessionId, state);
+    }
+
+    const eventsBySessionId = new Map();
+    for (const event of events) {
+      const sessionId = String(event?.session_id || '').trim();
+      const timestampMs = finiteTimestamp(event?.timestamp, 0);
+      if (!sessionId || !timestampMs || (this.config.enabledAtMs > 0 && timestampMs < this.config.enabledAtMs)) continue;
+      const state = stateBySessionId.get(sessionId);
+      if (!state) continue;
+      const stateTurnId = String(state.lastTurnId || '');
+      const turnId = String(event.turn_id || stateTurnId || '');
+      const lifecycleAtMs = Math.max(state.lastStartedAtMs, state.lastFinishedAtMs);
+      if (timestampMs < lifecycleAtMs) continue;
+      if (stateTurnId && turnId && turnId !== stateTurnId && timestampMs <= lifecycleAtMs) continue;
+      const candidates = eventsBySessionId.get(sessionId) || [];
+      candidates.push({ event, timestampMs, turnId, state });
+      eventsBySessionId.set(sessionId, candidates);
+    }
+
+    const hookUnread = [];
+    for (const [sessionId, candidates] of eventsBySessionId) {
+      const latestPrompt = candidates
+        .filter(({ event }) => event.hook_event_name === 'UserPromptSubmit')
+        .reduce((previous, current) =>
+          !previous || compareHookEventCandidates(current, previous) > 0 ? current : previous, null);
+      const currentTurnCandidates = latestPrompt
+        ? candidates.filter((candidate) => candidate === latestPrompt
+          || (latestPrompt.turnId
+            ? candidate.turnId === latestPrompt.turnId
+            : candidate.timestampMs >= latestPrompt.timestampMs))
+        : candidates;
+      const latest = currentTurnCandidates.reduce((previous, current) =>
+        !previous || compareHookEventCandidates(current, previous) > 0 ? current : previous, null);
+      const terminal = currentTurnCandidates
+        .filter(({ event, turnId }) => ['Stop', 'Interrupt'].includes(event.hook_event_name)
+          && turnId === latest.turnId)
+        .reduce((previous, current) => {
+          if (!previous) return current;
+          const currentPriority = current.event.hook_event_name === 'Interrupt' ? 2 : 1;
+          const previousPriority = previous.event.hook_event_name === 'Interrupt' ? 2 : 1;
+          return currentPriority > previousPriority
+            || (currentPriority === previousPriority && current.timestampMs >= previous.timestampMs)
+            ? current : previous;
+        }, null);
+      const selected = terminal || latest;
+      const { event, timestampMs, turnId, state } = selected;
+      const threadId = String(state.threadId || '').trim();
+      const task = nextTasks.get(threadId) || snapshotRolloutState(state, {
+        enabledAtMs: this.config.enabledAtMs,
+        readEventIds: readIds,
+      })?.task;
+      if (!threadId || !task) continue;
+      const eventName = String(event.hook_event_name || '');
+      const activity = ['UserPromptSubmit', 'PreToolUse', 'PostToolUse'].includes(eventName) ? CODEX_ACTIVITY.RUNNING
+        : eventName === 'PermissionRequest' ? CODEX_ACTIVITY.NEEDS_INPUT
+          : eventName === 'Interrupt' ? CODEX_ACTIVITY.BLOCKED
+            : eventName === 'Stop' ? CODEX_ACTIVITY.READY : '';
+      if (!activity) continue;
+
+      const hasRolloutTerminal = turnId && String(state.lastTurnId || '') === turnId
+        && state.lastFinishedAtMs >= state.lastStartedAtMs
+        && Boolean(state.lastFinishKind);
+      if (hasRolloutTerminal) continue;
+
+      task.updatedAtMs = Math.max(Number(task.updatedAtMs || 0), timestampMs);
+      task.activity = eventName === 'Stop' ? CODEX_ACTIVITY.SILENT : activity;
+      nextTasks.set(threadId, task);
+      if (['UserPromptSubmit', 'PreToolUse', 'PostToolUse'].includes(eventName)) {
+        for (let index = existingUnread.length - 1; index >= 0; index -= 1) {
+          if (existingUnread[index].threadId === threadId && existingUnread[index].createdAtMs <= timestampMs) {
+            existingUnread.splice(index, 1);
+          }
+        }
+        for (let index = hookUnread.length - 1; index >= 0; index -= 1) {
+          if (hookUnread[index].threadId === threadId && hookUnread[index].createdAtMs <= timestampMs) {
+            hookUnread.splice(index, 1);
+          }
+        }
+        continue;
+      }
+
+      const eventId = `${threadId}:${turnId || timestampMs}:${activity}`;
+      const alreadyReported = hookUnread.some((candidate) => candidate.id === eventId);
+      const rolloutAlreadyReported = eventName === 'Stop' && turnId
+        && existingUnread.some((candidate) => candidate.threadId === threadId && candidate.turnId === turnId);
+      if (readIds.has(eventId) || alreadyReported || rolloutAlreadyReported) continue;
+      hookUnread.push({
+        id: eventId,
+        threadId,
+        turnId: turnId || null,
+        title: task.title,
+        project: task.project,
+        activity,
+        kind: eventName === 'Stop' ? 'turn-ended'
+          : eventName === 'Interrupt' ? 'interrupted' : 'permission-request',
+        message: eventName === 'Stop'
+          ? 'Codex 已结束这一回合，但没有提供可判定成功或失败的结果。'
+          : eventName === 'Interrupt'
+            ? 'Codex 回合已被中断。'
+            : 'Codex 正在等待权限处理。',
+        createdAtMs: timestampMs,
+        managed: false,
+        canReply: false,
+      });
+    }
+    return hookUnread;
+  }
+
   async #readCachedRollout(file, readIds) {
     let cached = this.fileCache.get(file.path);
     if (!cached || file.size < cached.offset) {
       const offset = Math.max(0, file.size - MAX_INITIAL_FILE_BYTES);
       const state = createRolloutState(file.path, file.modifiedAtMs);
       state.historyComplete = offset === 0;
+      if (offset > 0) {
+        const identity = await readRolloutIdentity(file.path);
+        state.threadId ||= identity.threadId;
+        state.sessionId ||= identity.sessionId;
+      }
       cached = { offset, modifiedAtMs: 0, state, skipFirstLine: offset > 0 };
     }
     if (file.size > cached.offset) {
@@ -987,6 +1299,8 @@ export class CodexMonitor {
       controlConnected: this.clientReady,
       locale: this.locale,
       homeLabel: this.config.homeMode === 'manual' ? '手动目录' : '自动检测',
+      hookStatus: this.hookStatus,
+      hookError: this.hookError,
       source: this.clientReady ? 'app-server+sessions' : 'sessions',
       reasoningModels: this.reasoningModels,
       activity: resolveCodexActivity({ connected: true, tasks: allTasks, unread: allUnread }),
@@ -1033,10 +1347,47 @@ export class CodexMonitor {
     } catch { this.#closeWatcher(); }
   }
 
+  #watchHookEvents() {
+    if (!this.hookEventDirectory) return;
+    const resolved = path.resolve(this.hookEventDirectory);
+    if (this.hookWatcher && this.watchedHookRoot === resolved) return;
+    this.hookWatcher?.close();
+    this.hookWatcher = null;
+    this.watchedHookRoot = '';
+    try {
+      fs.mkdirSync(resolved, { recursive: true });
+      this.hookWatcher = fs.watch(resolved, (_event, fileName) => {
+        const name = String(fileName || '');
+        if (name && !name.endsWith('.json')) return;
+        if (this.hookDebounce) clearTimeout(this.hookDebounce);
+        this.hookDebounce = setTimeout(() => {
+          this.hookDebounce = null;
+          this.scan();
+        }, WATCH_DEBOUNCE_MS);
+        this.hookDebounce.unref?.();
+      });
+      this.watchedHookRoot = resolved;
+      this.hookWatcher.on('error', () => {
+        this.hookWatcher?.close();
+        this.hookWatcher = null;
+        this.watchedHookRoot = '';
+      });
+    } catch {
+      this.hookWatcher?.close();
+      this.hookWatcher = null;
+      this.watchedHookRoot = '';
+    }
+  }
+
   #closeWatcher() {
     this.watcher?.close();
     this.watcher = null;
     this.watchedRoot = '';
+    this.hookWatcher?.close();
+    this.hookWatcher = null;
+    this.watchedHookRoot = '';
+    if (this.hookDebounce) clearTimeout(this.hookDebounce);
+    this.hookDebounce = null;
     this.knownFiles.clear();
     this.changedPaths.clear();
     this.lastDiscoveryAtMs = 0;
@@ -1701,6 +2052,8 @@ export class CodexMonitor {
       controlConnected: false,
       locale: this.locale,
       homeLabel: '',
+      hookStatus: this.hookStatus,
+      hookError: this.hookError,
       source: 'none',
       reasoningModels: [],
       activity: CODEX_ACTIVITY.DISCONNECTED,

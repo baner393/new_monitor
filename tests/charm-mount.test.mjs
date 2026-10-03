@@ -41,3 +41,9 @@ test('keychain stays hidden outside charm mode or without a valid anchor', () =>
     mountAnchor: { x: NaN, y: 20 },
   }), { visible: false, position: null });
 });
+
+test('cursor theme geometry replaces the fixed offset and unsupported cursors hide the mount', () => {
+  const input = { isCharmMode: true, ringVisible: true, cursor: { x: 100, y: 50 }, mountOffset: { x: -3, y: 9 } };
+  assert.deepEqual(resolveCharmMountPose(input), { visible: true, position: { x: 97, y: 59 } });
+  assert.deepEqual(resolveCharmMountPose({ ...input, supported: false }), { visible: false, position: null });
+});

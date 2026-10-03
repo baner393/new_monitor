@@ -17,8 +17,8 @@ import { CHARM_MOUNT_GEOMETRY } from './charm-mount-geometry.js';
 
 export const CHARM_MOUNT_ANCHOR_OFFSET = { x: 16, y: 27 };
 
-export function resolveCharmMountPose({ isCharmMode, ringVisible, cursor, mountAnchor }) {
-  if (!isCharmMode) return { visible: false, position: null };
+export function resolveCharmMountPose({ isCharmMode, ringVisible, cursor, mountAnchor, supported = true, mountOffset = CHARM_MOUNT_ANCHOR_OFFSET }) {
+  if (!isCharmMode || !supported) return { visible: false, position: null };
 
   const followsCursor = ringVisible
     && Number.isFinite(cursor?.x)
@@ -34,8 +34,8 @@ export function resolveCharmMountPose({ isCharmMode, ringVisible, cursor, mountA
     // only when positioning directly from the raw cursor during ring display.
     position: followsCursor
       ? {
-        x: point.x + CHARM_MOUNT_ANCHOR_OFFSET.x,
-        y: point.y + CHARM_MOUNT_ANCHOR_OFFSET.y,
+        x: point.x + mountOffset.x,
+        y: point.y + mountOffset.y,
       }
       : { x: point.x, y: point.y },
   };

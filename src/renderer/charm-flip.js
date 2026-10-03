@@ -20,6 +20,8 @@
  *   · tilt + spinZ 施加到容器 rotation（都绕挂点）。
  */
 
+import { updateMetalUniforms } from './charm-metal.js';
+
 export const HANG_GRAVITY = 800;   // 与 physics.js GRAVITY 一致（px/s²）
 export const TILT_MAX = 1.15;      // 重力链接的极限张角（≈66°）
 
@@ -48,6 +50,7 @@ export function knobsToFlipConfig(values = {}) {
   const link = pct(values.charmGravityLink);
   const thick = pct(values.charmThickness);
   const tiltStiffness = 18 + link * 52;         // 18..70
+  const holoIntensity = clamp(finiteOr(Number(values.charmHoloIntensity), 100), 0, 150) / 100;
   return {
     impulse: 12 + energy * 36,                  // 12..48
     spinDamping: 1.5 - spin * 1.1,              // 1.5..0.4（越长越慢衰减）
@@ -58,6 +61,7 @@ export function knobsToFlipConfig(values = {}) {
     thicknessRatio: 0.03 + thick * 0.08,        // 3%..11% 显示宽
     flipEnabled: values.charmFlipEnabled !== false,
     backMaterial: values.charmBackMaterial === 'pattern' ? 'pattern' : 'metal',
+    holoIntensity,
   };
 }
 
@@ -255,6 +259,13 @@ export function applyFlip(s, state, o) {
         }
         sl.position.x = gap * (i + 0.5) / s.slices.length;
         const depth = (i + 0.5) / s.slices.length;
+        if (sl.metalUniforms) {
+          updateMetalUniforms(sl.metalUniforms, state, depth);
+          sl.metalUniforms.uMetalBandWidth = 1 / s.slices.length;
+          sl.metalUniforms.uMetalDepthDirection = (sinY >= 0 ? 1 : -1) * direction;
+          sl.tint = 0xffffff;
+          continue;
+        }
         const bevel = depth < 0.08 || depth > 0.92;
         const lightDepth = sinY >= 0 ? depth : 1 - depth;
         const shade = bevel ? (lightDepth < 0.08 ? 1 : 0.78)
@@ -267,26 +278,35 @@ export function applyFlip(s, state, o) {
 
   // 暗场全息：偏航翻转或屏幕面内倾斜都可触发；±28° 倾斜达到全强。
   const tilt = Math.abs(sinY);
-  const holoK = Math.max(tilt, clamp(Math.abs(state.tilt) / 0.49, 0, 1));
-  const glow = Math.min(1, 0.45 + state.energy * 0.55 + Math.min(0.4, Math.abs(state.velY) * 0.12));
+  // 以较柔和的角度曲线提前显色：轻微转动就能看到虹彩开始扫过，
+  // 正面静止时 sinY 与 tilt 都接近 0，因此不会常亮。
+  const holoK = Math.max(Math.pow(tilt, 0.72), Math.pow(clamp(Math.abs(state.tilt) / 0.49, 0, 1), 0.72));
+  const glow = Math.min(1, 0.68 + state.energy * 0.42 + Math.min(0.5, Math.abs(state.velY) * 0.16));
+  const holoIntensity = clamp(finiteOr(Number(o.holoIntensity), 1), 0, 1.5);
+  const holoAlpha = (alpha) => {
+    const value = clamp(alpha, 0, 1);
+    return holoIntensity <= 1
+      ? value * holoIntensity
+      : 1 - Math.pow(1 - value, holoIntensity);
+  };
   if (s.foil) {
     s.foil.visible = frontFacing && faceVisible;
     s.foil.scale.x = o.edgeBase * sx;
-    s.foil.alpha = Math.pow(holoK, 1.05) * glow;
+    s.foil.alpha = holoAlpha(Math.pow(holoK, 0.9) * glow);
   }
   if (s.band) {
     s.band.visible = frontFacing && faceVisible;
     // spinY 会累计多圈；光带的位置只取当前一圈，否则几次翻滚就会永远
     // 扫到宠物数百像素外，倾角反光虽然已触发却完全看不见。
     const visualSpin = Math.atan2(sinY, cosY);
-    const sweep = 0.5 + 0.5 * Math.sin(visualSpin * 1.6 + state.tilt * 1.8 + 0.9);
+    const sweep = 0.5 + 0.5 * Math.sin(visualSpin * 2.2 + state.tilt * 2.2 + 0.9);
     // 倾角达到门槛时始终保留可见的光带，sweep 只调制其明暗，不能把它归零。
-    s.band.alpha = (0.25 + sweep * 0.75) * holoK * glow;
+    s.band.alpha = holoAlpha((0.35 + sweep * 0.65) * holoK * glow);
     // 光带随当前翻转面和重力倾角共同横向扫动。
     // band 纹理宽度为 2×span，主亮带在纹理 60% 处；-1.2×span 把它
     // 对齐宠物中心。此前 -0.4×span 会令主亮带落到 mask 外，被完全裁掉。
-    s.band.position.x = (visualSpin / Math.PI) * o.span * 0.8
-      + (state.tilt / 0.49) * o.span * 0.25 - o.span * 1.2;
+    s.band.position.x = (visualSpin / Math.PI) * o.span * 1.05
+      + (state.tilt / 0.49) * o.span * 0.32 - o.span * 1.2;
   }
 
   // 图案背面有自己的 mask 与反光，正面 mask 不参与背面视差。
@@ -294,15 +314,15 @@ export function applyFlip(s, state, o) {
     s.backFoil.visible = patternBack && !frontFacing && faceVisible;
     s.backFoil.scale.x = backDirection * o.edgeBase * sx;
     s.backFoil.position.x = gap;
-    s.backFoil.alpha = Math.pow(holoK, 1.05) * glow;
+    s.backFoil.alpha = holoAlpha(Math.pow(holoK, 0.9) * glow);
   }
   if (s.backBand) {
     s.backBand.visible = patternBack && !frontFacing && faceVisible;
     const backSpin = Math.atan2(-sinY, -cosY);
-    const sweep = 0.5 + 0.5 * Math.sin(backSpin * 1.6 + state.tilt * 1.8 + 0.9);
-    s.backBand.alpha = (0.25 + sweep * 0.75) * holoK * glow;
-    s.backBand.position.x = gap + backDirection * ((backSpin / Math.PI) * o.span * 0.8
-      + (state.tilt / 0.49) * o.span * 0.25 - o.span * 1.2);
+    const sweep = 0.5 + 0.5 * Math.sin(backSpin * 2.2 + state.tilt * 2.2 + 0.9);
+    s.backBand.alpha = holoAlpha((0.35 + sweep * 0.65) * holoK * glow);
+    s.backBand.position.x = gap + backDirection * ((backSpin / Math.PI) * o.span * 1.05
+      + (state.tilt / 0.49) * o.span * 0.32 - o.span * 1.2);
     s.backBand.scale.x = backDirection * o.edgeBase;
   }
 

@@ -24,6 +24,7 @@ Status: Confirmed. Evidence: `AGENTS.md`, `src/main/window-lifecycle.js`, `scrip
 - Hardware absence, permission limits, query failures, first-sample states, and unavailable firmware/driver fields remain distinguishable.
 - Monitor config preserves desired visibility independently of current hardware availability.
 - Codex task detail opened by the user persists across status snapshots; new alerts queue instead of replacing it.
+- Opening a task immediately clears all unread events belonging to that thread.
 - App Server requests are acted on only with known request identities and supported request types.
 - Runtime paths do not embed developer-specific drive letters or usernames.
 - Edition differences are build-time controlled and verified, not merely hidden with UI CSS.

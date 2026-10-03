@@ -1,5 +1,29 @@
 # Semantic change log
 
+## 2026-10-03 - Codex Desktop lifecycle signals
+
+Status: Confirmed in source, targeted tests (80/80), and free-edition source build. Evidence: `src/main/codex-hooks.mjs`, `src/main/codex-state-db.mjs`, `src/main/codex-monitor.js`, `src/renderer/codex-companion.js`, and `tests/codex-hooks.test.mjs` / `tests/codex-integration.test.mjs` / `tests/codex-state-db.test.mjs`.
+
+- Added official Codex Hook events for prompt/tool/permission/interrupt/stop signals, correlated by session and turn. Event files exclude cwd, prompt, transcript, and tool input/output.
+- Prompt and permission boundary Hooks run synchronously; high-frequency tool events remain asynchronous. The latest prompt turn id prevents a delayed old-turn process from overriding a new turn.
+- Same-millisecond events use a deterministic lifecycle order, so file or array enumeration order cannot decide a permission wait; a same-time completed `PostToolUse` clears the wait.
+- Permission waits clear on later prompt/tool Hooks or a rollout terminal event, not on unrelated rollout rows. Same-turn Interrupt outranks Stop, and terminal evidence outranks delayed same-turn tool Hooks. Stop notifications remain neutral and are suppressed when rollout already recorded a terminal result.
+- Compaction preserves terminal evidence and all unique sessions beyond the former 512-event cutoff. Hook config updates detect concurrent edits and retry after merging.
+- Added user-facing Hook setup diagnostics. Codex may require review/trust before invoking the configured handler.
+- SQLite remains read-only session discovery; recency does not prove task activity or completion.
+- Known gap: an abrupt Codex exit without Hook or rollout terminal evidence cannot be distinguished from a long quiet task, so no generic idle timeout is used.
+- Low-risk tie boundary: distinct `UserPromptSubmit` turns with identical Hook and file timestamps have deterministic lexical fallback ordering, which cannot prove their real temporal order.
+
+## 2026-09-30 - Codex task status, retry, history, and read behavior
+
+Status: Confirmed in the working tree. Evidence: `tests/codex-integration.test.mjs`, `src/main/codex-monitor.js`, `src/renderer/codex-companion.js`, `src/renderer/codex-motion.js`.
+
+- App Server status normalization honors waiting-on-user flags and the declared `needsInput > blocked > running` priority.
+- Temporary read-only connections retry until an active turn is resolved; connection errors expose a retry action.
+- App Server fallback messages preserve turn and item order when timestamps are absent or collide.
+- Opening a task optimistically clears all of its unread events and marks them read through the provider API.
+- Running impulses target charm turtle velocity in charm mode and retain pendulum motion in classic mode.
+
 ## 2026-08-08 - Afdian price synchronization
 
 Status: Confirmed. Evidence: `src/shared/subscription-model.js`, `subscription-service/src/core.js`, affected tests, and deployed Worker version `8c63af30-549d-4a9c-ada5-41c865425be3`.

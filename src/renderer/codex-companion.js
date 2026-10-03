@@ -123,7 +123,7 @@ export function canReuseRenderedMessages({
 
 const TEXT = {
   'zh-CN': {
-    liveTasks: '任务动态', emptyTasks: '目前没有运行中、未读或已连接的任务', close: '关闭', back: '返回任务列表',
+    liveTasks: '任务中心', emptyTasks: '当前没有活跃任务', emptyHistory: '没有历史任务', noSearchResults: '没有匹配的任务', activeTasks: '活跃', historyTasks: '历史', searchTasks: '搜索任务或项目…', close: '关闭', back: '返回任务列表',
     openCodex: '打开 Codex', previousPage: '上一页', nextPage: '下一页', send: '发送', handoff: '复制并打开 Codex', replyPlaceholder: '直接回复这个任务…', desktopPlaceholder: '输入后复制到 Codex 同一任务…',
     configTitle: '连接 Codex', configIntro: '同步全部任务；只有建立可操作连接的任务才能在气泡中直接回复和批准。',
     sync: '消息同步', control: '气泡回复与批准', enable: '启用 Codex 接入', disable: '断开同步', reconnect: '重新检测',
@@ -145,10 +145,11 @@ const TEXT = {
     connDisconnected: '未连接', connWaitingIdle: '等待任务空闲', connConnecting: '正在连接', connConnected: '已连接',
     connReadOnly: 'Codex 正在运行，暂时只读', connError: '连接出错', childRunning: '个子任务运行中',
     connected: 'Codex 消息已同步', attention: '接入需要处理', readyConnect: '已准备好连接', controlReady: '控制通道已就绪', clientUnified: '由 Codex 客户端统一',
+    hookReview: '如果 Codex 弹出 Hooks 审核提示，请在 Codex 中审核并信任 Turtle Monitor；未审核的 Hooks 不会发送实时状态。', hookInstallFailed: 'Codex 实时状态接入失败',
     controlWaiting: '消息正常；控制通道后台连接中', disabled: '尚未启用', messagesNormal: '同步正常', tasksLabel: '任务与会话', openConversation: '查看对话',
   },
   'en-US': {
-    liveTasks: 'Task activity', emptyTasks: 'No running, unread, or connected tasks', close: 'Close', back: 'Back to tasks',
+    liveTasks: 'Task hub', emptyTasks: 'No active tasks right now', emptyHistory: 'No history yet', noSearchResults: 'No matching tasks', activeTasks: 'Active', historyTasks: 'History', searchTasks: 'Search tasks or projects…', close: 'Close', back: 'Back to tasks',
     openCodex: 'Open Codex', previousPage: 'Previous', nextPage: 'Next', send: 'Send', handoff: 'Copy & open Codex', replyPlaceholder: 'Reply to this task…', desktopPlaceholder: 'Copy a reply to the same Codex task…',
     configTitle: 'Connect Codex', configIntro: 'Sync every task. Inline reply and approval are available after a control connection is established.',
     sync: 'Message sync', control: 'Bubble reply and approval', enable: 'Enable Codex integration', disable: 'Stop syncing', reconnect: 'Check again',
@@ -170,6 +171,7 @@ const TEXT = {
     connDisconnected: 'Not connected', connWaitingIdle: 'Waiting until idle', connConnecting: 'Connecting', connConnected: 'Connected',
     connReadOnly: 'Codex is running; temporarily read-only', connError: 'Connection error', childRunning: 'child tasks running',
     connected: 'Codex messages are synced', attention: 'Integration needs attention', readyConnect: 'Ready to connect', controlReady: 'Control channel ready', clientUnified: 'Unified through Codex client',
+    hookReview: 'If Codex asks you to review Hooks, review and trust Turtle Monitor in Codex. Unreviewed Hooks cannot send live status.', hookInstallFailed: 'Could not set up live Codex status',
     controlWaiting: 'Messages are synced; control is connecting in the background', disabled: 'Not enabled', messagesNormal: 'Sync is healthy', tasksLabel: 'Tasks & conversations', openConversation: 'Open conversation',
   },
 };
@@ -184,6 +186,8 @@ export class CodexCompanion {
     this.snapshots = { codex: null, claude: null };
     this.activeProvider = 'codex';
     this.taskFilter = 'all';
+    this.taskView = 'active';
+    this.taskQuery = '';
     this.snapshot = null;
     this.viewState = createCodexViewState();
     this.trayOpen = false;
@@ -445,17 +449,22 @@ export class CodexCompanion {
     this.badge = element('button', 'codex-pet-signal');
     this.badge.type = 'button';
     this.badge.hidden = true;
-    this.badge.innerHTML = '<span class="agent-badge agent-badge-codex"><i>C</i><b>0</b></span><span class="agent-badge agent-badge-claude"><i>✦</i><b>0</b></span>';
+    this.badge.innerHTML = '<span class="agent-hub-mark" aria-hidden="true">▤</span><span class="agent-badge agent-badge-codex" hidden><i>C</i><b>0</b></span><span class="agent-badge agent-badge-claude" hidden><i>✦</i><b>0</b></span>';
     this.root.appendChild(this.badge);
 
     this.taskTray = element('section', 'codex-task-tray');
     this.taskTray.hidden = true;
     this.taskTray.innerHTML = `
       <header class="codex-tray-head">
-        <div><div class="codex-config-kicker">LIVE TASKS</div><strong class="codex-live-title"></strong></div>
+        <div><div class="codex-config-kicker">TASK HUB</div><strong class="codex-live-title"></strong></div>
         <button class="codex-icon-button codex-tray-config" type="button" aria-label="agent config">⚙</button>
         <button class="codex-icon-button codex-tray-close" type="button">×</button>
       </header>
+      <div class="codex-task-views" role="tablist" aria-label="Task view">
+        <button type="button" role="tab" data-view="active" class="active"></button>
+        <button type="button" role="tab" data-view="history"></button>
+      </div>
+      <label class="codex-task-search"><span aria-hidden="true">⌕</span><input type="search" autocomplete="off"></label>
       <div class="agent-task-filters" role="tablist">
         <button type="button" data-provider="all" class="active">全部 <b>0</b></button>
         <button type="button" data-provider="codex"><i>C</i> Codex <b>0</b></button>
@@ -552,16 +561,29 @@ export class CodexCompanion {
       : null;
     for (const node of [this.bubble, this.taskTray, this.configPanel, this.badge]) this.resizeObserver?.observe(node);
 
-    this.badge.addEventListener('click', () => this.toggleTaskTray());
+    this.badge.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      this.openTaskHub();
+    });
     this.badge.querySelectorAll('.agent-badge').forEach((badge) => badge.addEventListener('click', (event) => {
+      event.preventDefault();
       event.stopPropagation();
       this.taskFilter = badge.classList.contains('agent-badge-claude') ? 'claude' : 'codex';
-      this.toggleTaskTray(true);
+      this.openTaskHub();
     }));
     this.taskTray.querySelectorAll('.agent-task-filters button').forEach((button) => button.addEventListener('click', () => {
       this.taskFilter = button.dataset.provider || 'all';
       this.#renderTaskTray();
     }));
+    this.taskTray.querySelectorAll('.codex-task-views button').forEach((button) => button.addEventListener('click', () => {
+      this.taskView = button.dataset.view === 'history' ? 'history' : 'active';
+      this.#renderTaskTray();
+    }));
+    this.taskTray.querySelector('.codex-task-search input').addEventListener('input', (event) => {
+      this.taskQuery = event.currentTarget.value.trim().toLocaleLowerCase();
+      this.#renderTaskTray();
+    });
     this.taskTray.querySelector('.codex-tray-close').addEventListener('click', () => this.closeTaskTray());
     // 挂饰模式下点击宠物的弹跳流程不可达，config 面板从这里补一个入口。
     this.taskTray.querySelector('.codex-tray-config').addEventListener('click', () => this.openConfig());
@@ -688,6 +710,10 @@ export class CodexCompanion {
     this.badge.setAttribute('aria-label', this.t('liveTasks'));
     this.taskTray.querySelector('.codex-live-title').textContent = this.t('liveTasks');
     this.taskTray.querySelector('.codex-task-empty').textContent = this.t('emptyTasks');
+    this.taskTray.querySelector('.codex-task-views [data-view="active"]').textContent = this.t('activeTasks');
+    this.taskTray.querySelector('.codex-task-views [data-view="history"]').textContent = this.t('historyTasks');
+    this.taskTray.querySelector('.codex-task-search input').placeholder = this.t('searchTasks');
+    this.taskTray.querySelector('.codex-task-search input').setAttribute('aria-label', this.t('searchTasks'));
     this.taskTray.querySelector('.codex-tray-close').setAttribute('aria-label', this.t('close'));
     this.bubble.querySelector('.codex-task-back').setAttribute('aria-label', this.t('back'));
     this.bubble.querySelector('.codex-bubble-close').setAttribute('aria-label', this.t('close'));
@@ -953,8 +979,9 @@ export class CodexCompanion {
       const providerCount = counts[provider] || {};
       return Number(providerCount.unread || 0) > 0 || Number(providerCount.running || 0) > 0;
     });
-    this.badge.hidden = active.length === 0 || this.configOpen || this.bubblesSuppressed;
+    this.badge.hidden = this.configOpen || this.bubblesSuppressed;
     if (this.badge.hidden) return;
+    this.badge.querySelector('.agent-hub-mark').hidden = active.length > 0;
     for (const provider of Object.keys(PROVIDERS)) {
       const providerCount = counts[provider] || {};
       const unread = Number(providerCount.unread || 0);
@@ -966,13 +993,15 @@ export class CodexCompanion {
       node.dataset.mode = unread > 0 ? 'unread' : 'running';
     }
     this.badge.classList.toggle('single-provider', active.length === 1);
+    this.badge.classList.toggle('hub-idle', active.length === 0);
     this.badge.dataset.activity = this.snapshot?.activity || CODEX_ACTIVITY.RUNNING;
-    this.badge.setAttribute('aria-label', active.map((provider) => `${PROVIDERS[provider].name} ${counts[provider]?.unread || counts[provider]?.running || 0}`).join('，'));
+    this.badge.setAttribute('aria-label', active.length
+      ? `${this.t('liveTasks')}：${active.map((provider) => `${PROVIDERS[provider].name} ${counts[provider]?.unread || counts[provider]?.running || 0}`).join('，')}`
+      : this.t('liveTasks'));
   }
 
   /**
-   * 环形菜单「任务对话」入口（挂饰模式下点卡片/右键宠物的替代路径）：
-   * 有可见任务直接进第一个对话，否则打开任务托盘（看列表或空态）。
+   * 环形菜单「任务对话」入口打开任务中心；没有活跃任务时直接显示可搜索历史。
    */
   openAgentConversation() {
     if (this.configOpen || this.bubblesSuppressed) {
@@ -980,16 +1009,28 @@ export class CodexCompanion {
       return;
     }
     const tasks = this.snapshot?.visibleTasks || [];
-    console.log(`[Agent] openAgentConversation: tasks=${tasks.length}`);
     if (tasks.length > 0) {
       this.#openTask(tasks[0]);
-    } else {
-      this.toggleTaskTray(true);
+      return;
     }
+    this.taskView = 'history';
+    this.toggleTaskTray(true);
+  }
+
+  openTaskHub() {
+    if (this.configOpen || this.bubblesSuppressed) return;
+    this.trayOpen = true;
+    this.taskView = (this.snapshot?.visibleTasks || []).length ? 'active' : 'history';
+    this.bubble.hidden = true;
+    this.#renderTaskTray();
+    this.updatePosition(true);
+    this.onInteractionChange?.();
   }
 
   toggleTaskTray(forceOpen = false) {    if (this.configOpen || this.bubblesSuppressed) return;
-    this.trayOpen = forceOpen ? true : !this.trayOpen;
+    const opening = forceOpen || !this.trayOpen;
+    this.trayOpen = opening;
+    if (opening) this.taskView = (this.snapshot?.visibleTasks || []).length ? 'active' : 'history';
     if (this.trayOpen) this.bubble.hidden = true;
     else if (this.viewState.mode !== 'closed') this.#renderBubble();
     this.#renderTaskTray();
@@ -1007,14 +1048,32 @@ export class CodexCompanion {
   #renderTaskTray() {
     this.taskTray.hidden = !this.trayOpen || this.configOpen || this.bubblesSuppressed;
     const host = this.taskTray.querySelector('.codex-task-list');
-    const allTasks = this.snapshot?.visibleTasks || [];
-    const tasks = this.taskFilter === 'all'
-      ? allTasks
-      : allTasks.filter((task) => task.provider === this.taskFilter);
+    const activeTasks = this.snapshot?.visibleTasks || [];
+    const activeIds = new Set(activeTasks.map((task) => String(task.threadId || task.id)));
+    const historyTasks = (this.snapshot?.tasks || []).filter((task) => !activeIds.has(String(task.threadId || task.id)));
+    const sourceTasks = this.taskView === 'history' ? historyTasks : activeTasks;
+    const query = this.taskQuery;
+    const tasks = sourceTasks
+      .filter((task) => this.taskFilter === 'all' || task.provider === this.taskFilter)
+      .filter((task) => !query || `${task.title || ''} ${task.project || ''} ${PROVIDERS[task.provider]?.name || ''} ${this.#statusLabel(task.activity)}`.toLocaleLowerCase().includes(query))
+      .sort((left, right) => {
+        const leftPriority = left.activity === CODEX_ACTIVITY.NEEDS_INPUT
+          || left.activity === CODEX_ACTIVITY.BLOCKED
+          || left.connectionState === CODEX_CONNECTION.ERROR ? 0 : 1;
+        const rightPriority = right.activity === CODEX_ACTIVITY.NEEDS_INPUT
+          || right.activity === CODEX_ACTIVITY.BLOCKED
+          || right.connectionState === CODEX_CONNECTION.ERROR ? 0 : 1;
+        return leftPriority - rightPriority || Number(right.updatedAtMs || 0) - Number(left.updatedAtMs || 0);
+      });
+    for (const button of this.taskTray.querySelectorAll('.codex-task-views button')) {
+      button.classList.toggle('active', button.dataset.view === this.taskView);
+      button.setAttribute('aria-selected', String(button.dataset.view === this.taskView));
+      button.tabIndex = button.dataset.view === this.taskView ? 0 : -1;
+    }
     for (const button of this.taskTray.querySelectorAll('.agent-task-filters button')) {
       const provider = button.dataset.provider || 'all';
       button.classList.toggle('active', provider === this.taskFilter);
-      const count = provider === 'all' ? allTasks.length : allTasks.filter((task) => task.provider === provider).length;
+      const count = provider === 'all' ? sourceTasks.length : sourceTasks.filter((task) => task.provider === provider).length;
       button.querySelector('b').textContent = String(count);
     }
     host.replaceChildren();
@@ -1027,14 +1086,21 @@ export class CodexCompanion {
       button.querySelector('.agent-task-provider').textContent = PROVIDERS[task.provider]?.mark || 'C';
       button.querySelector('strong').textContent = task.title || PROVIDERS[task.provider]?.name || 'Codex';
       const children = task.runningChildren > 0 ? ` · ${task.runningChildren} ${this.t('childRunning')}` : '';
-      button.querySelector('small').textContent = `${task.project || PROVIDERS[task.provider]?.name || 'Codex'} · ${this.#statusLabel(task.activity)}${children}`;
+      const status = task.connectionState === CODEX_CONNECTION.ERROR
+        ? this.#connectionLabel(task.connectionState, task.provider)
+        : this.#statusLabel(task.activity);
+      button.querySelector('small').textContent = `${task.project || PROVIDERS[task.provider]?.name || 'Codex'} · ${status}${children}`;
       const count = button.querySelector('.codex-task-count');
       count.textContent = task.unreadCount > 0 ? String(task.unreadCount) : (task.activity === CODEX_ACTIVITY.RUNNING ? 'RUN' : 'LINK');
       count.dataset.mode = task.unreadCount > 0 ? 'unread' : 'running';
       button.addEventListener('click', () => this.#openTask(task));
       host.appendChild(button);
     }
-    this.taskTray.querySelector('.codex-task-empty').hidden = tasks.length > 0;
+    const empty = this.taskTray.querySelector('.codex-task-empty');
+    empty.textContent = query
+      ? this.t('noSearchResults')
+      : this.taskView === 'history' ? this.t('emptyHistory') : this.t('emptyTasks');
+    empty.hidden = tasks.length > 0;
   }
 
   #openTask(task) {
@@ -1657,10 +1723,18 @@ export class CodexCompanion {
     const connectedLabel = this.locale === 'en-US' ? 'Messages synced' : '消息已同步';
     strong.textContent = `${PROVIDERS[provider].name} · ${connected ? connectedLabel : enabled ? this.t('attention') : this.t('readyConnect')}`;
     const active = snapshot.tasks?.filter((task) => task.activity === CODEX_ACTIVITY.RUNNING).length || 0;
-    small.textContent = connected
+    const connectionSummary = connected
       ? `${snapshot.homeLabel || PROVIDERS[provider].name} · ${active} ${this.t('statusRunning')} · ${snapshot.unreadCount || 0} ${this.t('statusReady')}`
       : enabled ? (snapshot.reason || this.t('controlWaiting')) : this.t('disabled');
-    this.configPanel.querySelector('.codex-sync-state').textContent = connected ? this.t('messagesNormal') : enabled ? this.t('connConnecting') : this.t('disabled');
+    const hookNote = provider === 'codex'
+      ? snapshot.hookStatus === 'error'
+        ? `${this.t('hookInstallFailed')}: ${snapshot.hookError || ''}`
+        : snapshot.hookStatus === 'installed' ? this.t('hookReview') : ''
+      : '';
+    small.textContent = [connectionSummary, hookNote].filter(Boolean).join(' · ');
+    this.configPanel.querySelector('.codex-sync-state').textContent = snapshot.hookStatus === 'error'
+      ? this.t('hookInstallFailed')
+      : connected ? this.t('messagesNormal') : enabled ? this.t('connConnecting') : this.t('disabled');
     this.configPanel.querySelector('.codex-reply-state').textContent = !config.managedReplies
       ? this.t('disabled')
       : config.replyTransport === 'desktop'

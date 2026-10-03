@@ -41,8 +41,23 @@ export function codexDropLength({ petHeight = 64, baseY = 150, viewportHeight = 
 export function applyCodexMotionImpulse(physics, impulse) {
   const value = Number(impulse) || 0;
   if (!physics || !value) return false;
-  if (physics.charmMode) physics.turtle.vx += value;
-  else physics.pendulumOmega += value;
+  if (physics.charmMode) {
+    // The impulse is an angular-velocity change, matching pendulumOmega in
+    // classic mode. Convert it to tangential px/s at the charm's current radius
+    // so the turtle and the rope endpoint receive the same swing.
+    const dx = physics.turtle.x - physics.pulley.x;
+    const dy = physics.turtle.y - physics.pulley.y;
+    const radius = Math.hypot(dx, dy);
+    if (radius > 0.001) {
+      physics.turtle.vx += value * dy;
+      physics.turtle.vy -= value * dx;
+    } else {
+      const fallbackRadius = Math.max(1, physics.restRopeLength || physics.ropeLength || 1);
+      physics.turtle.vx += value * fallbackRadius;
+    }
+  } else {
+    physics.pendulumOmega += value;
+  }
   return true;
 }
 

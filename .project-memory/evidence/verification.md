@@ -1,5 +1,22 @@
 # Verification evidence and smoke checklist
 
+## Codex Desktop lifecycle hooks (working tree, 2026-10-03)
+
+Status: Confirmed for targeted lifecycle/state regression tests and the free-edition source build. Evidence: `src/main/codex-hooks.mjs`, `src/main/codex-monitor.js`, `tests/codex-hooks.test.mjs`, `tests/codex-integration.test.mjs`, and `tests/codex-state-db.test.mjs`.
+
+- `node --test tests/codex-hooks.test.mjs tests/codex-integration.test.mjs tests/codex-state-db.test.mjs`: 80/80 passed.
+- `npm run build`: passed for the free edition; existing font runtime-resolution and renderer chunk-size warnings remain non-blocking.
+- A live Codex Desktop Hook review/trust flow has not been manually confirmed. No installer was generated.
+
+## Codex task status and unread repair (working tree, 2026-10-01)
+
+Status: Confirmed for the current working-tree repair. Evidence: `tests/codex-integration.test.mjs` and completed command results.
+
+- `npm test`: 352/352 passed.
+- `npm run verify`: passed; icon SHA-256 `84e4b2ddd07e751a19259a0e1956ae8267716137e760837fdb29f5d05ab2faac`.
+- `git diff --check`: passed.
+- No installer was generated. Codex task status UI was not independently inspected in a live app session.
+
 Status: Confirmed for revision `f464545` in the source environment used on 2026-07-31. Evidence: command results from the completed implementation turn and repository tests.
 
 ## Latest committed baseline

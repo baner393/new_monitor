@@ -1,7 +1,44 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildFoilAssets, buildSlabTexture } from '../src/renderer/charm-foil.js';
+import { buildFoilAssets, buildSlabTexture, buildSlabGeometry } from '../src/renderer/charm-foil.js';
 import { applyFlip, createFlipState } from '../src/renderer/charm-flip.js';
+import { updateMetalUniforms } from '../src/renderer/charm-metal.js';
+
+test('金属反射只随姿态变化，同角度多圈、速度和能量不改变反射', () => {
+  const uniforms = { uMetalYaw: new Float32Array(2), uMetalRotation: new Float32Array(2), uMetalDepth: 0 };
+  const state = { ...createFlipState(), spinY: 1.2, tilt: 0.3, spinZ: 0.2 };
+  updateMetalUniforms(uniforms, state, 0.4);
+  const snapshot = JSON.stringify(uniforms);
+  updateMetalUniforms(uniforms, { ...state, spinY: state.spinY + Math.PI * 20, energy: 1, velY: 99, t: 1000 }, 0.4);
+  assert.equal(JSON.stringify(uniforms), snapshot);
+  for (const key of ['spinY', 'tilt', 'spinZ']) {
+    updateMetalUniforms(uniforms, { ...state, [key]: state[key] + 0.2 }, 0.4);
+    assert.notEqual(JSON.stringify(uniforms), snapshot, `${key} 要改变环境反射方向`);
+  }
+  const layer = { scale: {}, position: {}, metalUniforms: uniforms };
+  applyFlip({ slices: [layer] }, state, { baseScale: 1, edgeBase: 1 / 3, thickness: 6, span: 96 });
+  assert.equal(layer.tint, 0xffffff, '正式 shader 的反射不可再乘固定灰色 tint');
+  assert.equal(uniforms.uMetalDepth, 0.5);
+});
+
+test('侧壁轮廓法线取相邻行坡度，断开行段不互相影响', () => {
+  const width = 30, height = 9;
+  const pixels = new Uint8ClampedArray(width * height * 4);
+  for (let y = 0; y < height; y++) {
+    const row = Math.floor(y / 3);
+    for (const [left, right] of [[3 + row * 3, 18 - row * 3], [24, 27]]) {
+      for (let x = left; x < right; x++) pixels[(y * width + x) * 4 + 3] = 255;
+    }
+  }
+  const geometry = buildSlabGeometry({ width, height, getContext: () => ({ getImageData: () => ({ data: pixels }) }) });
+  assert.equal(geometry.slopes.length, geometry.vertices.length);
+  for (let i = 0; i < geometry.slopes.length; i += 16) {
+    assert.equal(geometry.slopes[i], 1);
+    assert.equal(geometry.slopes[i + 1], -1);
+    assert.equal(geometry.slopes[i + 8], 0);
+    assert.equal(geometry.slopes[i + 9], 0);
+  }
+});
 
 test('金属背板只保留皮肤轮廓，与正面图案颜色独立，并带局部反光', () => {
   const previous = globalThis.document;

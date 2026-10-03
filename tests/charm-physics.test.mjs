@@ -1,12 +1,22 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import PhysicsEngine from '../src/renderer/physics.js';
+import { charmRopeAttachment } from '../src/renderer/ring-rope.js';
 
 function freshEngine() {
   const engine = new PhysicsEngine();
   engine.setContext({ state: 'IDLE', windowWidth: 1000, windowHeight: 800, turtleSize: 48 });
   return engine;
 }
+
+test('native ring anchoring stays beyond screen edges and physics uses the same visible rim', () => {
+  const engine = freshEngine(), anchor = { x: 1020, y: 825 };
+  engine.turtle.x = 800; engine.turtle.y = 600;
+  engine.setCharmAnchor(anchor, 0.8);
+  assert.deepEqual(engine.charmMountAnchor, anchor);
+  const rim = charmRopeAttachment(anchor, engine.turtle, 0.8);
+  assert.deepEqual({ x: engine.pulley.x, y: engine.pulley.y }, rim);
+});
 
 test('enterCharmMode seeds turtle from current pose and zeroes pendulum', () => {
   const engine = freshEngine();

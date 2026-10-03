@@ -2,7 +2,17 @@
 import * as PIXI from 'pixi.js';
 import { BaseTexture, SCALE_MODES } from 'pixi.js';
 import './index.css';
-const publicAssetUrl = (relativePath) => new URL(relativePath, window.location.href).href;
+const publicAssetUrl = (assetPath) => {
+  if (typeof assetPath !== 'string' || !assetPath.trim()) throw new TypeError('Asset path must be a non-empty string');
+  if (/^(data:|file:|https?:\/\/)/i.test(assetPath)) return new URL(assetPath).href;
+  if (window.location.protocol === 'file:') {
+    return new URL(assetPath.replace(/^\/+/, ''), new URL('./', window.location.href)).href;
+  }
+  if (window.location.protocol === 'http:' || window.location.protocol === 'https:') {
+    return new URL(assetPath.replace(/^\/+/, '').replace(/^\.\//, ''), `${window.location.origin}/`).href;
+  }
+  return new URL(assetPath, window.location.href).href;
+};
 const idleSpriteUrl = publicAssetUrl('./assets/sprites/idle.png');
 const hoverSpriteUrl = publicAssetUrl('./assets/sprites/hover.png');
 const pullSpriteUrl = publicAssetUrl('./assets/sprites/pull.png');
@@ -29,6 +39,7 @@ import { resolveMousePassthrough } from './mouse-passthrough.js';
 import { CharmAnchorSampler } from './charm-anchor.js';
 import { createCharmMountSprite, CHARM_MOUNT_ANCHOR_OFFSET, resolveCharmMountPose } from './charm-mount.js';
 import { buildFoilAssets, buildSlabTexture, buildSlabGeometry } from './charm-foil.js';
+import { METAL_VERTEX, METAL_FRAGMENT } from './charm-metal.js';
 import { createFlipState, updateFlip, applyFlip, syncLayerScales, knobsToFlipConfig, FLIP_DEFAULTS } from './charm-flip.js';
 import { RingMenu } from './ring-menu.js';
 import { preloadRingIconTextures } from './ring-icons.js';
@@ -161,6 +172,9 @@ pixiApp.stage.addChild(turtleContainer);
 // 边缘」的遮挡关系由此形成。
 const charmMountSprite = createCharmMountSprite();
 pixiApp.stage.addChild(charmMountSprite);
+let cursorMountState = { active: false, supported: false, mountOffset: CHARM_MOUNT_ANCHOR_OFFSET, ringScale: 1 };
+window.electronAPI.cursorMount?.onState?.(state => { cursorMountState = state; });
+window.electronAPI.cursorMount?.getState?.().then(state => { if (state) cursorMountState = state; }).catch(() => {});
 
 // ── holo 箔层（暗场全息挂饰效果，随皮肤重建）────────────────────────
 // 宠物平时是原色；摆动掠过反光相位时表面泛起暗场全息（近黑镜面 + 彩虹
@@ -277,16 +291,30 @@ function rebuildFoilAssets(sourceImg, grip) {
     foilEdgeSprite.position.set(bodySprite.x, bodySprite.y);
 
     // 行段网格覆盖完整深度，窄轮廓在90°也不会漏出两面之间的空隙。
-    for (const old of foilFx.slices) old.destroy();
+    for (const old of foilFx.slices) {
+      old.shader.destroy();
+      old.destroy();
+    }
     foilFx.slices = [];
     foilFx.slabTexture?.destroy(true);
     const slabCanvas = buildSlabTexture(sourceImg);
     const slabTex = PIXI.Texture.from(slabCanvas, { scaleMode: PIXI.SCALE_MODES.LINEAR });
     foilFx.slabTexture = slabTex;
     const slabGeometry = buildSlabGeometry(slabCanvas, assets.grip);
+    const metalProgram = PIXI.Program.from(METAL_VERTEX, METAL_FRAGMENT);
     for (let i = 0; i < SLAB_SLICE_COUNT; i++) {
       const slice = new PIXI.SimpleMesh(slabTex, slabGeometry.vertices.slice(),
         slabGeometry.uvs.slice(), slabGeometry.indices.slice());
+      slice.geometry.addAttribute('aContourSlope', slabGeometry.slopes.slice(), 2);
+      slice.geometry.addAttribute('aDepthCoordinate', slabGeometry.depthCoordinates.slice(), 1);
+      slice.shader.destroy();
+      slice.shader = new PIXI.MeshMaterial(slabTex, {
+        program: metalProgram,
+        uniforms: { uMetalYaw: new Float32Array([1, 0]), uMetalRotation: new Float32Array([1, 0]),
+          uMetalDepth: (i + 0.5) / SLAB_SLICE_COUNT, uMetalHeight: slabCanvas.height,
+          uMetalBandWidth: 1 / SLAB_SLICE_COUNT, uMetalDepthDirection: 1 },
+      });
+      slice.metalUniforms = slice.shader.uniforms;
       slice.slabVertices = slabGeometry.vertices;
       slice.scale.set(displayScale);
       slice.position.set(0, 0);
@@ -387,6 +415,7 @@ function updateFoilFx(dt) {
       thickness: Math.max(2, Math.min(9, displayW * flipConfig.thicknessRatio)),
       span: displayW, // 光带扫动范围 = 精灵显示宽
       backMaterial: flipConfig.backMaterial,
+      holoIntensity: flipConfig.holoIntensity,
     },
   );
 }
@@ -658,7 +687,7 @@ const skinSelector = new SkinSelector({
 document.body.appendChild(skinSelector.container);
 
 // Load skins config
-skinSelector.loadSkins('./assets/skins/skins.json');
+skinSelector.loadSkins(publicAssetUrl('./assets/skins/skins.json'));
 
 // Reload skins when imported from custom mode
 if (window.electronAPI?.onSkinsReloaded) {
@@ -693,17 +722,33 @@ skinSelector.onSkinChange = async (skinId, skinConfig) => {
   console.log(`[Skin] Switching to: ${skinId}`, skinConfig);
   const frames = skinConfig.frames || skinConfig.sprites;
   if (frames) {
-    settingsPanel.setPreviewImage(frames.idle);
+    if (typeof frames.idle !== 'string' || !frames.idle.trim()) {
+      console.error(`[Skin] Failed to load ${skinId}; idle asset path is missing`);
+      return;
+    }
+    let idleUrl, hoverUrl, pullUrl, happyUrl, painUrl, blinkUrl;
+    try {
+      idleUrl = publicAssetUrl(frames.idle);
+      hoverUrl = publicAssetUrl(frames.hover || frames.idle);
+      pullUrl = publicAssetUrl(frames.pull || frames.idle);
+      happyUrl = publicAssetUrl(frames.happy || frames.idle);
+      painUrl = publicAssetUrl(frames.pain || frames.idle);
+      blinkUrl = publicAssetUrl(frames.blink_closed || frames.blink || frames.idle);
+    } catch (error) {
+      console.error(`[Skin] Failed to load ${skinId}; invalid asset path:`, error);
+      return;
+    }
+    settingsPanel.setPreviewImage(idleUrl);
     const revision = ++skinLoadRevision;
     let textures;
     try {
       textures = await Promise.all([
-        loadTexture(frames.idle),
-        loadTexture(frames.hover || frames.idle),
-        loadTexture(frames.pull || frames.idle),
-        loadTexture(frames.happy || frames.idle),
-        loadTexture(frames.pain || frames.idle),
-        loadTexture(frames.blink_closed || frames.blink || frames.idle),
+        loadTexture(idleUrl),
+        loadTexture(hoverUrl),
+        loadTexture(pullUrl),
+        loadTexture(happyUrl),
+        loadTexture(painUrl),
+        loadTexture(blinkUrl),
       ]);
     } catch (error) {
       console.error(`[Skin] Failed to load ${skinId}; keeping current texture:`, error);
@@ -728,6 +773,7 @@ skinSelector.onSkinChange = async (skinId, skinConfig) => {
       x: Math.min(0.9, Math.max(0.1, Number(grip.x) || 0.5)),
       y: Math.min(0.45, Math.max(0, Number(grip.y) || 0.12)),
     };
+    settingsPanel.setPreviewImage(idleUrl, currentGripPoint);
     bodySprite.anchor.set(currentGripPoint.x, currentGripPoint.y);
     backSprite.anchor.copyFrom(bodySprite.anchor);
     // Get saved turtleSize from settings panel or use default
@@ -1562,6 +1608,16 @@ pixiApp.ticker.add((delta) => {
   if (ringActive && ringCenter) lastRingCenter = ringCenter;
   ringWasActive = ringActive;
 
+  // The OS cursor keeps moving while panels or pet interactions freeze physics.
+  // Its rigid ring position therefore remains live in every charm state.
+  if (isCharm) {
+    charmAnchorSampler.pollOnce({ staleAfterMs: 16 });
+    const cursor = charmAnchorSampler.sample();
+    if (cursor) physics.setCharmAnchor({
+      x: cursor.x + (cursorMountState.mountOffset?.x || 0),
+      y: cursor.y + (cursorMountState.mountOffset?.y || 0),
+    }, cursorMountState.ringScale || 1, cursorMountState.ringGeometry);
+  }
   // Update physics (skipped during PULLING and BOUNCING)
   if (ringActive) {
     // 环形菜单开环：宠物钉死为圆心，全部物理静置（角色互换模型）
@@ -1571,18 +1627,6 @@ pixiApp.ticker.add((delta) => {
   } else {
     // 挂饰模式：光标驱动滑轮（面板打开/面板态冻结锚点），乌龟跑同一套 2D 方程。
     // 锚点 = 环底（光标 + 环偏移），金属环画在锚点上、绳从环底垂下。
-    if (state === 'IDLE' && !charmAnchorFrozen() && !monitorPanelStateActive(state)) {
-      // 跟随手感关键：每帧单飞 IPC 采样，锚点延迟 = 单次 IPC 往返（2-4ms），
-      // 而不是 80ms 轮询的 12.5Hz 跳步。
-      charmAnchorSampler.pollOnce();
-      const cursor = charmAnchorSampler.sample();
-      if (cursor) {
-        physics.setCharmAnchor({
-          x: cursor.x + CHARM_MOUNT_ANCHOR_OFFSET.x,
-          y: cursor.y + CHARM_MOUNT_ANCHOR_OFFSET.y,
-        });
-      }
-    }
     physics.updateCharmStep(dt);
 
     // 疼表情：与 PULLEY_PHYSICS 分支同一通道（状态分支链之外）
@@ -1619,15 +1663,21 @@ pixiApp.ticker.add((delta) => {
     isCharmMode: isCharm,
     ringVisible: ringActive,
     cursor: ringActive ? ringMenuCursor() : null,
-    mountAnchor: physics.pulley,
+    mountAnchor: physics.charmMountAnchor || physics.pulley,
+    supported: cursorMountState.active && cursorMountState.supported,
+    mountOffset: cursorMountState.mountOffset || CHARM_MOUNT_ANCHOR_OFFSET,
   });
   if (ringActive && mountPose.position) {
     lastRingMountPosition = { ...mountPose.position };
-  } else if (ringExit?.mount && mountPose.position) {
+  } else if (!cursorMountState.ringEmbedded && ringExit?.mount && mountPose.position) {
     mountPose.position.x += (ringExit.mount.x - mountPose.position.x) * ringExitWeight;
     mountPose.position.y += (ringExit.mount.y - mountPose.position.y) * ringExitWeight;
   }
-  charmMountSprite.visible = mountPose.visible;
+  charmMountSprite.visible = mountPose.visible && !cursorMountState.ringEmbedded;
+  charmMountSprite.scale.set(cursorMountState.ringScale || 1);
+  const showCharm = !isCharm || (cursorMountState.active && cursorMountState.supported);
+  turtleContainer.visible = showCharm;
+  ropeContainer.visible = showCharm;
   if (mountPose.position) charmMountSprite.position.set(mountPose.position.x, mountPose.position.y);
   setCharmMountRingLayer(isCharm && ringActive);
   // During open and close, the actual rope crosses the annulus visibly. Move
@@ -1867,10 +1917,12 @@ pixiApp.ticker.add((delta) => {
     const displayLength = Math.max(1, baseLength + motionFrame.lengthOffset);
     sprite.x = anchorX + Math.sin(displayAngle) * displayLength;
     sprite.y = anchorY + Math.cos(displayAngle) * displayLength;
-    bodySprite.rotation = motionFrame.rotation;
-  } else {
-    bodySprite.rotation = 0;
   }
+  // Task-running tilt is a pet-level swing: rotate the whole charm stack so
+  // the outline, foil, back plate and face share the same pivot. Rotating only
+  // bodySprite leaves sibling metal layers behind and exposes a detached edge.
+  turtleContainer.rotation = (foilFx.maskSprite ? flipState.tilt + flipState.spinZ * 0.55 : 0)
+    + (codexMotionEnabled ? motionFrame.rotation : 0);
   // Edge clamping can shift the menu center away from the physical pet. Blend
   // the visible pet back after closing while its underlying physics resumes.
   if (ringExit) {
@@ -1969,7 +2021,7 @@ pixiApp.ticker.add((delta) => {
   if (isCharm && mountPose.visible && mountPose.position) {
     // During the menu the ring follows the real cursor. Attach the rope to
     // that same metal rim, so aiming stretches and turns the actual rope.
-    const attachment = charmRopeAttachment(mountPose.position, sprite);
+    const attachment = charmRopeAttachment(mountPose.position, sprite, cursorMountState.ringScale || 1, cursorMountState.ringGeometry);
     ropeAnchorX = attachment.x;
     ropeAnchorY = attachment.y;
   }
