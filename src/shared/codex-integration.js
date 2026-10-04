@@ -159,7 +159,9 @@ function taskCapabilities(task) {
   const connected = task.connectionState === CODEX_CONNECTION.CONNECTED;
   const ownedRequest = Boolean(task.hasOwnedRequest);
   return {
-    reply: connected,
+    // Desktop-compatible mode can reply through the owning client without an
+    // App Server connection. Preserve the provider's explicit capability.
+    reply: typeof task.canReply === 'boolean' ? task.canReply : connected,
     approve: connected && ownedRequest,
     interrupt: connected && Boolean(task.canInterrupt || task.activeTurnId),
     jump: true,
@@ -175,20 +177,11 @@ export function buildCodexVisibleTasks(tasks = [], unread = []) {
       threadId: String(source.id),
       events: [],
       unreadCount: 0,
-      runningChildren: 0,
+      subagentSummary: source.subagentSummary || null,
       capabilities: taskCapabilities(source),
     };
     delete task.messages;
     grouped.set(task.threadId, task);
-  }
-
-  for (const task of grouped.values()) {
-    if (!task.parentThreadId || !grouped.has(String(task.parentThreadId))) continue;
-    if (task.activity === CODEX_ACTIVITY.RUNNING) {
-      const parent = grouped.get(String(task.parentThreadId));
-      parent.runningChildren += 1;
-      if (parent.activity === CODEX_ACTIVITY.SILENT) parent.activity = CODEX_ACTIVITY.RUNNING;
-    }
   }
 
   for (const event of sortCodexUnreadEvents(unread)) {
@@ -197,13 +190,14 @@ export function buildCodexVisibleTasks(tasks = [], unread = []) {
     const current = grouped.get(threadId) || {
       id: threadId,
       threadId,
+      provider: event.provider,
       title: event.title,
       project: event.project,
       activity: event.activity,
       updatedAtMs: event.createdAtMs,
       events: [],
       unreadCount: 0,
-      runningChildren: 0,
+      subagentSummary: null,
       connectionState: CODEX_CONNECTION.DISCONNECTED,
       capabilities: { reply: false, approve: false, interrupt: false, jump: true },
     };
@@ -221,17 +215,64 @@ export function buildCodexVisibleTasks(tasks = [], unread = []) {
   }
 
   const all = [...grouped.values()];
-  const visibleTasks = all
+  const isChildTask = (task) => Boolean(task.parentThreadId);
+  const rootTaskFor = (task) => {
+    let current = task;
+    const visited = new Set([String(task.threadId || task.id)]);
+    while (isChildTask(current)) {
+      const parentId = String(current.parentThreadId);
+      if (visited.has(parentId)) break;
+      const parent = grouped.get(parentId);
+      if (!parent) break;
+      visited.add(parentId);
+      current = parent;
+    }
+    return current;
+  };
+  const subagentSummaries = new Map();
+  for (const task of all) {
+    if (!isChildTask(task)) continue;
+    let state = '';
+    if (task.activity === CODEX_ACTIVITY.RUNNING) state = 'running';
+    else if (task.activity === CODEX_ACTIVITY.NEEDS_INPUT) state = 'needsInput';
+    else if (task.activity === CODEX_ACTIVITY.BLOCKED) state = 'blocked';
+    if (!state) continue;
+    const root = rootTaskFor(task);
+    const rootId = String(root.threadId || root.id);
+    const summary = subagentSummaries.get(rootId) || {
+      running: 0,
+      needsInput: 0,
+      blocked: 0,
+      total: 0,
+    };
+    summary[state] += 1;
+    summary.total += 1;
+    subagentSummaries.set(rootId, summary);
+  }
+  for (const [rootId, summary] of subagentSummaries) {
+    const root = grouped.get(rootId);
+    if (root) {
+      root.subagentSummary = summary;
+      root.runningChildren = summary.running;
+    }
+  }
+
+  const rootTasks = all.filter((task) => !isChildTask(task));
+  const actionableChildren = all.filter((task) => isChildTask(task)
+    && (task.unreadCount > 0
+      || task.activity === CODEX_ACTIVITY.NEEDS_INPUT
+      || task.activity === CODEX_ACTIVITY.BLOCKED));
+  const rootUnread = sortCodexUnreadEvents(unread).filter((event) => {
+    const child = grouped.get(String(event?.threadId || ''));
+    return !child || !isChildTask(child);
+  });
+  const visibleTasks = [...rootTasks, ...actionableChildren]
     .filter((task) => {
-      const child = task.parentThreadId && grouped.has(String(task.parentThreadId));
-      const childNeedsOwnRow = task.unreadCount > 0
-        || task.activity === CODEX_ACTIVITY.NEEDS_INPUT
-        || task.activity === CODEX_ACTIVITY.BLOCKED;
-      if (child && !childNeedsOwnRow) return false;
       return task.unreadCount > 0
         || task.activity === CODEX_ACTIVITY.RUNNING
         || task.activity === CODEX_ACTIVITY.NEEDS_INPUT
         || task.activity === CODEX_ACTIVITY.BLOCKED
+        || Number(task.subagentSummary?.total) > 0
         || task.connectionState !== CODEX_CONNECTION.DISCONNECTED;
     })
     .sort((left, right) => {
@@ -248,9 +289,11 @@ export function buildCodexVisibleTasks(tasks = [], unread = []) {
     });
 
   return {
+    rootTasks,
+    rootUnread,
     visibleTasks,
-    runningCount: all.filter((task) => task.activity === CODEX_ACTIVITY.RUNNING).length,
-    unreadTaskCount: all.filter((task) => task.unreadCount > 0).length,
+    runningCount: rootTasks.filter((task) => task.activity === CODEX_ACTIVITY.RUNNING).length,
+    unreadTaskCount: rootTasks.filter((task) => task.unreadCount > 0).length,
   };
 }
 

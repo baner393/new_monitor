@@ -328,6 +328,7 @@ function snapshotRolloutState(state, { enabledAtMs = 0, readEventIds = new Set()
     model: state.model || '',
     activity: running ? CODEX_ACTIVITY.RUNNING : CODEX_ACTIVITY.SILENT,
     updatedAtMs,
+    activityUpdatedAtMs: Math.max(state.lastStartedAtMs, state.lastFinishedAtMs),
     managed: false,
     messages: state.messages,
     historyComplete: state.historyComplete,
@@ -1036,7 +1037,7 @@ export class CodexMonitor {
       this.tasks.set(id, {
         ...task,
         ...catalog,
-        activity: Number(task.updatedAtMs || 0) >= Number(catalog?.updatedAtMs || 0)
+        activity: Number(task.activityUpdatedAtMs || 0) >= Number(catalog?.activityUpdatedAtMs || 0)
           ? task.activity
           : (catalog?.activity || task.activity),
         title: indexed?.title || (catalog?.hasSavedName ? catalog.title : task.title),
@@ -1044,6 +1045,10 @@ export class CodexMonitor {
         messages: catalog?.messages?.length ? catalog.messages : task.messages,
         historyComplete: catalog?.messages?.length ? true : task.historyComplete,
         updatedAtMs: Math.max(Number(catalog?.updatedAtMs || 0), Number(task.updatedAtMs || 0)),
+        activityUpdatedAtMs: Math.max(
+          Number(catalog?.activityUpdatedAtMs || 0),
+          Number(task.activityUpdatedAtMs || 0),
+        ),
       });
     }
     await this.#reconcileDesiredConnections();
@@ -1144,7 +1149,9 @@ export class CodexMonitor {
       })?.task;
       if (!threadId || !task) continue;
       const eventName = String(event.hook_event_name || '');
-      const activity = ['UserPromptSubmit', 'PreToolUse', 'PostToolUse'].includes(eventName) ? CODEX_ACTIVITY.RUNNING
+      const isUserInputRequest = eventName === 'PreToolUse' && event.isUserInputRequest === true;
+      const activity = isUserInputRequest ? CODEX_ACTIVITY.NEEDS_INPUT
+        : ['UserPromptSubmit', 'PreToolUse', 'PostToolUse'].includes(eventName) ? CODEX_ACTIVITY.RUNNING
         : eventName === 'PermissionRequest' ? CODEX_ACTIVITY.NEEDS_INPUT
           : eventName === 'Interrupt' ? CODEX_ACTIVITY.BLOCKED
             : eventName === 'Stop' ? CODEX_ACTIVITY.READY : '';
@@ -1157,8 +1164,9 @@ export class CodexMonitor {
 
       task.updatedAtMs = Math.max(Number(task.updatedAtMs || 0), timestampMs);
       task.activity = eventName === 'Stop' ? CODEX_ACTIVITY.SILENT : activity;
+      task.activityUpdatedAtMs = Math.max(Number(task.activityUpdatedAtMs || 0), timestampMs);
       nextTasks.set(threadId, task);
-      if (['UserPromptSubmit', 'PreToolUse', 'PostToolUse'].includes(eventName)) {
+      if (!isUserInputRequest && ['UserPromptSubmit', 'PreToolUse', 'PostToolUse'].includes(eventName)) {
         for (let index = existingUnread.length - 1; index >= 0; index -= 1) {
           if (existingUnread[index].threadId === threadId && existingUnread[index].createdAtMs <= timestampMs) {
             existingUnread.splice(index, 1);
@@ -1185,12 +1193,13 @@ export class CodexMonitor {
         project: task.project,
         activity,
         kind: eventName === 'Stop' ? 'turn-ended'
-          : eventName === 'Interrupt' ? 'interrupted' : 'permission-request',
+          : eventName === 'Interrupt' ? 'interrupted'
+            : isUserInputRequest ? 'user-input-request' : 'permission-request',
         message: eventName === 'Stop'
           ? 'Codex 已结束这一回合，但没有提供可判定成功或失败的结果。'
           : eventName === 'Interrupt'
             ? 'Codex 回合已被中断。'
-            : 'Codex 正在等待权限处理。',
+            : isUserInputRequest ? 'Codex 正在等待你的回答。' : 'Codex 正在等待权限处理。',
         createdAtMs: timestampMs,
         managed: false,
         canReply: false,
@@ -1290,7 +1299,8 @@ export class CodexMonitor {
         },
       };
     });
-    const taskSummary = buildCodexVisibleTasks(allTasks, allUnread);
+    const { rootTasks, rootUnread, ...taskSummary } = buildCodexVisibleTasks(allTasks, allUnread);
+    const taskActivityById = new Map(allTasks.map((task) => [task.id, task.activity]));
     const notified = new Set(this.config.notifiedEventIds);
     this.lastSnapshot = {
       configured: true,
@@ -1303,13 +1313,20 @@ export class CodexMonitor {
       hookError: this.hookError,
       source: this.clientReady ? 'app-server+sessions' : 'sessions',
       reasoningModels: this.reasoningModels,
-      activity: resolveCodexActivity({ connected: true, tasks: allTasks, unread: allUnread }),
-      tasks: allTasks
-        .map(({ messages, ...summary }) => summary)
+      activity: resolveCodexActivity({
+        connected: true,
+        tasks: rootTasks,
+        unread: rootUnread,
+      }),
+      tasks: rootTasks
+        .map(({ messages, ...summary }) => ({
+          ...summary,
+          activity: taskActivityById.get(summary.id) ?? summary.activity,
+        }))
         .sort((left, right) => Number(right.updatedAtMs || 0) - Number(left.updatedAtMs || 0)),
-      unread: allUnread,
-      alerts: allUnread.filter((event) => !notified.has(event.id)),
-      unreadCount: allUnread.length,
+      unread: rootUnread,
+      alerts: rootUnread.filter((event) => !notified.has(event.id)),
+      unreadCount: rootUnread.length,
       ...taskSummary,
       updatedAtMs: Date.now(),
       reason: '',
@@ -1752,6 +1769,7 @@ export class CodexMonitor {
           model: String(thread.model || ''),
           activity: codexActivityFromThreadStatus(status),
           updatedAtMs: timestampToMs(thread.updatedAt || thread.createdAt),
+          activityUpdatedAtMs: timestampToMs(thread.updatedAt || thread.createdAt),
           managed: false,
           messages: this.catalogTasks.get(id)?.messages || [],
           hasSavedName: Boolean(savedName),
@@ -1770,13 +1788,17 @@ export class CodexMonitor {
       else this.tasks.set(id, {
         ...task,
         ...catalogTask,
-        activity: Number(task.updatedAtMs || 0) >= Number(catalogTask.updatedAtMs || 0)
+        activity: Number(task.activityUpdatedAtMs || 0) >= Number(catalogTask.activityUpdatedAtMs || 0)
           ? task.activity
           : (catalogTask.activity || task.activity),
         title: catalogTask.hasSavedName ? catalogTask.title : task.title,
         messages: catalogTask.messages?.length ? catalogTask.messages : task.messages,
         historyComplete: catalogTask.messages?.length ? true : task.historyComplete,
         updatedAtMs: Math.max(Number(catalogTask.updatedAtMs || 0), Number(task.updatedAtMs || 0)),
+        activityUpdatedAtMs: Math.max(
+          Number(catalogTask.activityUpdatedAtMs || 0),
+          Number(task.activityUpdatedAtMs || 0),
+        ),
       });
     }
   }
@@ -1840,7 +1862,16 @@ export class CodexMonitor {
       managed: true,
       messages: [],
     };
-    this.managedTasks.set(threadId, { ...base, ...patch, id: threadId, managed: true });
+    const activityTimestamp = Object.prototype.hasOwnProperty.call(patch, 'activity')
+      ? Number(patch.activityUpdatedAtMs || patch.updatedAtMs || Date.now())
+      : Number(patch.activityUpdatedAtMs || base.activityUpdatedAtMs || 0);
+    this.managedTasks.set(threadId, {
+      ...base,
+      ...patch,
+      activityUpdatedAtMs: activityTimestamp,
+      id: threadId,
+      managed: true,
+    });
   }
 
   #appendManagedMessage(threadId, role, message) {
@@ -2038,7 +2069,12 @@ export class CodexMonitor {
     this.pendingRequests.delete(String(requestId));
     this.managedUnread.delete(pending.eventId);
     const task = this.managedTasks.get(pending.threadId);
-    if (task?.activity === CODEX_ACTIVITY.NEEDS_INPUT) task.activity = task.activeTurnId ? CODEX_ACTIVITY.RUNNING : CODEX_ACTIVITY.SILENT;
+    if (task?.activity === CODEX_ACTIVITY.NEEDS_INPUT) {
+      const updatedAtMs = Date.now();
+      task.activity = task.activeTurnId ? CODEX_ACTIVITY.RUNNING : CODEX_ACTIVITY.SILENT;
+      task.updatedAtMs = updatedAtMs;
+      task.activityUpdatedAtMs = updatedAtMs;
+    }
     this.#rebuildSnapshot();
   }
 

@@ -18,7 +18,7 @@ import {
   SoftRefreshCoordinator,
 } from './window-lifecycle.js';
 import { CodexMonitor, resolveCodexHome } from './codex-monitor.js';
-import { submitCodexDesktopClipboard, waitForCodexDesktopUserMessage } from './codex-desktop-bridge.js';
+import { submitCodexDesktopUIA, waitForCodexDesktopUserMessage } from './codex-desktop-bridge.js';
 import { ClaudeMonitor, resolveClaudeExecutables, resolveClaudeHome } from './claude-monitor.js';
 import {
   claudeVsCodeUri,
@@ -301,36 +301,45 @@ ipcMain.handle('codex-mark-notified', (_event, eventId) => codexMonitor?.markNot
 ipcMain.handle('codex-thread-connect', (_event, threadId) => codexMonitor?.connectThread(threadId));
 ipcMain.handle('codex-thread-disconnect', (_event, threadId) => codexMonitor?.disconnectThread(threadId));
 ipcMain.handle('codex-reply', async (_event, payload) => {
-  const submittedAtMs = Date.now();
+  const requestStartedAtMs = Date.now();
   const result = await codexMonitor?.reply(payload?.threadId, payload?.text);
   if (!result?.openDesktop) return result;
-  clipboard.writeText(String(payload?.text || ''));
   try {
-    await shell.openExternal(`codex://threads/${encodeURIComponent(result.threadId)}`);
-  } catch (error) {
+    const submitted = await submitCodexDesktopUIA({
+      text: payload?.text,
+      threadId: result.threadId,
+    });
+    const recorded = submitted.submitAction === 'queue'
+      ? submitted.queueConfirmed === true
+      : await waitForCodexDesktopUserMessage({
+        text: payload?.text,
+        sinceMs: requestStartedAtMs,
+        readMessages: async () => {
+          await codexMonitor?.scan(true);
+          const page = await codexMonitor?.getMessages(result.threadId, { limit: 100 });
+          return page?.messages || [];
+        },
+      });
+    if (!recorded) throw new Error('Codex client did not record the submitted message');
     return {
       ...result,
-      copied: true,
+      copied: false,
+      opened: false,
+      clientReused: true,
+      submitted: true,
+      submitAction: submitted.submitAction || 'send',
+      submittedAtMs: Number(submitted.submittedAtMs || Date.now()),
+      desktopProcessId: submitted.processId,
+    };
+  } catch (error) {
+    const detail = error?.message || String(error);
+    return {
+      ...result,
+      copied: false,
       opened: false,
       submitted: false,
-      openError: error?.message || String(error),
+      submitError: `Codex 客户端未确认收到消息，草稿已保留。${detail}`,
     };
-  }
-  try {
-    const submitted = await submitCodexDesktopClipboard({ text: payload?.text });
-    const recorded = await waitForCodexDesktopUserMessage({
-      text: payload?.text,
-      sinceMs: submittedAtMs,
-      readMessages: async () => {
-        await codexMonitor?.scan(true);
-        const page = await codexMonitor?.getMessages(result.threadId, { limit: 100 });
-        return page?.messages || [];
-      },
-    });
-    if (!recorded) throw new Error('Codex client did not record the submitted message');
-    return { ...result, copied: true, opened: true, submitted: true, desktopProcessId: submitted.processId };
-  } catch (error) {
-    return { ...result, copied: true, opened: true, submitted: false, submitError: error?.message || String(error) };
   }
 });
 ipcMain.handle('codex-respond', (_event, payload) => codexMonitor?.respond(payload?.requestId, payload?.response));

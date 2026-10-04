@@ -53,6 +53,11 @@ export function sanitizeCodexHookEvent(input, { now = Date.now } = {}) {
   if (sessionId) payload.session_id = sessionId;
   if (turnId) payload.turn_id = turnId;
   payload.hook_event_name = hookEventName;
+  if (hookEventName === 'PreToolUse'
+    && (input.isUserInputRequest === true
+      || boundedString(input.tool_name, 128).toLowerCase() === 'request_user_input')) {
+    payload.isUserInputRequest = true;
+  }
 
   const timestampValue = typeof now === 'function' ? now() : now;
   const timestamp = new Date(timestampValue);

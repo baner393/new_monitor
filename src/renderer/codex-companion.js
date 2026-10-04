@@ -85,22 +85,25 @@ export function combineProviderSnapshots(snapshots) {
     alerts.push(...(snapshot?.alerts || []).map((event) => providerEvent(provider, event)));
   }
   const sortedUnread = sortCodexUnreadEvents(unread);
-  const summary = buildCodexVisibleTasks(tasks, sortedUnread);
+  const { rootTasks, rootUnread, ...summary } = buildCodexVisibleTasks(tasks, sortedUnread);
+  const rootUnreadIds = new Set(rootUnread.map((event) => event.id));
+  const rootAlerts = sortCodexUnreadEvents(alerts).filter((event) => rootUnreadIds.has(event.id));
   return {
     configured: Object.values(snapshots).some((snapshot) => snapshot?.configured),
     enabled: Object.values(snapshots).some((snapshot) => snapshot?.enabled),
     connected: Object.values(snapshots).some((snapshot) => snapshot?.connected),
     locale: snapshots.codex?.locale || 'zh-CN',
-    activity: resolveCodexActivity({ connected: true, tasks, unread: sortedUnread }),
-    tasks,
-    unread: sortedUnread,
-    alerts: sortCodexUnreadEvents(alerts),
-    unreadCount: sortedUnread.length,
+    activity: resolveCodexActivity({ connected: true, tasks: rootTasks, unread: rootUnread }),
+    tasks: rootTasks,
+    unread: rootUnread,
+    alerts: rootAlerts,
+    unreadCount: rootUnread.length,
     ...summary,
     providerCounts: Object.fromEntries(Object.keys(PROVIDERS).map((provider) => [provider, {
-      tasks: (snapshots[provider]?.visibleTasks || []).length,
-      unread: Number(snapshots[provider]?.unreadCount || 0),
-      running: Number(snapshots[provider]?.runningCount || 0),
+      tasks: summary.visibleTasks.filter((task) => task.provider === provider).length,
+      unread: rootUnread.filter((event) => event.provider === provider).length,
+      running: rootTasks.filter((task) => task.provider === provider
+        && task.activity === CODEX_ACTIVITY.RUNNING).length,
     }])),
     updatedAtMs: Math.max(...Object.values(snapshots).map((snapshot) => Number(snapshot?.updatedAtMs || 0)), Date.now()),
   };
@@ -124,52 +127,56 @@ export function canReuseRenderedMessages({
 const TEXT = {
   'zh-CN': {
     liveTasks: '任务中心', emptyTasks: '当前没有活跃任务', emptyHistory: '没有历史任务', noSearchResults: '没有匹配的任务', activeTasks: '活跃', historyTasks: '历史', searchTasks: '搜索任务或项目…', close: '关闭', back: '返回任务列表',
-    openCodex: '打开 Codex', previousPage: '上一页', nextPage: '下一页', send: '发送', handoff: '复制并打开 Codex', replyPlaceholder: '直接回复这个任务…', desktopPlaceholder: '输入后复制到 Codex 同一任务…',
+    openCodex: '打开 Codex', previousPage: '上一页', nextPage: '下一页', send: '发送', handoff: '后台通过 Codex 客户端发送', replyPlaceholder: '直接回复这个任务…', desktopPlaceholder: '输入后尝试后台提交到同一 Codex 任务…',
     configTitle: '连接 Codex', configIntro: '同步全部任务；只有建立可操作连接的任务才能在气泡中直接回复和批准。',
     sync: '消息同步', control: '气泡回复与批准', enable: '启用 Codex 接入', disable: '断开同步', reconnect: '重新检测',
     dataLocation: '对话数据位置', selectHome: '选择其他目录', restoreAuto: '恢复自动检测', advanced: '高级设置',
     allowControl: '允许气泡回复与批准', allowControlNote: '开启后，可在任务气泡中发送消息并处理 Codex 的确认请求。',
-    replyTransport: '回复通道', replyDirect: 'Monitor 直连', replyDesktop: 'Codex 客户端兼容',
+    replyTransport: '回复通道', replyDirect: 'Monitor 直连', replyDesktop: 'Codex 客户端后台发送',
     newMessageView: '新消息展示', newMessageConversation: '完整对话', newMessageTasks: '任务动态',
     newMessageConversationNote: '新消息到达时直接打开完整对话，可立即阅读和回复。',
     newMessageTasksNote: '新消息到达时打开任务动态，先查看全部任务再选择对话。',
     replyDirectNote: '消息发送后留在当前窗口，继续查看 Codex 的回复。',
-    replyDesktopNote: '兼容模式不启动 Monitor 的第二 App Server。回复会复制到剪贴板并打开 Codex 的同一任务，请在客户端粘贴发送，以保持单一上下文。',
+    replyDesktopNote: '通过已运行且开放本机 CDP 的 Codex 客户端后台提交，不会主动打开或置前客户端，但可能切换 Codex 当前选中的任务；系统前台保持尚未实机验证。CDP 不可用或目标无法确认时会失败并保留草稿，不会改走 Monitor 直连。',
     localOnly: '数据只在本机读取，不需要 API Key。未连接的任务仍会提醒，并可准确跳转到 Codex。',
     autoPath: '当前用户的 .codex（自动检测）', noPath: '尚未选择目录', connect: '连接', disconnect: '断开', retry: '重试',
     noMessages: '暂时还没有可显示的回复。', loadOlder: '加载更早消息', you: '你', codex: 'Codex', toolCall: '工具调用', toolResult: '工具结果',
     submitAnswers: '提交回答', choose: '请选择', custom: '自己输入…', inputAnswer: '输入回答', answerAll: '请完成所有问题后再提交',
     accept: '本次允许', acceptForSession: '本次会话允许', decline: '拒绝', cancel: '拒绝并停止', stopTurn: '停止任务', stoppingTurn: '正在停止…', stoppedTurn: '任务已停止。',
-    goHandle: '前往 Codex 处理', sent: '消息已发送，正在等待 Codex 回复。', handedOff: '消息已通过 Codex 客户端提交，正在等待回复。', desktopSubmitFailed: '已复制消息并打开 Codex，但客户端自动提交失败；草稿已保留。', handled: '操作已提交，等待 Codex 继续。',
+    goHandle: '前往 Codex 处理', sent: '消息已发送，正在等待 Codex 回复。', handedOff: '已通过后台 Codex 客户端在目标会话确认消息，正在等待回复。', desktopSubmitFailed: 'Codex 客户端/CDP 不可用，或未能确认目标会话收到消息。桌宠草稿已保留；请先检查 Codex 会话再重试，避免重复发送。', handled: '操作已提交，等待 Codex 继续。',
     statusRunning: '运行中', statusNeedsInput: '等待你', statusReady: '新回复', statusBlocked: '遇到问题', statusDisconnected: '未连接', statusSilent: '已同步',
     connDisconnected: '未连接', connWaitingIdle: '等待任务空闲', connConnecting: '正在连接', connConnected: '已连接',
-    connReadOnly: 'Codex 正在运行，暂时只读', connError: '连接出错', childRunning: '个子任务运行中',
+    connReadOnly: 'Codex 正在运行，暂时只读', connError: '连接出错',
+    subagentSummary: '子代理状态', subagentSummaryAria: '查看 {count} 个待处理子代理状态',
+    subagentRunning: '运行中', subagentNeedsInput: '等待处理', subagentBlocked: '受阻',
     connected: 'Codex 消息已同步', attention: '接入需要处理', readyConnect: '已准备好连接', controlReady: '控制通道已就绪', clientUnified: '由 Codex 客户端统一',
     hookReview: '如果 Codex 弹出 Hooks 审核提示，请在 Codex 中审核并信任 Turtle Monitor；未审核的 Hooks 不会发送实时状态。', hookInstallFailed: 'Codex 实时状态接入失败',
     controlWaiting: '消息正常；控制通道后台连接中', disabled: '尚未启用', messagesNormal: '同步正常', tasksLabel: '任务与会话', openConversation: '查看对话',
   },
   'en-US': {
     liveTasks: 'Task hub', emptyTasks: 'No active tasks right now', emptyHistory: 'No history yet', noSearchResults: 'No matching tasks', activeTasks: 'Active', historyTasks: 'History', searchTasks: 'Search tasks or projects…', close: 'Close', back: 'Back to tasks',
-    openCodex: 'Open Codex', previousPage: 'Previous', nextPage: 'Next', send: 'Send', handoff: 'Copy & open Codex', replyPlaceholder: 'Reply to this task…', desktopPlaceholder: 'Copy a reply to the same Codex task…',
+    openCodex: 'Open Codex', previousPage: 'Previous', nextPage: 'Next', send: 'Send', handoff: 'Send through Codex client in background', replyPlaceholder: 'Reply to this task…', desktopPlaceholder: 'Try sending to the same Codex task in background…',
     configTitle: 'Connect Codex', configIntro: 'Sync every task. Inline reply and approval are available after a control connection is established.',
     sync: 'Message sync', control: 'Bubble reply and approval', enable: 'Enable Codex integration', disable: 'Stop syncing', reconnect: 'Check again',
     dataLocation: 'Conversation data location', selectHome: 'Choose another folder', restoreAuto: 'Use automatic detection', advanced: 'Advanced settings',
     allowControl: 'Allow bubble replies and approvals', allowControlNote: 'Send messages and handle Codex confirmation requests from a task bubble.',
-    replyTransport: 'Reply channel', replyDirect: 'Monitor direct', replyDesktop: 'Codex client compatible',
+    replyTransport: 'Reply channel', replyDirect: 'Monitor direct', replyDesktop: 'Codex client in background',
     newMessageView: 'New message view', newMessageConversation: 'Full conversation', newMessageTasks: 'Task activity',
     newMessageConversationNote: 'Open the full conversation when a new message arrives, ready to read and reply.',
     newMessageTasksNote: 'Open task activity first, then choose which conversation to read.',
     replyDirectNote: 'Stay in this window after sending and continue reading Codex replies here.',
-    replyDesktopNote: 'Compatible mode does not start Monitor\'s second App Server. It copies the reply and opens the same Codex task; paste and send there to preserve one context.',
+    replyDesktopNote: 'Submits in the background through an already-running Codex client with local CDP enabled. It does not actively open or raise Codex, but may change the selected task; keeping the OS foreground unchanged has not been verified on the live app. If CDP is unavailable or the target cannot be confirmed, submission fails with the pet draft preserved and does not fall back to Monitor direct.',
     localOnly: 'Data stays on this computer and needs no API key. Unconnected tasks can still notify and open in Codex.',
     autoPath: 'Current user .codex (automatic)', noPath: 'No folder selected', connect: 'Connect', disconnect: 'Disconnect', retry: 'Retry',
     noMessages: 'No visible response yet.', loadOlder: 'Load earlier messages', you: 'You', codex: 'Codex', toolCall: 'Tool call', toolResult: 'Tool result',
     submitAnswers: 'Submit answers', choose: 'Choose', custom: 'Enter another answer…', inputAnswer: 'Enter answer', answerAll: 'Answer every question before submitting',
     accept: 'Allow once', acceptForSession: 'Allow for session', decline: 'Decline', cancel: 'Decline and stop', stopTurn: 'Stop task', stoppingTurn: 'Stopping…', stoppedTurn: 'Task stopped.',
-    goHandle: 'Handle in Codex', sent: 'Message sent. Waiting for Codex.', handedOff: 'Message submitted through the Codex client. Waiting for its reply.', desktopSubmitFailed: 'The message was copied and Codex opened, but automatic client submission failed. The draft was preserved.', handled: 'Action submitted. Waiting for Codex to continue.',
+    goHandle: 'Handle in Codex', sent: 'Message sent. Waiting for Codex.', handedOff: 'The background Codex client confirmed the message in the target conversation. Waiting for a reply.', desktopSubmitFailed: 'Codex client/CDP is unavailable, or the target conversation could not be confirmed. The pet draft is preserved. Check Codex before retrying to avoid a duplicate.', handled: 'Action submitted. Waiting for Codex to continue.',
     statusRunning: 'Running', statusNeedsInput: 'Needs you', statusReady: 'New reply', statusBlocked: 'Problem', statusDisconnected: 'Disconnected', statusSilent: 'Synced',
     connDisconnected: 'Not connected', connWaitingIdle: 'Waiting until idle', connConnecting: 'Connecting', connConnected: 'Connected',
-    connReadOnly: 'Codex is running; temporarily read-only', connError: 'Connection error', childRunning: 'child tasks running',
+    connReadOnly: 'Codex is running; temporarily read-only', connError: 'Connection error',
+    subagentSummary: 'Subagent status', subagentSummaryAria: 'Show status for {count} pending subagents',
+    subagentRunning: 'Running', subagentNeedsInput: 'Needs input', subagentBlocked: 'Blocked',
     connected: 'Codex messages are synced', attention: 'Integration needs attention', readyConnect: 'Ready to connect', controlReady: 'Control channel ready', clientUnified: 'Unified through Codex client',
     hookReview: 'If Codex asks you to review Hooks, review and trust Turtle Monitor in Codex. Unreviewed Hooks cannot send live status.', hookInstallFailed: 'Could not set up live Codex status',
     controlWaiting: 'Messages are synced; control is connecting in the background', disabled: 'Not enabled', messagesNormal: 'Sync is healthy', tasksLabel: 'Tasks & conversations', openConversation: 'Open conversation',
@@ -201,6 +208,7 @@ export class CodexCompanion {
     this.unsubscribes = [];
     this.readInFlight = new Set();
     this.notifiedInFlight = new Set();
+    this.pendingDesktopReplies = new Map();
     this.drafts = new Map();
     this.messagePages = new Map();
     this.renderedMessageState = new Map();
@@ -748,6 +756,7 @@ export class CodexCompanion {
   update(snapshot) {
     if (!snapshot) return;
     this.snapshot = snapshot;
+    this.#reconcilePendingDesktopReplies(snapshot);
     const nextLocale = normalizeCodexLocale(snapshot.locale, navigator.language);
     if (nextLocale !== this.locale) {
       this.locale = nextLocale;
@@ -926,9 +935,40 @@ export class CodexCompanion {
         && (this.bubble.matches(':hover') || this.bubble.contains(document.activeElement)));
   }
   get activity() {
-    return Object.values(this.configs).some((config) => config?.enabled === true)
-      ? (this.snapshot?.activity || CODEX_ACTIVITY.SILENT)
-      : CODEX_ACTIVITY.SILENT;
+    if (!Object.values(this.configs).some((config) => config?.enabled === true)) return CODEX_ACTIVITY.SILENT;
+    if (!this.pendingDesktopReplies.size) return this.snapshot?.activity || CODEX_ACTIVITY.SILENT;
+    const pendingIds = new Set(this.pendingDesktopReplies.keys());
+    const tasks = (this.snapshot?.tasks || []).map((task) => (
+      pendingIds.has(String(task.threadId || task.id))
+        ? { ...task, activity: CODEX_ACTIVITY.RUNNING }
+        : task
+    ));
+    const unread = (this.snapshot?.unread || []).filter((event) => !pendingIds.has(String(event.threadId || '')));
+    return resolveCodexActivity({ connected: this.snapshot?.connected !== false, tasks, unread });
+  }
+
+  #reconcilePendingDesktopReplies(snapshot) {
+    for (const [threadId, pending] of this.pendingDesktopReplies) {
+      const task = (snapshot?.tasks || []).find((item) => String(item.threadId || item.id) === threadId);
+      if (!task) continue;
+      const newUnread = (snapshot?.unread || []).some((event) => (
+        String(event.threadId || '') === threadId
+        && Number(event.createdAtMs || 0) > pending.submittedAtMs
+      ));
+      const statusUpdatedAfterSubmit = Number(task.activityUpdatedAtMs || 0) > pending.submittedAtMs;
+      const activeStateConfirmed = statusUpdatedAfterSubmit && [
+        CODEX_ACTIVITY.RUNNING,
+        CODEX_ACTIVITY.NEEDS_INPUT,
+        CODEX_ACTIVITY.BLOCKED,
+        CODEX_ACTIVITY.READY,
+      ].includes(task.activity);
+      const finishedRunConfirmed = statusUpdatedAfterSubmit
+        && pending.baselineActivity === CODEX_ACTIVITY.RUNNING
+        && task.activity === CODEX_ACTIVITY.SILENT;
+      if (newUnread || activeStateConfirmed || finishedRunConfirmed) {
+        this.pendingDesktopReplies.delete(threadId);
+      }
+    }
   }
   get motionEventKey() {
     if (this.activity === CODEX_ACTIVITY.RUNNING) {
@@ -1078,6 +1118,8 @@ export class CodexCompanion {
     }
     host.replaceChildren();
     for (const task of tasks) {
+      const entry = element('div', 'codex-task-entry');
+      const row = element('div', 'codex-task-row');
       const button = element('button', 'codex-task-item');
       button.type = 'button';
       button.dataset.provider = task.provider || 'codex';
@@ -1085,16 +1127,47 @@ export class CodexCompanion {
       button.innerHTML = '<span class="codex-task-state" aria-hidden="true"></span><span class="agent-task-provider" aria-hidden="true"></span><span class="codex-task-copy"><strong></strong><small></small></span><span class="codex-task-count"></span>';
       button.querySelector('.agent-task-provider').textContent = PROVIDERS[task.provider]?.mark || 'C';
       button.querySelector('strong').textContent = task.title || PROVIDERS[task.provider]?.name || 'Codex';
-      const children = task.runningChildren > 0 ? ` · ${task.runningChildren} ${this.t('childRunning')}` : '';
       const status = task.connectionState === CODEX_CONNECTION.ERROR
         ? this.#connectionLabel(task.connectionState, task.provider)
         : this.#statusLabel(task.activity);
-      button.querySelector('small').textContent = `${task.project || PROVIDERS[task.provider]?.name || 'Codex'} · ${status}${children}`;
+      button.querySelector('small').textContent = `${task.project || PROVIDERS[task.provider]?.name || 'Codex'} · ${status}`;
       const count = button.querySelector('.codex-task-count');
       count.textContent = task.unreadCount > 0 ? String(task.unreadCount) : (task.activity === CODEX_ACTIVITY.RUNNING ? 'RUN' : 'LINK');
       count.dataset.mode = task.unreadCount > 0 ? 'unread' : 'running';
       button.addEventListener('click', () => this.#openTask(task));
-      host.appendChild(button);
+      row.appendChild(button);
+
+      const subagents = task.subagentSummary;
+      if (Number(subagents?.total) > 0) {
+        row.classList.add('has-subagents');
+        const toggle = element('button', 'codex-subagent-toggle', `↳${subagents.total}`);
+        toggle.type = 'button';
+        toggle.setAttribute('aria-expanded', 'false');
+        const ariaLabel = this.t('subagentSummaryAria').replace('{count}', String(subagents.total));
+        toggle.setAttribute('aria-label', ariaLabel);
+        toggle.title = ariaLabel;
+        const detail = element('div', 'codex-subagent-details');
+        detail.hidden = true;
+        const states = [
+          ['running', 'subagentRunning'],
+          ['needsInput', 'subagentNeedsInput'],
+          ['blocked', 'subagentBlocked'],
+        ];
+        const counts = states
+          .filter(([key]) => Number(subagents[key]) > 0)
+          .map(([key, label]) => `${this.t(label)} ${subagents[key]}`)
+          .join(' · ');
+        detail.textContent = `${this.t('subagentSummary')} · ${counts}`;
+        toggle.addEventListener('click', () => {
+          detail.hidden = !detail.hidden;
+          toggle.setAttribute('aria-expanded', String(!detail.hidden));
+        });
+        row.appendChild(toggle);
+        entry.append(row, detail);
+      } else {
+        entry.appendChild(row);
+      }
+      host.appendChild(entry);
     }
     const empty = this.taskTray.querySelector('.codex-task-empty');
     empty.textContent = query
@@ -1446,6 +1519,9 @@ export class CodexCompanion {
     const task = this.#currentTask();
     const provider = task?.provider || this.viewState.event?.provider || 'codex';
     const sourceId = task?.sourceId || this.viewState.event?.sourceThreadId || threadId.replace(/^[^:]+:/, '');
+    const desktopReplyBaseline = provider === 'codex' ? {
+      baselineActivity: task?.activity || CODEX_ACTIVITY.SILENT,
+    } : null;
     this.#setBubbleBusy(true);
     try {
       const result = await this.#api(provider).reply(sourceId, text);
@@ -1456,6 +1532,15 @@ export class CodexCompanion {
               ? 'The message was copied and Claude Code opened, but automatic submission was not confirmed. The draft was preserved.'
               : '消息已复制并打开 Claude Code，但未确认自动提交；草稿已保留。')
           : this.t('desktopSubmitFailed')));
+      }
+      if (provider === 'codex' && result?.mode === 'desktop-submit') {
+        const taskThreadId = `codex:${sourceId}`;
+        this.pendingDesktopReplies.set(taskThreadId, {
+          ...desktopReplyBaseline,
+          submittedAtMs: Number(result.submittedAtMs || Date.now()),
+        });
+        this.#reconcilePendingDesktopReplies(this.snapshot);
+        this.#emitMood();
       }
       this.inlineError = '';
       textarea.value = '';
