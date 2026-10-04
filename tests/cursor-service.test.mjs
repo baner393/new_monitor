@@ -231,7 +231,7 @@ test('cursor scaling mode keeps native geometry aligned with the Windows monitor
   } finally { await service.stop(); }
 });
 
-test('ANI with default creation scaling matches its baseline geometry at 150 percent DPI', async () => {
+test('ANI with default creation scaling maps rope geometry to monitor DPI without changing logical size', async () => {
   const { service, children, commands } = fixture({ format: 'ani' });
   try {
     service.getScaleFactor = () => 1.5;
@@ -251,8 +251,8 @@ test('ANI with default creation scaling matches its baseline geometry at 150 per
     assert.equal(service.state.width, theme.roles[0].displaySize,
       'ANI preview and desktop cursor use the same raw bitmap size in renderer DIP');
     const { anchor, canvas } = cursorMountGeometry(record.sourceFrame, record.profile);
-    assert.ok(Math.abs(service.state.mountOffset.x - (anchor.x + canvas.origin.x - generated.hotspot.x) / 1.5) < 1e-8,
-      'ANI rope offset uses raw physical pixels converted to renderer DIP');
+    assert.ok(Math.abs(service.state.mountOffset.x - (anchor.x + canvas.origin.x - generated.hotspot.x)) < 1e-8,
+      'ANI rope offset accounts for the monitor DPI scaling used by DEFAULT creation mode');
   } finally { await service.stop(); }
 });
 
@@ -272,9 +272,9 @@ test('one mixed-format installation preserves per-role DPI mode and active geome
     assert.equal(requestByRole.get(32513).creationScalingMode, 'none');
     assert.equal(requestByRole.get(32649).creationScalingMode, 'default');
 
-    for (const [role, systemId, mode, effectiveScale, effectiveMode] of [
-      ['IBeam', 32513, 'none', 1.5, 'system-default'],
-      ['Hand', 32649, 'default', 1, 'default'],
+    for (const [role, systemId, mode, effectiveScale, geometryScale, effectiveMode] of [
+      ['IBeam', 32513, 'none', 1.5, 1.5, 'system-default'],
+      ['Hand', 32649, 'default', 1, 1.5, 'default'],
     ]) {
       const record = service.installed.get(role), generated = record.renderedFrame;
       children[0].send({ type: 'state', state: { visible: true, role, width: generated.width,
@@ -286,9 +286,9 @@ test('one mixed-format installation preserves per-role DPI mode and active geome
       assert.equal(service.state.width, theme.roles.find(item => item.role === role).displaySize);
 
       const { anchor, canvas } = cursorMountGeometry(record.sourceFrame, record.profile);
-      const expected = (anchor.x + canvas.origin.x - generated.hotspot.x) * effectiveScale / 1.5;
+      const expected = (anchor.x + canvas.origin.x - generated.hotspot.x) * geometryScale / 1.5;
       assert.ok(Math.abs(service.state.mountOffset.x - expected) < 1e-8,
-        `${role} mount uses the active role's own format/DPI geometry`);
+        `${role} mount uses the active role's own monitor-rendered geometry`);
     }
   } finally { await service.stop(); }
 });

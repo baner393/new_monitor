@@ -244,27 +244,37 @@ export class CursorService {
     }
     const scale = Math.max(0.1, Number(this.getScaleFactor()) || 1);
     const source = record.sourceFrame, generated = record.renderedFrame;
-    // The final system cursor compositor treats CUR and ANI differently: DXGI
-    // shows CUR at monitor DPI, while ANI stays at its GetIconInfo bitmap size.
+    // Keep the established logical cursor-size mapping separate from the
+    // attachment geometry mapping. The system can DPI-scale the installed
+    // cursor bitmap even when GetIconInfo still reports its creation size;
+    // the embedded ring follows that final bitmap, while the rope is rendered
+    // in Electron DIPs.
     const creationScalingMode = native.creationScalingMode || (native.creationScalingNone ? 'none' : null);
     const monitorToCreationScale = creationScalingMode
       ? (record.format === 'cur' ? scale : 1)
       : Number(native.creationDpi) > 0 ? scale / (Number(native.creationDpi) / 96) : 1;
+    const monitorToGeometryScale = creationScalingMode === 'default'
+      ? scale
+      : creationScalingMode === 'none'
+        ? (record.format === 'cur' ? scale : 1)
+        : Number(native.creationDpi) > 0 ? scale / (Number(native.creationDpi) / 96) : 1;
     const nativeRatioX = (Number(native.width) || generated.width) / generated.width;
     const nativeRatioY = (Number(native.height) || generated.height) / generated.height;
     const ratioX = nativeRatioX * monitorToCreationScale;
     const ratioY = nativeRatioY * monitorToCreationScale;
+    const geometryRatioX = nativeRatioX * monitorToGeometryScale;
+    const geometryRatioY = nativeRatioY * monitorToGeometryScale;
     const renderedGeometry = cursorMountGeometry(record.sourceFrame, record.profile);
     const renderedHotspot = {
-      x: (Number(native.hotspot?.x) || 0) * monitorToCreationScale,
-      y: (Number(native.hotspot?.y) || 0) * monitorToCreationScale,
+      x: (Number(native.hotspot?.x) || 0) * monitorToGeometryScale,
+      y: (Number(native.hotspot?.y) || 0) * monitorToGeometryScale,
     };
     if (!native.hotspot) {
-      renderedHotspot.x = generated.hotspot.x * nativeRatioX * monitorToCreationScale;
-      renderedHotspot.y = generated.hotspot.y * nativeRatioY * monitorToCreationScale;
+      renderedHotspot.x = generated.hotspot.x * geometryRatioX;
+      renderedHotspot.y = generated.hotspot.y * geometryRatioY;
     }
-    const offset = point => ({ x: ((point.x + renderedGeometry.canvas.origin.x) * ratioX - renderedHotspot.x) / scale,
-      y: ((point.y + renderedGeometry.canvas.origin.y) * ratioY - renderedHotspot.y) / scale });
+    const offset = point => ({ x: ((point.x + renderedGeometry.canvas.origin.x) * geometryRatioX - renderedHotspot.x) / scale,
+      y: ((point.y + renderedGeometry.canvas.origin.y) * geometryRatioY - renderedHotspot.y) / scale });
     const ring = renderedGeometry.ringGeometry;
     this.emit({ active: true, supported: true, role: native.role, id: record.id,
       cursorCreationScalingMode: creationScalingMode || 'system-default',
@@ -273,14 +283,14 @@ export class CursorService {
         : Number(native.creationDpi) > 0 ? 'dpi-relative' : 'system-default',
       cursorCreationDpi: Number(native.creationDpi) > 0 ? Number(native.creationDpi) : null,
       width: source.width * ratioX / scale, height: source.height * ratioY / scale,
-      hotspot: { x: (renderedHotspot.x - renderedGeometry.canvas.origin.x * ratioX) / scale,
-        y: (renderedHotspot.y - renderedGeometry.canvas.origin.y * ratioY) / scale },
-      hole: { x: renderedGeometry.hole.x * ratioX / scale, y: renderedGeometry.hole.y * ratioY / scale,
-        radius: renderedGeometry.hole.radius * Math.sqrt(ratioX * ratioY) / scale },
+      hotspot: { x: (renderedHotspot.x - renderedGeometry.canvas.origin.x * geometryRatioX) / scale,
+        y: (renderedHotspot.y - renderedGeometry.canvas.origin.y * geometryRatioY) / scale },
+      hole: { x: renderedGeometry.hole.x * geometryRatioX / scale, y: renderedGeometry.hole.y * geometryRatioY / scale,
+        radius: renderedGeometry.hole.radius * Math.sqrt(geometryRatioX * geometryRatioY) / scale },
       mountOffset: offset(renderedGeometry.anchor), ringCenterOffset: offset(renderedGeometry.center),
-      ringGeometry: { centerFromAnchor: { x: ring.centerFromAnchor.x * ratioX / scale, y: ring.centerFromAnchor.y * ratioY / scale },
-        radiusX: ring.radiusX * ratioX / scale, radiusY: ring.radiusY * ratioY / scale, shear: ring.shear * ratioX / ratioY },
-      ringScale: renderedGeometry.ringScale * Math.sqrt(ratioX * ratioY) / scale, ringEmbedded: true });
+      ringGeometry: { centerFromAnchor: { x: ring.centerFromAnchor.x * geometryRatioX / scale, y: ring.centerFromAnchor.y * geometryRatioY / scale },
+        radiusX: ring.radiusX * geometryRatioX / scale, radiusY: ring.radiusY * geometryRatioY / scale, shear: ring.shear * geometryRatioX / geometryRatioY },
+      ringScale: renderedGeometry.ringScale * Math.sqrt(geometryRatioX * geometryRatioY) / scale, ringEmbedded: true });
   }
 
   async stop() {

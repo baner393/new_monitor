@@ -47,7 +47,7 @@ export const PET_SETTING_SECTIONS = Object.freeze([
 // 分组内的小区块标题（字段用 group 归属）
 export const PET_SETTING_GROUPS = Object.freeze({
   classic: { left: '左键摆动', right: '右键甩动' },
-  charm: { feel: '翻转手感', visual: '视觉效果', hotkey: '快捷键' },
+  charm: { feel: '翻转手感', motion: '绳索与宠物运动（挂饰共用）', visual: '视觉效果', hotkey: '快捷键' },
 });
 
 export const PET_SETTING_FIELDS = Object.freeze({

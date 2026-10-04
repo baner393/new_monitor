@@ -32,6 +32,8 @@ export const FLIP_DEFAULTS = Object.freeze({
   idleSwayAmp: 0.14,    // 静置摇摆幅度（rad，±8°）
   energySpeed: 550,     // 能量满格所需运动速度（px/s）
   tiltStiffness: 42,    // 重力链接弹簧刚度（ω²）
+  tiltGain: 1.7,        // 惯性倾斜增益
+  idleTiltAmp: 0.16,    // 静置时屏幕面内摇摆幅度（rad）
   tiltDamping: 11,      // 重力链接阻尼（2ζω）
   thicknessRatio: 0.07, // 厚度 = 显示宽 × ratio（clamp 2~9px）
   flipEnabled: true,
@@ -54,10 +56,12 @@ export function knobsToFlipConfig(values = {}) {
   return {
     impulse: 12 + energy * 36,                  // 12..48
     spinDamping: 1.5 - spin * 1.1,              // 1.5..0.4（越长越慢衰减）
-    idleSwayAmp: 0.02 + sway * 0.24,            // ±1°..±15°
+    idleSwayAmp: sway * 0.4,                    // 0°..±23°，最高值有明显的正面转动
+    idleTiltAmp: sway * 0.32,                   // 0°..±18°，静止时直接带动卡面摇摆
     energySpeed: 720 - energy * 420,            // 720..300 px/s
     tiltStiffness,
     tiltDamping: 2 * Math.sqrt(tiltStiffness) * 0.85,
+    tiltGain: link * 3.4,                       // 0..3.4，直接改变惯性倾斜幅度
     thicknessRatio: 0.03 + thick * 0.08,        // 3%..11% 显示宽
     flipEnabled: values.charmFlipEnabled !== false,
     backMaterial: values.charmBackMaterial === 'pattern' ? 'pattern' : 'metal',
@@ -110,7 +114,7 @@ export function updateFlip(state, dt, motion, motionDirX = 0, accel = null, cfg 
   // 静置回正（能量低时生效）：目标 = 最近的正面圈（2π 整数倍）+ 小幅摇摆——
   // 翻滚停在任意角度都走最短路径转回正面，而不是绕剩余圈数慢慢蹭回来。
   // 翻转关闭时回正始终全强（直接把姿态拉回正面）。
-  const restTarget = Math.sin(state.t * 0.8) * cfg.idleSwayAmp;
+  const restTarget = Math.sin(state.t * 1.8) * cfg.idleSwayAmp;
   const home = Math.round((state.spinY - restTarget) / (Math.PI * 2)) * Math.PI * 2 + restTarget;
   const homeStrength = cfg.flipEnabled !== false ? (1 - energy) * 2.4 : 8;
   state.velY += (home - state.spinY) * homeStrength * dt;
@@ -141,9 +145,12 @@ export function updateFlip(state, dt, motion, motionDirX = 0, accel = null, cfg 
     const gx = -ax;
     const gy = HANG_GRAVITY - ay;
     if (Math.abs(gx) > 1 || Math.abs(gy) > 1) {
-      target = clamp(Math.atan2(gx, gy), -TILT_MAX, TILT_MAX);
+      target = clamp(Math.atan2(gx, gy) * finiteOr(cfg.tiltGain, 1), -TILT_MAX, TILT_MAX);
     }
   }
+  // 低能量时让卡面产生可见的轻摆；有明显运动时惯性方向接管。
+  if (accel) target += Math.sin(state.t * 1.8) * finiteOr(cfg.idleTiltAmp, 0.16) * (1 - energy);
+  target = clamp(target, -TILT_MAX, TILT_MAX);
   state.velTilt += ((target - state.tilt) * cfg.tiltStiffness - state.velTilt * cfg.tiltDamping) * dt;
   state.tilt += state.velTilt * dt;
 

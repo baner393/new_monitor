@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   createFlipState,
   updateFlip,
+  FLIP_DEFAULTS,
   sliceOffsets,
   applyFlip,
   syncLayerScales,
@@ -117,8 +118,22 @@ test('重力链接：向右加速 → 挂牌向左滞后倾斜（惯性力反向
 test('重力链接：静止无加速度 → 垂直下垂（tilt→0）', () => {
   const s = createFlipState();
   s.tilt = 0.5;
-  runSteps(s, 300, (st) => updateFlip(st, DT, 0, 0, { x: 0, y: 0 }));
+  const cfg = { ...FLIP_DEFAULTS, idleTiltAmp: 0 };
+  runSteps(s, 300, (st) => updateFlip(st, DT, 0, 0, { x: 0, y: 0 }, cfg));
   assert.ok(Math.abs(s.tilt) < 0.02, `tilt=${s.tilt}`);
+});
+
+test('静置摇摆：无加速度时 idle tilt 仍让卡面轻摆', () => {
+  const s = createFlipState();
+  let minTilt = Infinity;
+  let maxTilt = -Infinity;
+  runSteps(s, 240, (st) => {
+    updateFlip(st, DT, 0, 0, { x: 0, y: 0 });
+    minTilt = Math.min(minTilt, st.tilt);
+    maxTilt = Math.max(maxTilt, st.tilt);
+  });
+  assert.ok(minTilt < -0.05, `min tilt=${minTilt}，静置摇摆应向负方向摆动`);
+  assert.ok(maxTilt > 0.05, `max tilt=${maxTilt}，静置摇摆应向正方向摆动`);
 });
 
 test('重力链接：等效重力方向钳制在 ±TILT_MAX', () => {
@@ -131,8 +146,9 @@ test('重力链接：等效重力方向钳制在 ±TILT_MAX', () => {
 test('重力链接：centripetal（转向加速度）改变倾斜方向', () => {
   const s1 = createFlipState();
   const s2 = createFlipState();
-  runSteps(s1, 240, (st) => updateFlip(st, DT, 0, 0, { x: 800, y: 0 }));
-  runSteps(s2, 240, (st) => updateFlip(st, DT, 0, 0, { x: -800, y: 0 }));
+  const cfg = { ...FLIP_DEFAULTS, idleTiltAmp: 0 };
+  runSteps(s1, 240, (st) => updateFlip(st, DT, 0, 0, { x: 800, y: 0 }, cfg));
+  runSteps(s2, 240, (st) => updateFlip(st, DT, 0, 0, { x: -800, y: 0 }, cfg));
   assert.ok(s1.tilt * s2.tilt < 0, '左右转向加速度应产生反向倾斜');
   assert.ok(Math.abs(Math.abs(s1.tilt) - Math.abs(s2.tilt)) < 1e-6, '对称输入 → 对称倾斜');
 });
@@ -418,18 +434,23 @@ test('knobsToFlipConfig：默认 50% 映射到定稿参数', () => {
   const cfg = knobsToFlipConfig({});
   assert.ok(Math.abs(cfg.impulse - 30) < 1e-9);
   assert.ok(Math.abs(cfg.spinDamping - 0.95) < 1e-9);
-  assert.ok(Math.abs(cfg.idleSwayAmp - 0.14) < 1e-9);
+  assert.ok(Math.abs(cfg.idleSwayAmp - 0.2) < 1e-9);
+  assert.ok(Math.abs(cfg.idleTiltAmp - 0.16) < 1e-9);
+  assert.ok(Math.abs(cfg.tiltGain - 1.7) < 1e-9);
   assert.ok(Math.abs(cfg.energySpeed - 510) < 1e-9);
   assert.ok(Math.abs(cfg.thicknessRatio - 0.07) < 1e-9);
   assert.equal(cfg.flipEnabled, true);
 });
 
 test('knobsToFlipConfig：极端值有界且单调', () => {
-  const lo = knobsToFlipConfig({ charmFlipEnergy: 0, charmFlipSpin: 0, charmGravityLink: 0, charmThickness: 0 });
-  const hi = knobsToFlipConfig({ charmFlipEnergy: 100, charmFlipSpin: 100, charmGravityLink: 100, charmThickness: 100 });
+  const lo = knobsToFlipConfig({ charmFlipEnergy: 0, charmFlipSpin: 0, charmIdleSway: 0, charmGravityLink: 0, charmThickness: 0 });
+  const hi = knobsToFlipConfig({ charmFlipEnergy: 100, charmFlipSpin: 100, charmIdleSway: 100, charmGravityLink: 100, charmThickness: 100 });
   assert.ok(hi.impulse > lo.impulse, '灵敏度↑ → 冲量↑');
   assert.ok(hi.energySpeed < lo.energySpeed, '灵敏度↑ → 满能量所需速度↓');
   assert.ok(hi.spinDamping < lo.spinDamping, '时长↑ → 阻尼↓');
+  assert.ok(hi.idleSwayAmp > lo.idleSwayAmp, '摇摆↑ → 正面摇摆幅度↑');
+  assert.ok(hi.idleTiltAmp > lo.idleTiltAmp, '摇摆↑ → 卡面摇摆幅度↑');
+  assert.ok(hi.tiltGain > lo.tiltGain, '链接感↑ → 惯性倾斜幅度↑');
   assert.ok(hi.tiltStiffness > lo.tiltStiffness, '链接感↑ → 弹簧↑');
   assert.ok(hi.thicknessRatio > lo.thicknessRatio);
   for (const cfg of [lo, hi]) {

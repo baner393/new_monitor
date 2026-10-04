@@ -1093,6 +1093,7 @@ const inputManager = new InputManager({
   stateMachine,
   physics,
   shouldIgnoreEvent: (event) => codexCompanion.ownsEvent(event)
+    || isCharmMode()
     || onboardingGuide.ownsEvent(event)
     || isEventOwnedByRoot(event, settingsPanel.root),
   onGesture: (gesture) => onboardingGuide.completeGesture(gesture),
@@ -1108,6 +1109,7 @@ const inputManager = new InputManager({
 inputManager.enable();
 
 // ── Transparent click-through ──────────────────────────────────────────
+const CHARM_BADGE_HOVER_PADDING = 8;
 let isOverSprite = false;
 let lastMousePassthrough = true;
 let lastCursorPosition = null;
@@ -1127,9 +1129,9 @@ function synchronizeMousePassthrough(x, y, force = false) {
   // 挂饰模式下宠物贴着光标走，overSprite 恒真会把窗口切成可交互吃掉桌面
   // 点击——挂饰全程 click-through，宠物本体不参与命中测试。
   const overSprite = !isCharmMode() && isPointWithinBounds(bounds, x, y, PET_HIT_PADDING);
-  // 挂饰模式下 badge 跟随物理摆动的宠物，位置持续漂移——命中判定加宽容
-  // pad（经典模式 badge 稳定，无需宽容）。
-  const overCodex = codexCompanion.containsPoint(x, y, isCharmMode() ? 24 : 0);
+  // Use visible bounds only: the charm badge moves with the pet, and an
+  // expanded hit slop around it can intercept clicks from nearby desktop UI.
+  const overCodex = codexCompanion.containsPoint(x, y);
   const overOnboarding = onboardingGuide.containsPoint(x, y);
   const ignore = resolveMousePassthrough({
     state,
@@ -1725,16 +1727,29 @@ pixiApp.ticker.add((delta) => {
   updateFoilFx(dt);
 
   // State-specific behavior
-  // ── Hover detection (IDLE ↔ HOVER) ── 挂饰模式全程穿透，宠物不可交互，跳过
-  if (!isCharm && (state === 'IDLE' || state === 'HOVER')) {
-    let mx = 0, my = 0;
-    try {
-      const events = pixiApp.renderer && pixiApp.renderer.events;
-      const p = events && events.pointer;
-      if (p && typeof p.x === 'number') { mx = p.x; my = p.y; }
-    } catch (e) { /* ignore if events not available */ }
-    const b = bodySprite.getBounds();
-    const over = isPointWithinBounds(b, mx, my, PET_HIT_PADDING);
+  // ── Hover detection (IDLE ↔ HOVER) ──────────────────────────────
+  // Charm mode stays click-through, but still changes the sprite when the
+  // system cursor rests over the card or its small Codex badge.
+  if (state === 'IDLE' || state === 'HOVER') {
+    let mx = 0, my = 0, hasCursorPosition = false;
+    if (isCharm) {
+      const cursor = charmAnchorSampler.sample() || lastCursorPosition;
+      if (cursor) { mx = cursor.x; my = cursor.y; hasCursorPosition = true; }
+    } else {
+      try {
+        const events = pixiApp.renderer && pixiApp.renderer.events;
+        const p = events && events.pointer;
+        if (p && typeof p.x === 'number') { mx = p.x; my = p.y; hasCursorPosition = true; }
+      } catch (e) { /* ignore if events not available */ }
+    }
+    const petBounds = bodySprite.getBounds();
+    const petPadding = isCharm ? 0 : PET_HIT_PADDING;
+    const overPet = hasCursorPosition && isPointWithinBounds(petBounds, mx, my, petPadding);
+    const badgeButton = isCharm ? codexCompanion.badge : null;
+    const badgeButtonBounds = badgeButton && !badgeButton.hidden ? badgeButton.getBoundingClientRect() : null;
+    const overBlueBadge = isCharm && hasCursorPosition
+      && isPointWithinBounds(badgeButtonBounds, mx, my, CHARM_BADGE_HOVER_PADDING);
+    const over = overPet || overBlueBadge;
     if (over && !_wasOverSprite) {
       _wasOverSprite = true;
       if (state === 'IDLE') { try { stateMachine.transition('TURTLE_HOVER'); } catch (e) {} }

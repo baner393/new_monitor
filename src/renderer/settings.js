@@ -19,6 +19,10 @@ import { comboFromKeyboardEvent } from '../shared/charm-keymap.js';
 
 export { ROPE_ELASTICITY_STEPS };
 
+const CHARM_SHARED_PHYSICS_KEYS = new Set([
+  'gravity', 'ropeStiffness', 'ropeDamping', 'bounceRestitution', 'airDamping',
+]);
+
 const PANEL_WIDTH = 900;
 const PANEL_HEIGHT = 620;
 
@@ -326,8 +330,15 @@ export class SettingsPanel {
   }
 
   _renderPreciseControls(sectionId) {
-    const fields = Object.entries(PET_SETTING_FIELDS).filter(([, field]) => field.section === sectionId);
-    // 按 group 分小区块（经典模式 = 左键/右键；挂饰 = 手感/视觉/快捷键）
+    const groupOrder = Object.keys(PET_SETTING_GROUPS[sectionId] || {});
+    const fields = Object.entries(PET_SETTING_FIELDS)
+      .filter(([key, field]) => field.section === sectionId
+        || (sectionId === 'charm' && field.section === 'classic' && CHARM_SHARED_PHYSICS_KEYS.has(key)))
+      .map(([key, field]) => [key, sectionId === 'charm' && field.section === 'classic'
+        ? { ...field, group: 'motion' }
+        : field])
+      .sort(([, left], [, right]) => groupOrder.indexOf(left.group) - groupOrder.indexOf(right.group));
+    // 按 group 分小区块；挂饰页也列出其共用的经典绳索参数。
     const groups = PET_SETTING_GROUPS[sectionId];
     const grouped = new Map();
     for (const entry of fields) {
