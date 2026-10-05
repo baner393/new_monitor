@@ -138,6 +138,7 @@ const TEXT = {
     newMessageTasksNote: '新消息到达时打开任务动态，先查看全部任务再选择对话。',
     replyDirectNote: '消息发送后留在当前窗口，继续查看 Codex 的回复。',
     replyDesktopNote: '通过已运行且开放本机 CDP 的 Codex 客户端后台提交，不会主动打开或置前客户端，但可能切换 Codex 当前选中的任务；系统前台保持尚未实机验证。CDP 不可用或目标无法确认时会失败并保留草稿，不会改走 Monitor 直连。',
+    cdpSetupTitle: '准备 Codex 客户端后台发送', cdpSetupNote: '需要重启 Codex 才能开放本机连接。脚本可能会关闭其他 ChatGPT 桌面窗口；请先保存相关未保存内容。桌宠里的回复草稿会保留。', cdpSetupButton: '重启 Codex 并启用连接', cdpSetupStarting: '正在等待确认并连接 Codex…', cdpSetupCancelled: '已取消，Codex 未重启。', cdpSetupReady: 'Codex 后台连接已就绪', cdpSetupFailed: 'Codex 后台连接未能就绪', cdpSetupTransportFailed: '但回复通道没有切换到 Codex 客户端，请手动选择“Codex 客户端后台发送”。',
     localOnly: '数据只在本机读取，不需要 API Key。未连接的任务仍会提醒，并可准确跳转到 Codex。',
     autoPath: '当前用户的 .codex（自动检测）', noPath: '尚未选择目录', connect: '连接', disconnect: '断开', retry: '重试',
     noMessages: '暂时还没有可显示的回复。', loadOlder: '加载更早消息', you: '你', codex: 'Codex', toolCall: '工具调用', toolResult: '工具结果',
@@ -166,6 +167,7 @@ const TEXT = {
     newMessageTasksNote: 'Open task activity first, then choose which conversation to read.',
     replyDirectNote: 'Stay in this window after sending and continue reading Codex replies here.',
     replyDesktopNote: 'Submits in the background through an already-running Codex client with local CDP enabled. It does not actively open or raise Codex, but may change the selected task; keeping the OS foreground unchanged has not been verified on the live app. If CDP is unavailable or the target cannot be confirmed, submission fails with the pet draft preserved and does not fall back to Monitor direct.',
+    cdpSetupTitle: 'Prepare Codex client for background sending', cdpSetupNote: 'Codex must restart to enable its local connection. The helper may also close other ChatGPT desktop windows; save related work first. Pet reply drafts will be preserved.', cdpSetupButton: 'Restart Codex and enable connection', cdpSetupStarting: 'Waiting for confirmation and connecting Codex…', cdpSetupCancelled: 'Cancelled. Codex was not restarted.', cdpSetupReady: 'Codex background connection is ready', cdpSetupFailed: 'Codex background connection could not be enabled', cdpSetupTransportFailed: 'but the reply channel was not switched. Select “Codex client in background” manually.',
     localOnly: 'Data stays on this computer and needs no API key. Unconnected tasks can still notify and open in Codex.',
     autoPath: 'Current user .codex (automatic)', noPath: 'No folder selected', connect: 'Connect', disconnect: 'Disconnect', retry: 'Retry',
     noMessages: 'No visible response yet.', loadOlder: 'Load earlier messages', you: 'You', codex: 'Codex', toolCall: 'Tool call', toolResult: 'Tool result',
@@ -217,6 +219,9 @@ export class CodexCompanion {
     this.messageRenderPending = false;
     this.expandedToolMessages = new Set();
     this.inlineError = '';
+    this.cdpSetupBusy = false;
+    this.cdpSetupStatus = '';
+    this.cdpSetupStatusType = 'idle';
     this.positionKeys = new Map();
     this.sizes = new Map();
     this.locale = normalizeCodexLocale(navigator.language);
@@ -537,6 +542,11 @@ export class CodexCompanion {
         <div><span class="codex-sync-label"></span><strong class="codex-sync-state"></strong></div>
         <div><span class="codex-control-label"></span><strong class="codex-reply-state"></strong></div>
       </div>
+      <section class="codex-client-cdp" hidden>
+        <div><strong class="codex-client-cdp-title"></strong><small class="codex-client-cdp-note"></small></div>
+        <button class="codex-quiet-button codex-client-cdp-button" type="button"></button>
+        <div class="codex-client-cdp-status" role="status" aria-live="polite"></div>
+      </section>
       <div class="codex-connect-actions"><button class="codex-save-button codex-connect-button" type="button"></button><button class="codex-quiet-button codex-disconnect-button" type="button" hidden></button></div>
       <section class="codex-thread-connections"><div class="codex-section-label codex-task-connection-label"></div><div class="codex-connection-list"></div></section>
       <div class="codex-location-card">
@@ -700,6 +710,7 @@ export class CodexCompanion {
       input.addEventListener('change', () => this.#commitConfig({ enabled: this.config?.enabled === true }));
     });
     this.configPanel.querySelector('.codex-reply-transport').addEventListener('change', () => this.#commitConfig({ enabled: this.config?.enabled === true }));
+    this.configPanel.querySelector('.codex-client-cdp-button').addEventListener('click', () => this.#enableCodexClientCdp());
     this.configPanel.querySelector('.agent-send-shortcut').addEventListener('change', () => this.#commitConfig({ enabled: this.config?.enabled === true }));
     this.configPanel.querySelector('.agent-bypass-permissions').addEventListener('change', () => this.#commitConfig({ enabled: this.config?.enabled === true }));
     this.configPanel.querySelector('.codex-advanced').addEventListener('toggle', () => this.updatePosition(true));
@@ -749,6 +760,9 @@ export class CodexCompanion {
     this.configPanel.querySelector('.codex-reply-transport option[value="direct"]').textContent = this.t('replyDirect');
     this.configPanel.querySelector('.codex-reply-transport option[value="desktop"]').textContent = this.t('replyDesktop');
     this.configPanel.querySelector('.codex-config-note').textContent = this.t('localOnly');
+    this.configPanel.querySelector('.codex-client-cdp-title').textContent = this.t('cdpSetupTitle');
+    this.configPanel.querySelector('.codex-client-cdp-note').textContent = this.t('cdpSetupNote');
+    this.configPanel.querySelector('.codex-client-cdp-button').textContent = this.t('cdpSetupButton');
     this.configPanel.querySelector('.codex-config-refresh').textContent = this.t('reconnect');
     this.configPanel.querySelector('.codex-disconnect-button').textContent = this.t('disable');
   }
@@ -1688,6 +1702,7 @@ export class CodexCompanion {
     );
     const replyTransport = config.replyTransport === 'desktop' ? 'desktop' : 'direct';
     this.configPanel.querySelector('.codex-reply-transport').value = replyTransport;
+    this.#renderClientCdpSetup(provider);
     this.configPanel.querySelector('.codex-reply-transport option[value="desktop"]').textContent = provider === 'claude'
       ? (this.locale === 'en-US' ? 'Claude Code client compatible' : 'Claude Code 客户端兼容') : this.t('replyDesktop');
     this.configPanel.querySelector('.codex-reply-transport-note').textContent = provider === 'claude'
@@ -1745,7 +1760,7 @@ export class CodexCompanion {
     await this.#commitConfig({ enabled: true });
   }
 
-  async #commitConfig({ enabled = this.config?.enabled === true } = {}) {
+  async #commitConfig({ enabled = this.config?.enabled === true, replyTransport } = {}) {
     this.#setConfigBusy(true);
     this.configPanel.querySelector('.codex-config-error').textContent = '';
     try {
@@ -1764,7 +1779,7 @@ export class CodexCompanion {
         ...currentProviderConfig,
         enabled,
         managedReplies: this.configPanel.querySelector('.codex-managed').checked,
-        replyTransport: this.configPanel.querySelector('.codex-reply-transport').value,
+        replyTransport: replyTransport || this.configPanel.querySelector('.codex-reply-transport').value,
         sendShortcut: this.configPanel.querySelector('.agent-send-shortcut').value,
         bypassPermissions: this.configPanel.querySelector('.agent-bypass-permissions').checked,
         homeMode: this.configPanel.dataset.mode,
@@ -1774,7 +1789,11 @@ export class CodexCompanion {
       this.snapshots[provider] = await this.#api(provider).refresh();
       this.#updateCombinedSnapshot();
       this.#fillConfig();
-    } catch (error) { this.configPanel.querySelector('.codex-config-error').textContent = error?.message || String(error); }
+      return true;
+    } catch (error) {
+      this.configPanel.querySelector('.codex-config-error').textContent = error?.message || String(error);
+      return false;
+    }
     finally { this.#setConfigBusy(false); }
   }
 
@@ -1833,6 +1852,53 @@ export class CodexCompanion {
       ? `Enable ${PROVIDERS[provider].name}`
       : `启用 ${PROVIDERS[provider].name} 接入`;
     this.configPanel.querySelector('.codex-disconnect-button').hidden = !enabled;
+  }
+
+  #renderClientCdpSetup(provider = this.activeProvider) {
+    const section = this.configPanel.querySelector('.codex-client-cdp');
+    const button = section.querySelector('.codex-client-cdp-button');
+    section.hidden = provider !== 'codex';
+    button.disabled = this.cdpSetupBusy;
+    this.configPanel.querySelectorAll('.agent-provider-cards button').forEach((providerButton) => {
+      providerButton.disabled = this.cdpSetupBusy;
+    });
+    button.textContent = this.cdpSetupBusy ? this.t('cdpSetupStarting') : this.t('cdpSetupButton');
+    const status = section.querySelector('.codex-client-cdp-status');
+    status.textContent = this.cdpSetupStatus;
+    status.dataset.state = this.cdpSetupStatusType;
+  }
+
+  async #enableCodexClientCdp() {
+    if (this.cdpSetupBusy) return;
+    this.cdpSetupBusy = true;
+    this.cdpSetupStatus = this.t('cdpSetupStarting');
+    this.cdpSetupStatusType = 'pending';
+    this.#renderClientCdpSetup();
+    try {
+      const result = await window.electronAPI.codex.enableClientCdp();
+      if (result?.cancelled) {
+        this.cdpSetupStatus = this.t('cdpSetupCancelled');
+        this.cdpSetupStatusType = 'idle';
+      } else if (result?.success) {
+        const transportReady = this.config?.replyTransport === 'desktop'
+          || await this.#commitConfig({
+            enabled: this.config?.enabled === true,
+            replyTransport: 'desktop',
+          });
+        this.cdpSetupStatus = transportReady
+          ? `${this.t('cdpSetupReady')} · ${result.debugAddress}`
+          : `${this.t('cdpSetupReady')} · ${result.debugAddress} ${this.t('cdpSetupTransportFailed')}`;
+        this.cdpSetupStatusType = transportReady ? 'success' : 'error';
+      } else {
+        throw new Error('Codex helper returned no readiness result.');
+      }
+    } catch (error) {
+      this.cdpSetupStatus = `${this.t('cdpSetupFailed')}: ${error?.message || String(error)}`;
+      this.cdpSetupStatusType = 'error';
+    } finally {
+      this.cdpSetupBusy = false;
+      this.#renderClientCdpSetup();
+    }
   }
 
   #renderConnectionList() {
@@ -1903,7 +1969,13 @@ export class CodexCompanion {
   }
   #setConfigBusy(busy) {
     this.configPanel.classList.toggle('busy', busy);
-    this.configPanel.querySelectorAll('button, input, select').forEach((node) => { node.disabled = busy; });
+    this.configPanel.querySelectorAll('button, input, select').forEach((node) => {
+      const setupLocked = this.cdpSetupBusy && (
+        node.classList.contains('codex-client-cdp-button')
+        || node.closest('.agent-provider-cards')
+      );
+      node.disabled = busy || Boolean(setupLocked);
+    });
   }
   #showBubbleError(message) {
     this.inlineError = String(message || '');

@@ -4,9 +4,9 @@
 
 ## 当前交接点
 
-当前维护分支和远端基线已经同步，但交接文档与最新 Codex 修复仍在未提交工作区；权威提交、远端地址与工作区状态见 [`.project-memory/evidence/repository.json`](.project-memory/evidence/repository.json)。最新工作树完成了完整消息展示、默认折叠工具流量，以及只在客户端兼容模式统一到 Codex 客户端任务的发送闭环。
+当前维护分支 `refactor/charm-v2` 的提交已同步到 `da1c091e8d67526bbf0bbac4fb313c016562a9fc`。本次提交包含 Codex 设置页 CDP 准备入口；版本号 `1.0.2`、项目校验脚本修正及 `.project-memory/` 资料仍保留在本地工作区，没有纳入该提交。Codex 客户端回复通道已通过本地 CDP 连接，不回退到 Monitor App Server；设置页按钮确认后会调用现有脚本，提醒可能关闭其他 ChatGPT 窗口，准备成功后切换到 Codex 客户端后台回复通道。权威仓库状态见 [`.project-memory/evidence/repository.json`](.project-memory/evidence/repository.json)。
 
-验证结果见 [`.project-memory/evidence/verification.md`](.project-memory/evidence/verification.md)。本轮没有制作安装包，也不要把旧 `out/` 产物当成当前提交的交付物。
+版本 `1.0.1` 的免费版和赞助版安装包已生成到 `out/`，`npm run verify:artifacts` 通过；包内版本号及 edition 标记均已核对。免费版 `out/free/TurtleMonitor-Free-Setup.exe`（103,615,789 字节，SHA-256 `5879E24BB45B34741DFC46751B8943097EFE94849690724B455F49804B1D15D3`）；赞助版 `out/sponsor/TurtleMonitor-Sponsor-Setup.exe`（103,657,456 字节，SHA-256 `102E2DF3F3ED9F98CF050EB389DC4F29CCFBF79C9EB60CCAD58D2064A7A2D52B`）。由于工作区根目录含 Electron Builder 无法读取的失效乱码目录项，最终构建在隔离的干净源码副本中完成，再复制回 `out/`；根目录直接打包仍会在该目录项处报 `ENOENT`。`npm test` 的 435/435 和此前源码构建结果来自提交 `6e63f3b`，本轮未重跑测试。字体运行时解析与 renderer chunk 大小警告仍存在。真实 Codex 消息发送、及时回执、最小化提交及系统前台不变尚未实机验收；也尚未实装运行新安装器，不能宣称桌面闭环或安装 smoke test 已通过。验证记录见 [`.project-memory/evidence/verification.md`](.project-memory/evidence/verification.md)。
 
 ## 下一窗口先做什么
 
@@ -35,8 +35,8 @@
 - 透明全屏窗口、点击穿透和刷新生命周期高度耦合。改动 `main.js`、`input.js`、`window-lifecycle.js` 后必须做多次刷新回归。
 - 管理员硬件读取依赖 UAC、子进程、命名管道和超时。不要把整个 Electron 应用永久提升；只提升硬件读取器。
 - Codex 接入同时处理本地 JSONL 和 App Server。避免每轮重扫日志、伪造审批编号或接管外部仍在运行的任务。
-- 只有 `direct` 回复通道使用 Monitor 的 App Server。`desktop` 客户端兼容模式严禁启动第二 App Server；它打开精确任务，识别 `ChatGPT.exe`/`Codex.exe`，优先深链激活的前台进程，从窗口树主动查找并聚焦 ProseMirror 编辑框，以 UTF-8 Base64 传文并用 UIA 精确写入/回读，再 Invoke 发送按钮。仅在按钮不可调用时按顺序尝试 Enter 与 Ctrl+Enter，且必须检查未清空才重试。不得加入屏幕坐标、固定 PID/路径、窗口尺寸、DPI 或本地化标题假设。失败必须保留草稿并显示错误。
-- 客户端兼容模式只有在目标任务的本地会话日志出现发送时间之后的完全相同用户消息时才报告成功；真实闭环证据见 [`.project-memory/evidence/verification.md`](.project-memory/evidence/verification.md)。
+- Codex Desktop 回复通道遵循最新用户设计约束：[项目交接 §7.24](.project-memory/handoff-2026-09-19.md)。客户端兼容推送要继续由 Codex 客户端发送，同时避免每条消息时打开/抢前台，并避免改走 App Server。Codex 连接设置页有“重启 Codex 并启用连接”按钮；它会结束所有名为 `ChatGPT` 的客户端进程（可能包括其他 ChatGPT 窗口），需先保存工作并明确确认。准备成功后会自动选择 Codex 客户端后台回复通道。静默客户端路径不可用时，保留草稿并明确报错，不要切换通道。
+- Codex 桌面普通“发送”需在目标任务的本地会话记录中确认请求时间之后出现完全相同的用户消息才报告成功；排队操作需由客户端页面确认消息已进入目标对话。二者都不代表已收到回复；真实闭环证据见 [`.project-memory/evidence/verification.md`](.project-memory/evidence/verification.md)。
 - 打包历史上容易丢图标、字体、皮肤和硬件读取器。源码构建通过不等于安装包通过。
 - `README.md` 和 `BUILDING.md` 在某些 PowerShell 默认编码下会显示乱码；读取时显式使用 UTF-8，不要据此误改原文件。
 

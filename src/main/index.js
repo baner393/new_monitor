@@ -3,6 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import zlib from 'zlib';
 import crypto from 'crypto';
+import { spawn } from 'node:child_process';
 import { SystemMonitor } from './system-monitor.js';
 import { resolveHardwareSensorHostPath } from './hardware-sensor-monitor.js';
 import { isWindowsProcessElevated } from './elevation-restart.js';
@@ -58,6 +59,7 @@ let stopCharmHook = null;
 let pendingWindowRecovery = null;
 let pendingGridData = null;
 let pendingRegionImage = null; // temp storage for region marker image data
+let codexCdpSetupRunning = false;
 
 function subscriptionStatus() {
   return subscriptionRuntime?.getStatus() || {
@@ -268,6 +270,94 @@ ipcMain.handle('monitor-panel-config-get', () => normalizeMonitorPanelConfig(cur
 
 ipcMain.handle('codex-config-get', () => normalizeCodexIntegrationConfig(currentSettings.codexIntegration));
 ipcMain.handle('claude-config-get', () => normalizeClaudeIntegrationConfig(currentSettings.claudeIntegration));
+
+ipcMain.handle('codex-client-cdp-enable', async (event) => {
+  if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) {
+    throw new Error('Codex connection setup is only available from the main window.');
+  }
+  if (process.platform !== 'win32') {
+    throw new Error('Starting Codex with local CDP is currently supported only on Windows.');
+  }
+  if (codexCdpSetupRunning) throw new Error('Codex client setup is already running.');
+  codexCdpSetupRunning = true;
+  try {
+    const isChinese = app.getLocale().toLowerCase().startsWith('zh');
+    const confirmation = await dialog.showMessageBox(mainWindow, {
+      type: 'warning',
+      title: isChinese ? '重启 Codex 以启用后台发送' : 'Restart Codex for background sending',
+      message: isChinese
+        ? '此操作会结束当前名为 ChatGPT 的桌面客户端进程，再重新启动 Codex。'
+        : 'This will stop running desktop client processes named ChatGPT, then relaunch Codex.',
+      detail: isChinese
+        ? '脚本会结束所有同名进程，可能包含其他 ChatGPT 桌面窗口。请先保存 Codex 和 ChatGPT 中未保存的内容。确认后，Turtle Monitor 会通过 Windows 应用启动器重新启动 Codex，并仅在本机 127.0.0.1:9222 开启调试连接。桌宠中的回复草稿会保留。'
+        : 'The helper stops every process with that name, which may include other ChatGPT desktop windows. Save unsaved work in Codex and ChatGPT first. If you continue, Turtle Monitor will relaunch Codex through the Windows app launcher and enable debugging only on 127.0.0.1:9222. Pet reply drafts will be preserved.',
+      buttons: [isChinese ? '重启并启用' : 'Restart and enable', isChinese ? '取消' : 'Cancel'],
+      defaultId: 1,
+      cancelId: 1,
+      noLink: true,
+    });
+    if (confirmation.response !== 0) return { cancelled: true };
+
+    const scriptPath = app.isPackaged
+      ? path.join(process.resourcesPath, 'scripts', 'restart-codex-with-local-cdp.ps1')
+      : path.join(app.getAppPath(), 'scripts', 'restart-codex-with-local-cdp.ps1');
+    if (!fs.existsSync(scriptPath)) throw new Error(`Codex startup helper was not found: ${scriptPath}`);
+
+    const powershellPath = path.join(
+      process.env.WINDIR || 'C:\\Windows',
+      'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe',
+    );
+    const result = await new Promise((resolve, reject) => {
+      let stdout = '';
+      let stderr = '';
+      let settled = false;
+      const finish = (error, value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        if (error) reject(error);
+        else resolve(value);
+      };
+      const append = (current, chunk) => `${current}${chunk.toString('utf8')}`.slice(-64_000);
+      const child = spawn(powershellPath, [
+        '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', scriptPath,
+      ], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+      const timeout = setTimeout(() => {
+        child.kill();
+        finish(new Error('Codex startup helper timed out. Check whether Codex restarted before retrying.'));
+      }, 90_000);
+      child.stdout.on('data', (chunk) => { stdout = append(stdout, chunk); });
+      child.stderr.on('data', (chunk) => { stderr = append(stderr, chunk); });
+      child.once('error', (error) => finish(new Error(`Could not start the Codex helper: ${error.message}`)));
+      child.once('close', (code, signal) => {
+        if (code !== 0) {
+          const detail = (stderr || stdout).replace(/^\uFEFF/, '').trim().slice(-4000);
+          finish(new Error(detail || `Codex startup helper exited with code ${code ?? signal ?? 'unknown'}.`));
+          return;
+        }
+        const jsonLine = stdout.replace(/^\uFEFF/, '').split(/\r?\n/).map((line) => line.trim())
+          .reverse().find((line) => line.startsWith('{') && line.endsWith('}'));
+        let payload;
+        try { payload = JSON.parse(jsonLine || ''); }
+        catch { finish(new Error('Codex restarted, but the helper returned no valid readiness result.')); return; }
+        if (payload.MainWindowFound !== true || payload.DebugAddress !== '127.0.0.1:9222'
+          || !String(payload.Status || '').includes('Ready for Turtle Monitor client-compatible sending')) {
+          finish(new Error('Codex restarted, but its local debugging connection was not confirmed.'));
+          return;
+        }
+        finish(null, {
+          success: true,
+          processId: Number(payload.ProcessId) || null,
+          debugAddress: payload.DebugAddress,
+          status: payload.Status,
+        });
+      });
+    });
+    return result;
+  } finally {
+    codexCdpSetupRunning = false;
+  }
+});
 
 ipcMain.handle('codex-config-set', (_event, config) => {
   currentSettings.codexIntegration = codexMonitor

@@ -32,6 +32,10 @@ module.exports = {
   ],
   extraResources: [
     {
+      from: 'scripts/restart-codex-with-local-cdp.ps1',
+      to: 'scripts/restart-codex-with-local-cdp.ps1',
+    },
+    {
       from: 'src/main/codex-hooks.mjs',
       to: 'codex-hooks.mjs',
     },

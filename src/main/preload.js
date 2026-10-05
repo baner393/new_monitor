@@ -82,6 +82,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   codex: {
     getConfig: () => ipcRenderer.invoke('codex-config-get'),
     saveConfig: (config) => ipcRenderer.invoke('codex-config-set', config),
+    enableClientCdp: () => ipcRenderer.invoke('codex-client-cdp-enable'),
     selectHome: () => ipcRenderer.invoke('codex-home-select'),
     getStatus: () => ipcRenderer.invoke('codex-status-get'),
     getMessages: (threadId, cursor = null, limit = 50) => ipcRenderer.invoke('codex-messages-get', { threadId, cursor, limit }),
