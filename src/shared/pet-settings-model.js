@@ -28,6 +28,7 @@ export const PET_SETTINGS_DEFAULTS = Object.freeze({
   charmGravityLink: 50,     // 重力链接感（0-100）
   charmThickness: 50,       // 卡牌厚度（0-100）
   charmFlipEnabled: true,   // 翻转效果开关
+  charmHoverEnabled: false, // 鼠标悬停时切换挂饰动画
   charmHoloEnabled: true,   // 全息闪卡开关
   charmHoloIntensity: 100,  // 虹彩/扫光强度（0-150）
   charmBackMaterial: 'metal',
@@ -70,6 +71,7 @@ export const PET_SETTING_FIELDS = Object.freeze({
   charmGravityLink: { section: 'charm', group: 'feel', label: '重力链接感', hint: '加速/甩动时挂牌随惯性倾斜的强度', min: 0, max: 100, step: 5, unit: '%' },
   charmThickness: { section: 'charm', group: 'visual', label: '卡牌厚度', hint: '翻转时露出的金属侧壁厚度', min: 0, max: 100, step: 5, unit: '%' },
   charmFlipEnabled: { section: 'charm', group: 'visual', label: '翻转效果', hint: '关闭后挂饰保持正面朝外，不翻滚', type: 'boolean' },
+  charmHoverEnabled: { section: 'charm', group: 'visual', label: '鼠标指向时悬停', hint: '开启后鼠标指向卡面或蓝色按钮时进入悬停状态；关闭后仍显示卡面悬停表情，但不进入悬停状态', type: 'boolean' },
   charmHoloEnabled: { section: 'charm', group: 'visual', label: '全息闪卡', hint: '关闭后表面不泛起全息反光与光带', type: 'boolean' },
   charmHoloIntensity: { section: 'charm', group: 'visual', label: '炫彩强度', hint: '控制虹彩/扫光强度，不影响翻转速度', min: 0, max: 150, step: 5, unit: '%' },
   charmBackMaterial: { section: 'charm', group: 'visual', label: '背面外观', hint: '选择金属背板，或使用与正面相同的图案', type: 'enum', options: [{ value: 'metal', label: '金属背面' }, { value: 'pattern', label: '与正面相同图案' }] },

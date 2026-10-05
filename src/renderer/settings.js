@@ -177,9 +177,6 @@ export class SettingsPanel {
     this.panel.append(footer);
     document.body.appendChild(this.root);
 
-    this.root.addEventListener('mousedown', (event) => {
-      if (event.target === this.root) this._cancel();
-    });
     document.addEventListener('keydown', (event) => {
       if (event.key === 'Escape' && this._open) this._cancel();
     });
@@ -464,7 +461,12 @@ export class SettingsPanel {
     const input = element('input');
     input.type = 'checkbox';
     input.checked = Boolean(this._values[key]);
-    input.addEventListener('change', () => this._applyValues({ ...this._values, [key]: input.checked }));
+    // Keep the settings workspace mounted while this non-structural toggle changes.
+    const rerender = key !== 'charmHoverEnabled';
+    input.addEventListener('change', () => this._applyValues(
+      { ...this._values, [key]: input.checked },
+      rerender,
+    ));
     label.append(input);
     label.append(element('i', ''));
     return label;
@@ -733,6 +735,7 @@ export class SettingsPanel {
     this.root.setAttribute('aria-hidden', 'false');
     this._renderSection();
     this.workspace.scrollTop = 0;
+    this.panel.scrollTop = 0;
     this._syncUi();
     this._syncPreviewSettings(true);
     requestAnimationFrame(() => {

@@ -810,6 +810,7 @@ button:disabled, input:disabled, textarea:disabled, select:disabled { opacity: 0
 }
 
 .pet-settings-switch {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -818,7 +819,18 @@ button:disabled, input:disabled, textarea:disabled, select:disabled { opacity: 0
   padding: 12px 4px;
   cursor: pointer;
 }
-.pet-settings-switch input { position: absolute; opacity: 0; }
+.pet-settings-switch input {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  z-index: 1;
+  width: 48px;
+  height: 24px;
+  margin: 0;
+  opacity: 0;
+  transform: translateY(-50%);
+  cursor: pointer;
+}
 .pet-settings-switch i {
   position: relative;
   flex: 0 0 48px;

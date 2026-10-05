@@ -108,6 +108,7 @@ let happyTexture = PIXI.Texture.from(happySpriteUrl);
 let painTexture  = PIXI.Texture.from(painSpriteUrl);
 let blinkTexture = PIXI.Texture.from(blinkSpriteUrl);
 let codexMood = 'idle';
+let charmHoverFaceOnly = false;
 
 // ── State Machine Presets ──────────────────────────────────────────────
 //
@@ -129,7 +130,7 @@ function setSpriteTextureForState(state) {
     case 'IDLE':
       bodySprite.texture = codexMood === 'happy' ? happyTexture
         : codexMood === 'pain' ? painTexture
-          : (codexMood === 'working' || codexMood === 'attention') ? hoverTexture : idleTexture;
+          : (charmHoverFaceOnly || codexMood === 'working' || codexMood === 'attention') ? hoverTexture : idleTexture;
       break;
     case 'HOVER':
       bodySprite.texture = codexMood === 'happy' ? happyTexture
@@ -639,6 +640,7 @@ const subscriptionPanel = new SubscriptionPanel({
 const petBehaviorSettings = {
   ambientSwingEnabled: true,
   panelMoveStable: true,
+  charmHoverEnabled: false,
 };
 
 // Listen for open-settings from context menu
@@ -994,6 +996,9 @@ function applySettings(settings, { isInitialLoad = false } = {}) {
     petBehaviorSettings.panelMoveStable = settings.panelMoveStable !== false;
     codexCompanion.setReadingStability(petBehaviorSettings.panelMoveStable);
   }
+  if (settings.charmHoverEnabled !== undefined) {
+    petBehaviorSettings.charmHoverEnabled = settings.charmHoverEnabled === true;
+  }
   // 挂饰模式：手感旋钮 → 翻转物理配置；全息开关独立
   flipConfig = knobsToFlipConfig(settings);
   if (settings.charmHoloEnabled !== undefined) {
@@ -1060,6 +1065,15 @@ function applySettings(settings, { isInitialLoad = false } = {}) {
 document.addEventListener('mousedown', (e) => {
   if (!settingsPanel.isOpen) return;
 
+  // The transparent BrowserWindow can retarget a click on a panel control to
+  // the overlay root. Treat either the panel DOM path or its visible bounds as
+  // an inside click; the overlay background itself remains dismissible.
+  const eventPath = e.composedPath?.() || [];
+  const insidePanel = settingsPanel.panel.contains(e.target)
+    || eventPath.includes(settingsPanel.panel)
+    || settingsPanel.containsPoint(e.clientX, e.clientY);
+  if (insidePanel) return;
+
   if (!settingsPanel.containsPoint(e.clientX, e.clientY)) {
     console.log('[Settings] Click outside → closing');
     settingsPanel._cancel(); // Cancel with restore
@@ -1109,11 +1123,87 @@ const inputManager = new InputManager({
 inputManager.enable();
 
 // ── Transparent click-through ──────────────────────────────────────────
-const CHARM_BADGE_HOVER_PADDING = 8;
 let isOverSprite = false;
 let lastMousePassthrough = true;
 let lastCursorPosition = null;
 let mouseSyncInFlight = false;
+
+// Charm hover should follow the visible PNG silhouette instead of the sprite's
+// rectangular bounds. Cache alpha data per image source so the animation loop
+// only performs up to three small pixel lookups per frame after first use.
+const charmAlphaMasks = new WeakMap();
+const charmHitTestPoint = new PIXI.Point();
+
+function getCharmAlphaMask(texture) {
+  const source = texture?.baseTexture?.resource?.source;
+  if (!source || (typeof source !== 'object' && typeof source !== 'function')) return null;
+  if (charmAlphaMasks.has(source)) return charmAlphaMasks.get(source);
+
+  try {
+    const width = source.naturalWidth || source.videoWidth || source.width;
+    const height = source.naturalHeight || source.videoHeight || source.height;
+    if (!width || !height) return null;
+    // Pet sprites render small on screen; a 256px maximum mask preserves the
+    // silhouette closely while keeping the one-time synchronous read bounded.
+    const scale = Math.min(1, 256 / Math.max(width, height));
+    const maskWidth = Math.max(1, Math.round(width * scale));
+    const maskHeight = Math.max(1, Math.round(height * scale));
+    const canvas = document.createElement('canvas');
+    canvas.width = maskWidth;
+    canvas.height = maskHeight;
+    const context = canvas.getContext('2d', { willReadFrequently: true });
+    if (!context) {
+      charmAlphaMasks.set(source, null);
+      return null;
+    }
+    context.drawImage(source, 0, 0, maskWidth, maskHeight);
+    const alpha = context.getImageData(0, 0, maskWidth, maskHeight).data;
+    charmAlphaMasks.set(source, { width: maskWidth, height: maskHeight, sourceWidth: width, sourceHeight: height, alpha });
+    return charmAlphaMasks.get(source);
+  } catch (error) {
+    // If alpha cannot be inspected, do not trigger on the transparent rectangle.
+    charmAlphaMasks.set(source, null);
+    return null;
+  }
+}
+
+function isPointOnCharmSprite(sprite, x, y) {
+  if (!sprite) return false;
+  try {
+    charmHitTestPoint.set(x, y);
+    const local = sprite.toLocal(charmHitTestPoint);
+    let previousTexture = null;
+    // The hover pose may use a different silhouette from idle. Test their
+    // union so changing textures under a stationary cursor cannot flicker.
+    for (let index = 0; index < 3; index++) {
+      const texture = index === 0 ? sprite.texture : index === 1 ? idleTexture : hoverTexture;
+      if (!texture || texture === previousTexture) continue;
+      previousTexture = texture;
+      const mask = getCharmAlphaMask(texture);
+      if (!mask) continue;
+      const orig = texture.orig || texture.frame;
+      const frame = texture.frame;
+      if (!orig?.width || !orig?.height || !frame?.width || !frame?.height) continue;
+
+      const sourceX = local.x + orig.width * sprite.anchor.x;
+      const sourceY = local.y + orig.height * sprite.anchor.y;
+      const trim = texture.trim || { x: 0, y: 0, width: frame.width, height: frame.height };
+      if (sourceX < trim.x || sourceY < trim.y
+        || sourceX >= trim.x + trim.width || sourceY >= trim.y + trim.height) continue;
+
+      const resolution = texture.baseTexture.resolution || 1;
+      const sourcePixelX = (frame.x + (sourceX - trim.x) * frame.width / trim.width) * resolution;
+      const sourcePixelY = (frame.y + (sourceY - trim.y) * frame.height / trim.height) * resolution;
+      const pixelX = Math.floor(sourcePixelX * mask.width / mask.sourceWidth);
+      const pixelY = Math.floor(sourcePixelY * mask.height / mask.sourceHeight);
+      if (pixelX < 0 || pixelY < 0 || pixelX >= mask.width || pixelY >= mask.height) continue;
+      if (mask.alpha[(pixelY * mask.width + pixelX) * 4 + 3] > 0) return true;
+    }
+    return false;
+  } catch (error) {
+    return false;
+  }
+}
 
 function applyMousePassthrough(ignore, force = false) {
   if (force || ignore !== lastMousePassthrough) {
@@ -1615,10 +1705,23 @@ pixiApp.ticker.add((delta) => {
   if (isCharm) {
     charmAnchorSampler.pollOnce({ staleAfterMs: 16 });
     const cursor = charmAnchorSampler.sample();
+    const hasSupportedMount = cursorMountState.active && cursorMountState.supported;
+    const reportedMountOffset = hasSupportedMount
+      ? cursorMountState.mountOffset
+      : null;
+    const mountOffset = {
+      x: Number.isFinite(reportedMountOffset?.x)
+        ? reportedMountOffset.x
+        : CHARM_MOUNT_ANCHOR_OFFSET.x,
+      y: Number.isFinite(reportedMountOffset?.y)
+        ? reportedMountOffset.y
+        : CHARM_MOUNT_ANCHOR_OFFSET.y,
+    };
     if (cursor) physics.setCharmAnchor({
-      x: cursor.x + (cursorMountState.mountOffset?.x || 0),
-      y: cursor.y + (cursorMountState.mountOffset?.y || 0),
-    }, cursorMountState.ringScale || 1, cursorMountState.ringGeometry);
+      x: cursor.x + mountOffset.x,
+      y: cursor.y + mountOffset.y,
+    }, hasSupportedMount ? (cursorMountState.ringScale || 1) : 1,
+    hasSupportedMount ? cursorMountState.ringGeometry : null);
   }
   // Update physics (skipped during PULLING and BOUNCING)
   if (ringActive) {
@@ -1677,9 +1780,10 @@ pixiApp.ticker.add((delta) => {
   }
   charmMountSprite.visible = mountPose.visible && !cursorMountState.ringEmbedded;
   charmMountSprite.scale.set(cursorMountState.ringScale || 1);
-  const showCharm = !isCharm || (cursorMountState.active && cursorMountState.supported);
-  turtleContainer.visible = showCharm;
-  ropeContainer.visible = showCharm;
+  // Keep the charm and its rope present for cursor roles without a known hole.
+  // Only the cursor-mounted metal ring depends on a supported cursor profile.
+  turtleContainer.visible = true;
+  ropeContainer.visible = true;
   if (mountPose.position) charmMountSprite.position.set(mountPose.position.x, mountPose.position.y);
   setCharmMountRingLayer(isCharm && ringActive);
   // During open and close, the actual rope crosses the annulus visibly. Move
@@ -1744,22 +1848,31 @@ pixiApp.ticker.add((delta) => {
     }
     const petBounds = bodySprite.getBounds();
     const petPadding = isCharm ? 0 : PET_HIT_PADDING;
-    const overPet = hasCursorPosition && isPointWithinBounds(petBounds, mx, my, petPadding);
+    const pointerOnCharmCard = isCharm && hasCursorPosition && isPointOnCharmSprite(bodySprite, mx, my);
+    const overPet = hasCursorPosition && (isCharm
+      ? petBehaviorSettings.charmHoverEnabled && pointerOnCharmCard
+      : isPointWithinBounds(petBounds, mx, my, petPadding));
     const badgeButton = isCharm ? codexCompanion.badge : null;
     const badgeButtonBounds = badgeButton && !badgeButton.hidden ? badgeButton.getBoundingClientRect() : null;
     const overBlueBadge = isCharm && hasCursorPosition
-      && isPointWithinBounds(badgeButtonBounds, mx, my, CHARM_BADGE_HOVER_PADDING);
+      && petBehaviorSettings.charmHoverEnabled
+      && isPointWithinBounds(badgeButtonBounds, mx, my);
     const over = overPet || overBlueBadge;
-    if (over && !_wasOverSprite) {
-      _wasOverSprite = true;
-      if (state === 'IDLE') { try { stateMachine.transition('TURTLE_HOVER'); } catch (e) {} }
-    } else if (!over && _wasOverSprite) {
-      _wasOverSprite = false;
-      if (state === 'HOVER') { try { stateMachine.transition('TURTLE_LEAVE'); } catch (e) {} }
+    const previewCharmHoverFace = isCharm && !petBehaviorSettings.charmHoverEnabled
+      && pointerOnCharmCard;
+    if (previewCharmHoverFace !== charmHoverFaceOnly) {
+      charmHoverFaceOnly = previewCharmHoverFace;
+      if (!isBlinking) setSpriteTextureForState(state);
     }
+    if (over && state === 'IDLE') { try { stateMachine.transition('TURTLE_HOVER'); } catch (e) {} }
+    else if (!over && state === 'HOVER') { try { stateMachine.transition('TURTLE_LEAVE'); } catch (e) {} }
     _wasOverSprite = over;
   } else {
     _wasOverSprite = false;
+    if (charmHoverFaceOnly) {
+      charmHoverFaceOnly = false;
+      setSpriteTextureForState(state);
+    }
   }
 
   // ── Pain texture overlay (0.4s flash, no state machine change) ──
