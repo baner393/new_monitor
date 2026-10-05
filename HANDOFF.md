@@ -4,7 +4,7 @@
 
 ## 当前交接点
 
-当前维护分支 `refactor/charm-v2` 的提交已同步到 `da1c091e8d67526bbf0bbac4fb313c016562a9fc`。本次提交包含 Codex 设置页 CDP 准备入口；版本号 `1.0.2`、项目校验脚本修正及 `.project-memory/` 资料仍保留在本地工作区，没有纳入该提交。Codex 客户端回复通道已通过本地 CDP 连接，不回退到 Monitor App Server；设置页按钮确认后会调用现有脚本，提醒可能关闭其他 ChatGPT 窗口，准备成功后切换到 Codex 客户端后台回复通道。权威仓库状态见 [`.project-memory/evidence/repository.json`](.project-memory/evidence/repository.json)。
+当前维护分支 `refactor/charm-v2` 已同步到提交 `0df83a0122aa1b539e45c68602bf8c12c0fd609d`。该提交加入 Codex 设置页 CDP 准备入口；版本号 `1.0.2`、项目校验脚本修正及 `.project-memory/` 资料仍保留在本地工作区，没有纳入该提交。Codex 客户端回复通道通过本地 CDP 连接，不回退到 Monitor App Server；设置页按钮确认后会调用现有脚本，提醒可能关闭其他 ChatGPT 窗口，准备成功后切换到 Codex 客户端后台回复通道。权威仓库状态见 [`.project-memory/evidence/repository.json`](.project-memory/evidence/repository.json)。
 
 版本 `1.0.1` 的免费版和赞助版安装包已生成到 `out/`，`npm run verify:artifacts` 通过；包内版本号及 edition 标记均已核对。免费版 `out/free/TurtleMonitor-Free-Setup.exe`（103,615,789 字节，SHA-256 `5879E24BB45B34741DFC46751B8943097EFE94849690724B455F49804B1D15D3`）；赞助版 `out/sponsor/TurtleMonitor-Sponsor-Setup.exe`（103,657,456 字节，SHA-256 `102E2DF3F3ED9F98CF050EB389DC4F29CCFBF79C9EB60CCAD58D2064A7A2D52B`）。由于工作区根目录含 Electron Builder 无法读取的失效乱码目录项，最终构建在隔离的干净源码副本中完成，再复制回 `out/`；根目录直接打包仍会在该目录项处报 `ENOENT`。`npm test` 的 435/435 和此前源码构建结果来自提交 `6e63f3b`，本轮未重跑测试。字体运行时解析与 renderer chunk 大小警告仍存在。真实 Codex 消息发送、及时回执、最小化提交及系统前台不变尚未实机验收；也尚未实装运行新安装器，不能宣称桌面闭环或安装 smoke test 已通过。验证记录见 [`.project-memory/evidence/verification.md`](.project-memory/evidence/verification.md)。
 
